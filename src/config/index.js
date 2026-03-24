@@ -35,7 +35,8 @@ module.exports = {
   },
   storage: {
     processedPrsPath: path.join(DATA_DIR, 'processed_prs.json'),
-    skipCachePath: path.join(DATA_DIR, 'skip_cache.json')
+    skipCachePath: path.join(DATA_DIR, 'skip_cache.json'),
+    notificationCountsPath: path.join(DATA_DIR, 'notification_counts.json')
   },
   logging: {
     level: process.env.LOG_LEVEL || 'info'
@@ -45,5 +46,22 @@ module.exports = {
     telegramRetries: 3,
     agentRetries: 2,
     backoffFactor: 2
+  },
+  reviewLevels: {
+    low: {
+      description: 'Basic code quality checks',
+      focusAreas: ['syntax', 'basic best practices'],
+      maxCommentsPerFile: 3
+    },
+    medium: {
+      description: 'Standard code review',
+      focusAreas: ['syntax', 'best practices', 'security'],
+      maxCommentsPerFile: 10
+    },
+    high: {
+      description: 'Comprehensive security and quality analysis',
+      focusAreas: ['syntax', 'best practices', 'security', 'performance', 'maintainability'],
+      maxCommentsPerFile: 50
+    }
   }
 };
