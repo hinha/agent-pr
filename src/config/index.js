@@ -3,8 +3,9 @@ const path = require('path');
 const fs = require('fs');
 
 // Initialize persistent storage directories
-const DATA_DIR = path.join(__dirname, '../../data');
-const LOGS_DIR = path.join(__dirname, '../../logs');
+// Use process.cwd() for pkg compatibility (writable directory in both dev and production)
+const DATA_DIR = path.join(process.cwd(), 'data');
+const LOGS_DIR = path.join(process.cwd(), 'logs');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(LOGS_DIR)) fs.mkdirSync(LOGS_DIR, { recursive: true });
 
