@@ -8,6 +8,68 @@ const logger = require('../utils/logger');
 
 class OpenClawAgentService {
   /**
+   * Extract JSON from text by counting braces (more reliable than regex)
+   * Looks for the first valid JSON object with "summary" and "comments" keys
+   */
+  extractJSON(text) {
+    // Find all opening braces
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === '{') {
+        // Count braces to find matching closing brace
+        let braceCount = 1; // Start with 1 because we found the first '{'
+        let inString = false;
+        let escapeNext = false;
+
+        for (let j = i + 1; j < text.length; j++) {
+          const char = text[j];
+
+          if (escapeNext) {
+            escapeNext = false;
+            continue;
+          }
+
+          if (char === '\\') {
+            escapeNext = true;
+            continue;
+          }
+
+          if (char === '"') {
+            inString = !inString;
+            continue;
+          }
+
+          if (!inString) {
+            if (char === '{') braceCount++;
+            else if (char === '}') {
+              braceCount--;
+              if (braceCount === 0) {
+                // Found balanced braces, extract this substring
+                const jsonStr = text.substring(i, j + 1);
+                logger.debug(`Checking JSON at position ${i}-${j}, length: ${jsonStr.length}`);
+
+                // Verify it's our expected JSON by checking for expected keys
+                if (jsonStr.includes('"summary"') && jsonStr.includes('"comments"')) {
+                  // Try to parse it to make sure it's valid JSON
+                  try {
+                    JSON.parse(jsonStr);
+                    logger.info(`Found valid JSON object at position ${i}-${j}`);
+                    return jsonStr;
+                  } catch (e) {
+                    logger.debug(`JSON at ${i}-${j} is not valid, continuing search...`);
+                  }
+                }
+                // Found a valid JSON object but not our target, continue to next brace
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
    * Custom exponential backoff retry logic
    */
   async retryOperation(operation, retries, minTimeout, factor) {
@@ -58,20 +120,35 @@ class OpenClawAgentService {
 
       // Log raw output for debugging
       logger.info(`OpenClaw command completed for PR #${pr.number}, output length: ${stdout?.length || 0}`);
-      logger.info(`OpenClaw raw output (first 500 chars): ${stdout?.substring(0, 500)}`);
+      logger.info(`OpenClaw raw output (first 1000 chars): ${stdout?.substring(0, 1000)}`);
 
       // Try to parse JSON, with fallback for text response
       let result;
       try {
-        result = JSON.parse(stdout);
+        // First try: parse stdout directly (trimmed)
+        const trimmed = stdout.trim();
+        logger.debug(`Attempting to parse trimmed output, length: ${trimmed.length}`);
+        result = JSON.parse(trimmed);
+        logger.info(`Successfully parsed JSON directly, summary: ${result.summary?.substring(0, 100)}..., comments: ${result.comments?.length || 0}`);
       } catch (parseErr) {
         // If output is not JSON, try to extract JSON from text
-        logger.warn(`Failed to parse JSON directly, attempting extraction: ${parseErr.message}`);
-        const jsonMatch = stdout.match(/\{[\s\S]*}/);
-        if (jsonMatch) {
-          result = JSON.parse(jsonMatch[0]);
+        logger.warn(`Failed to parse JSON directly: ${parseErr.message}`);
+
+        // Find JSON by brace counting - more reliable than regex
+        const jsonStr = this.extractJSON(stdout);
+        if (jsonStr) {
+          logger.info(`Extracted JSON string (${jsonStr.length} chars), attempting to parse...`);
+          try {
+            result = JSON.parse(jsonStr);
+            logger.info(`Successfully parsed extracted JSON, comments: ${result.comments?.length || 0}`);
+          } catch (extractErr) {
+            logger.error(`Failed to parse extracted JSON: ${extractErr.message}`);
+            logger.error(`Extracted string (first 500): ${jsonStr.substring(0, 500)}`);
+            throw extractErr;
+          }
         } else {
           // Fallback: create response from text
+          logger.warn(`No JSON found in output, using text fallback`);
           result = {
             summary: stdout.substring(0, 500) || `Review ${level} untuk PR #${pr.number}`,
             comments: []
