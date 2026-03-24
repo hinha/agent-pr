@@ -24,55 +24,73 @@ class OpenClawAgentService {
   }
 
   /**
-   * Invoke OpenClaw summary agent to generate structured PR intelligence
+   * Run review with specified level (low/medium/high)
+   * @param {Object} pr - Pull request object
+   * @param {string} level - Review level: 'low', 'medium', or 'high'
    */
-  async generateSummary(pr, prDetails) {
-    return this.retryOperation(async () => {
-      logger.debug(`Invoking summary agent for PR #${pr.number}`);
-      
-      // Prepare input payload for the summary agent
-      const payload = JSON.stringify({ pr, prDetails });
-      const command = `openclaw agent invoke ${config.openclaw.summaryAgent} --message '${payload.replace(/'/g, "\\'")}' --timeout 90`;
-      
-      const { stdout, stderr } = await execPromise(command);
-      if (stderr) logger.warn(`Summary agent stderr: ${stderr}`);
+  async runReviewWithLevel(pr, level) {
+    const levelConfig = config.reviewLevels[level];
+    if (!levelConfig) {
+      throw new Error(`Invalid review level: ${level}`);
+    }
 
-      try {
-        return JSON.parse(stdout);
-      } catch (parseErr) {
-        logger.error(`Failed to parse summary agent output: ${stdout}`);
-        throw new Error(`Summary agent output parse failed: ${parseErr.message}`);
-      }
-    }, config.retries.agentRetries, 5000, config.retries.backoffFactor);
+    return this.retryOperation(async () => {
+      logger.info(`Starting ${level} level review for PR #${pr.number}`);
+
+      // Build level-specific prompt
+      const reviewPrompt = this.buildReviewPrompt(pr, level, levelConfig);
+
+      const command = `openclaw run --model ${config.openclaw.reviewModel} --message '${reviewPrompt.replace(/'/g, "\\'")}' --timeout 180`;
+
+      const { stdout, stderr } = await execPromise(command);
+      if (stderr) logger.warn(`Review agent stderr: ${stderr}`);
+
+      const result = JSON.parse(stdout);
+
+      // Ensure result has expected structure
+      return {
+        summary: result.summary || `Review ${level} untuk PR #${pr.number}`,
+        comments: result.comments || [],
+        level: level,
+        timestamp: new Date().toISOString()
+      };
+    }, config.retries.agentRetries, 10000, config.retries.backoffFactor);
   }
 
   /**
-   * Invoke full review agent for deep AI analysis of a PR
+   * Build review prompt based on level
    */
-  async runFullReview(pr) {
-    return this.retryOperation(async () => {
-      logger.info(`Starting full review agent for PR #${pr.number}`);
-      
-      // Execute gemini review sesuai aturan baru: hanya buat review comment, tidak approve otomatis
-      const fullReviewPrompt = `Review pull request #${pr.number} yang ada di GitHub repository PT-Sinarmas-Multifinance/simasfin-backend. INSTRUKSI WAJIB:
-      1. BANDINGKAN kode antara source branch (${pr.headBranch}) dengan target branch (${pr.baseBranch}) — analisis semua perubahan yang diusulkan
-      2. Buat SUMMARY HIGH LEVEL yang ringkas: tujuan utama PR, skala perubahan, dan area yang terdampak
-      3. Berikan COMMENT REVIEW yang jelas: potensi masalah, best practice yang perlu diperbaiki, atau poin positif dari perubahan
-      4. HANYA GENERATE KOMENTAR REVIEW — JANGAN lakukan approve otomatis, proses approve hanya lewat tombol terpisah di Telegram
-      INFORMASI LENGKAP REPO:
-      - Pemilik akun GitHub: PT-Sinarmas-Multifinance (akun kerja/kantor)
-      - Nama repository: simasfin-backend
-      - Pembuat PR: ${pr.author}
-      - URL penuh PR: ${pr.url}
-      - Source branch (candidate): ${pr.headBranch}
-      - Target branch (main): ${pr.baseBranch}
-      Hasil review harus terstruktur jelas untuk dikirim sebagai komentar di PR.`;
-      const command = `openclaw run --model github-copilot/claude-sonnet-4.6 --message '${fullReviewPrompt.replace(/'/g, "\\'")}' --timeout 120`;
-      const { stdout, stderr } = await execPromise(command);
-      
-      if (stderr) logger.warn(`Review agent stderr: ${stderr}`);
-      return JSON.parse(stdout);
-    }, config.retries.agentRetries, 10000, config.retries.backoffFactor);
+  buildReviewPrompt(pr, level, levelConfig) {
+    const focusAreas = levelConfig.focusAreas.join(', ');
+
+    return `Review pull request #${pr.number} dengan level **${level.toUpperCase()}**.
+
+INSTRUKSI:
+1. Analisis kode PR dengan fokus pada: ${focusAreas}
+2. Berikan comment review spesifik per file dan baris jika ada issue
+3. Berikan severity level untuk setiap comment: LOW, MEDIUM, atau HIGH
+4. Maximum ${levelConfig.maxCommentsPerFile} comments per file
+
+OUTPUT FORMAT (JSON):
+{
+  "summary": "Ringkasan review secara keseluruhan",
+  "comments": [
+    {
+      "file": "src/file.js",
+      "line": 42,
+      "severity": "HIGH",
+      "message": "Penjelasan issue dan rekomendasi perbaikan"
+    }
+  ]
+}
+
+INFO PR:
+- Repository: ${config.github.owner}/${config.github.repo}
+- Source branch: ${pr.headBranch}
+- Target branch: ${pr.baseBranch}
+- URL: ${pr.url}
+
+Pastikan output hanya JSON yang valid, tanpa text tambahan.`;
   }
 }
 
