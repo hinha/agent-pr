@@ -52,11 +52,13 @@ class OpenClawAgentService {
       const agentName = agentMap[level] || config.openclaw.reviewAgent || 'main';
       const command = `openclaw agent --agent ${agentName} --json --message '${reviewPrompt.replace(/'/g, "\\'")}' --timeout ${config.openclaw.reviewTimeoutSeconds}`;
 
+      logger.info(`Executing OpenClaw command for PR #${pr.number} with agent: ${agentName}`);
       const { stdout, stderr } = await execPromise(command);
       if (stderr) logger.warn(`Review agent stderr: ${stderr}`);
 
       // Log raw output for debugging
-      logger.debug(`OpenClaw raw output: ${stdout}`);
+      logger.info(`OpenClaw command completed for PR #${pr.number}, output length: ${stdout?.length || 0}`);
+      logger.info(`OpenClaw raw output (first 500 chars): ${stdout?.substring(0, 500)}`);
 
       // Try to parse JSON, with fallback for text response
       let result;
@@ -94,10 +96,12 @@ class OpenClawAgentService {
     const focusAreas = levelConfig.focusAreas.join(', ');
 
     // Read prompt template from file
-    const templatePath = path.join(process.cwd(), 'prompts/review.txt');
+    const templatePath = path.join(process.cwd(), 'src/prompts/review.txt');
+    logger.info(`Reading prompt template from: ${templatePath}`);
     let template;
     try {
       template = fs.readFileSync(templatePath, 'utf-8');
+      logger.info(`Prompt template loaded successfully, length: ${template.length} chars`);
     } catch (err) {
       logger.error(`Failed to read prompt template from ${templatePath}: ${err.message}`);
       throw new Error(`Prompt template not found: ${templatePath}`);

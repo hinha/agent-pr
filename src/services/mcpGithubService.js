@@ -140,8 +140,10 @@ class MCPGitHubService {
       reviewArgs.comments = comments;
     }
 
-    logger.debug(`Review payload: ${JSON.stringify(reviewArgs, null, 2)}`);
-    return this.callMCP('create_pull_request_review', reviewArgs);
+    logger.info(`Review payload: ${JSON.stringify(reviewArgs, null, 2)}`);
+    const result = await this.callMCP('create_pull_request_review', reviewArgs);
+    logger.info(`GitHub review created for PR #${pr.number}, result: ${JSON.stringify(result)}`);
+    return result;
   }
 }
 

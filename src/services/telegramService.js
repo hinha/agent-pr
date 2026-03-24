@@ -148,11 +148,14 @@ class TelegramService {
           });
 
           // Trigger AI review with level
+          logger.info(`Starting AI review for PR #${pr.number} at level ${level}`);
           const reviewResult = await openclawAgentService.runReviewWithLevel(pr, level);
+          logger.info(`AI review completed for PR #${pr.number}, got ${reviewResult?.comments?.length || 0} comments`);
 
-          logger.info(`Review for PR #${pr.number} at level ${level} with ${reviewResult.comments.length} comments`);
           // Post review to GitHub
+          logger.info(`Posting review to GitHub for PR #${pr.number}`);
           await mcpService.createReviewWithComments(pr, reviewResult);
+          logger.info(`Review posted to GitHub for PR #${pr.number}`);
 
           // Send confirmation
           await this.bot.sendMessage(this.chatId,
@@ -167,8 +170,16 @@ class TelegramService {
           await this.bot.deleteMessage(this.chatId, query.message.message_id);
         }
       } catch (err) {
-        logger.error(`Button handler error: ${err.message}`);
-        await this.bot.answerCallbackQuery(query.id, { text: '❌ Action failed, check logs' });
+        logger.error(`Button handler error: ${err.message}`, { stack: err.stack, action: dataParts[0], prId: prId });
+        try {
+          await this.bot.answerCallbackQuery(query.id, { text: '❌ Action failed, check logs' });
+          await this.bot.sendMessage(this.chatId, `❌ Error: ${err.message}`, {
+            message_thread_id: this.threadId,
+            reply_to_message_id: query.message?.message_id
+          });
+        } catch (sendErr) {
+          logger.error(`Failed to send error message: ${sendErr.message}`);
+        }
       }
     });
   }
