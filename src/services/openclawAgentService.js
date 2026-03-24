@@ -48,12 +48,32 @@ class OpenClawAgentService {
         high: process.env.OPENCLAW_AGENT_HIGH || 'main'
       };
       const agentName = agentMap[level] || config.openclaw.reviewAgent || 'main';
-      const command = `openclaw agent --agent ${agentName} --message '${reviewPrompt.replace(/'/g, "\\'")}' --timeout 180`;
+      const command = `openclaw agent --agent ${agentName} --json --message '${reviewPrompt.replace(/'/g, "\\'")}' --timeout 180`;
 
       const { stdout, stderr } = await execPromise(command);
       if (stderr) logger.warn(`Review agent stderr: ${stderr}`);
 
-      const result = JSON.parse(stdout);
+      // Log raw output for debugging
+      logger.debug(`OpenClaw raw output: ${stdout}`);
+
+      // Try to parse JSON, with fallback for text response
+      let result;
+      try {
+        result = JSON.parse(stdout);
+      } catch (parseErr) {
+        // If output is not JSON, try to extract JSON from text
+        logger.warn(`Failed to parse JSON directly, attempting extraction: ${parseErr.message}`);
+        const jsonMatch = stdout.match(/\{[\s\S]*}/);
+        if (jsonMatch) {
+          result = JSON.parse(jsonMatch[0]);
+        } else {
+          // Fallback: create response from text
+          result = {
+            summary: stdout.substring(0, 500) || `Review ${level} untuk PR #${pr.number}`,
+            comments: []
+          };
+        }
+      }
 
       // Ensure result has expected structure
       return {
