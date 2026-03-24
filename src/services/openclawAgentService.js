@@ -1,5 +1,7 @@
 const { exec } = require('child_process');
 const util = require('util');
+const fs = require('fs');
+const path = require('path');
 const execPromise = util.promisify(exec);
 const config = require('../config');
 const logger = require('../utils/logger');
@@ -91,34 +93,27 @@ class OpenClawAgentService {
   buildReviewPrompt(pr, level, levelConfig) {
     const focusAreas = levelConfig.focusAreas.join(', ');
 
-    return `Review pull request #${pr.number} dengan level **${level.toUpperCase()}**.
-
-INSTRUKSI:
-1. Analisis kode PR dengan fokus pada: ${focusAreas}
-2. Berikan comment review spesifik per file dan baris jika ada issue
-3. Berikan severity level untuk setiap comment: LOW, MEDIUM, atau HIGH
-4. Maximum ${levelConfig.maxCommentsPerFile} comments per file
-
-OUTPUT FORMAT (JSON):
-{
-  "summary": "Ringkasan review secara keseluruhan",
-  "comments": [
-    {
-      "file": "src/file.js",
-      "line": 42,
-      "severity": "HIGH",
-      "message": "Penjelasan issue dan rekomendasi perbaikan"
+    // Read prompt template from file
+    const templatePath = path.join(process.cwd(), 'prompts/review.txt');
+    let template;
+    try {
+      template = fs.readFileSync(templatePath, 'utf-8');
+    } catch (err) {
+      logger.error(`Failed to read prompt template from ${templatePath}: ${err.message}`);
+      throw new Error(`Prompt template not found: ${templatePath}`);
     }
-  ]
-}
 
-INFO PR Gunakan MCP github-work:
-- Repository: ${config.github.owner}/${config.github.repo}
-- Source branch: ${pr.headBranch}
-- Target branch: ${pr.baseBranch}
-- URL: ${pr.url}
-
-Pastikan output hanya JSON yang valid, tanpa text tambahan.`;
+    // Replace placeholders
+    return template
+      .replace('{{PR_NUMBER}}', pr.number)
+      .replace('{{LEVEL}}', level.toUpperCase())
+      .replace('{{FOCUS_AREAS}}', focusAreas)
+      .replace('{{MAX_COMMENTS}}', levelConfig.maxCommentsPerFile)
+      .replace('{{OWNER}}', config.github.owner)
+      .replace('{{REPO}}', config.github.repo)
+      .replace('{{SOURCE_BRANCH}}', pr.headBranch)
+      .replace('{{TARGET_BRANCH}}', pr.baseBranch)
+      .replace('{{PR_URL}}', pr.url);
   }
 }
 

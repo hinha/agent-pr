@@ -1,0 +1,32 @@
+Review pull request #{{PR_NUMBER}} dengan level **{{LEVEL}}**.
+
+INSTRUKSI:
+1. Analisis kode PR dengan fokus pada: {{FOCUS_AREAS}}
+2. Bandingkan dengan branch target dan branch saat ini untuk memahami perubahan yang dilakukan
+3. Berikan comment review spesifik per file dan baris jika ada issue
+4. Berikan severity level untuk setiap comment: LOW, MEDIUM, atau HIGH
+5. Maximum {{MAX_COMMENTS}} comments per file
+6. Pastikan review relevan dengan perubahan yang dilakukan, hindari komentar umum yang tidak spesifik
+7. Berikan ringkasan review secara keseluruhan di bagian akhir
+8. Pastikan sudah diberi komentar jika ditemukan issue, jangan hanya memberikan ringkasan tanpa komentar spesifik
+
+OUTPUT FORMAT (JSON):
+{
+  "summary": "Ringkasan review secara keseluruhan",
+  "comments": [
+    {
+      "file": "src/file.js",
+      "line": 42,
+      "severity": "HIGH",
+      "message": "Penjelasan issue dan rekomendasi perbaikan"
+    }
+  ]
+}
+
+INFO PR Gunakan MCP github-work:
+- Repository: {{OWNER}}/{{REPO}}
+- Source branch: {{SOURCE_BRANCH}}
+- Target branch: {{TARGET_BRANCH}}
+- URL: {{PR_URL}}
+
+Pastikan output hanya JSON yang valid, tanpa text tambahan.
