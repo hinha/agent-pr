@@ -34,7 +34,7 @@ module.exports = {
   scheduler: {
     checkIntervalMs: 7 * 60 * 1000, // Hardcode to 7 minutes as requested
     skipDurationMs: (parseInt(process.env.SKIP_CACHE_DURATION_HOURS) || 3) * 60 * 60 * 1000,
-    maxAgeMs: 24 * 60 * 60 * 1000 // Only process PRs <24 hours old
+    maxAgeMs: (parseInt(process.env.MAX_AGE_HOURS) || 24) * 60 * 60 * 1000 // Only process PRs < MAX_AGE_HOURS old (default: 24)
   },
   storage: {
     processedPrsPath: path.join(DATA_DIR, 'processed_prs.json'),
