@@ -112,7 +112,7 @@ OUTPUT FORMAT (JSON):
   ]
 }
 
-INFO PR:
+INFO PR Gunakan MCP github-work:
 - Repository: ${config.github.owner}/${config.github.repo}
 - Source branch: ${pr.headBranch}
 - Target branch: ${pr.baseBranch}
