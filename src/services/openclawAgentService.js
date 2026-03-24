@@ -40,9 +40,9 @@ class OpenClawAgentService {
       // Build level-specific prompt
       const reviewPrompt = this.buildReviewPrompt(pr, level, levelConfig);
 
-      // OpenClaw CLI: set model first, then run agent
+      // OpenClaw CLI: use embedded local agent (no gateway session needed)
       const model = config.openclaw.reviewModel;
-      const command = `openclaw models set ${model} && openclaw agent --message '${reviewPrompt.replace(/'/g, "\\'")}' --timeout 180`;
+      const command = `OPENCLAW_MODEL=${model} openclaw agent --local --message '${reviewPrompt.replace(/'/g, "\\'")}' --timeout 180`;
 
       const { stdout, stderr } = await execPromise(command);
       if (stderr) logger.warn(`Review agent stderr: ${stderr}`);
