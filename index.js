@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 const logger = require('./src/utils/logger');
 const scheduler = require('./src/services/schedulerDaemon');
 
