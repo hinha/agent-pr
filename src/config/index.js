@@ -18,7 +18,9 @@ module.exports = {
   openclaw: {
     summaryAgent: process.env.OPENCLAW_AGENT_SUMMARY,
     reviewAgent: process.env.OPENCLAW_AGENT_REVIEW,
-    reviewModel: process.env.OPENCLAW_REVIEW_MODEL || 'github-copilot/claude-sonnet-4.6'
+    reviewModel: process.env.OPENCLAW_REVIEW_MODEL || 'github-copilot/claude-sonnet-4.6',
+    reviewTimeoutSeconds: parseInt(process.env.OPENCLAW_REVIEW_TIMEOUT_SECONDS) || 600,
+    reviewTimeoutMessage: process.env.OPENCLAW_REVIEW_TIMEOUT_MESSAGE || '10 menit'
   },
   github: {
     owner: process.env.GITHUB_OWNER || 'git_owner',

@@ -148,6 +148,8 @@ MCP_SERVER_NAME=github-work
 OPENCLAW_AGENT_SUMMARY=pr-summary-agent
 OPENCLAW_AGENT_REVIEW=pr-review-agent
 OPENCLAW_REVIEW_MODEL=openai/claude-sonnet-4.6
+OPENCLAW_REVIEW_TIMEOUT_SECONDS=600    # Default: 600 (10 minutes)
+OPENCLAW_REVIEW_TIMEOUT_MESSAGE=10 menit  # Default: "10 menit"
 
 # GitHub Repository Details
 GITHUB_OWNER=your-organization

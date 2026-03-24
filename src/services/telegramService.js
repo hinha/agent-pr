@@ -142,7 +142,7 @@ class TelegramService {
           // Format: review_level:prNumber:level
           const level = dataParts[2];
           await this.bot.answerCallbackQuery(query.id, { text: `🚀 Memulai review level ${level}...` });
-          await this.bot.sendMessage(this.chatId, `🔄 <b>Sedang melakukan review ${level.toUpperCase()} untuk PR #${prId}</b>\n⏳ Ini mungkin memakan waktu 1-2 menit...`, {
+          await this.bot.sendMessage(this.chatId, `🔄 <b>Sedang melakukan review ${level.toUpperCase()} untuk PR #${prId}</b>\n⏳ Ini mungkin memakan waktu ${config.openclaw.reviewTimeoutMessage}...`, {
             message_thread_id: this.threadId,
             parse_mode: 'HTML'
           });

@@ -48,7 +48,7 @@ class OpenClawAgentService {
         high: process.env.OPENCLAW_AGENT_HIGH || 'main'
       };
       const agentName = agentMap[level] || config.openclaw.reviewAgent || 'main';
-      const command = `openclaw agent --agent ${agentName} --json --message '${reviewPrompt.replace(/'/g, "\\'")}' --timeout 180`;
+      const command = `openclaw agent --agent ${agentName} --json --message '${reviewPrompt.replace(/'/g, "\\'")}' --timeout ${config.openclaw.reviewTimeoutSeconds}`;
 
       const { stdout, stderr } = await execPromise(command);
       if (stderr) logger.warn(`Review agent stderr: ${stderr}`);
@@ -82,7 +82,7 @@ class OpenClawAgentService {
         level: level,
         timestamp: new Date().toISOString()
       };
-    }, config.retries.agentRetries, 10000, config.retries.backoffFactor);
+    }, config.retries.agentRetries, 1000, config.retries.backoffFactor);
   }
 
   /**
