@@ -30,7 +30,7 @@ class PRStateManager {
    */
   async loadNotificationCounts() {
     try {
-      const raw = await fs.readFile('/home/ubuntu/.openclaw/workspace/simasfin-pr-monitor/data/notification_counts.json', 'utf8');
+      const raw = await fs.readFile(config.storage.notificationCountsPath, 'utf8');
       const parsed = JSON.parse(raw);
       Object.entries(parsed).forEach(([id, count]) => this.notificationCount.set(id, count));
       logger.info(`Loaded notification counts for ${this.notificationCount.size} PRs`);
@@ -45,7 +45,7 @@ class PRStateManager {
    */
   async saveNotificationCounts() {
     const data = JSON.stringify(Object.fromEntries(this.notificationCount), null, 2);
-    await fs.writeFile('/home/ubuntu/.openclaw/workspace/simasfin-pr-monitor/data/notification_counts.json', data);
+    await fs.writeFile(config.storage.notificationCountsPath, data);
   }
 
   /**
