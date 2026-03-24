@@ -41,12 +41,13 @@ class OpenClawAgentService {
       const reviewPrompt = this.buildReviewPrompt(pr, level, levelConfig);
 
       // OpenClaw CLI: use level-specific agent via Gateway
+      // Falls back to 'main' (default agent) or OPENCLAW_AGENT_REVIEW
       const agentMap = {
-        low: process.env.OPENCLAW_AGENT_LOW || 'pr-review-low',
-        medium: process.env.OPENCLAW_AGENT_MEDIUM || 'pr-review-medium',
-        high: process.env.OPENCLAW_AGENT_HIGH || 'pr-review-high'
+        low: process.env.OPENCLAW_AGENT_LOW || 'main',
+        medium: process.env.OPENCLAW_AGENT_MEDIUM || 'main',
+        high: process.env.OPENCLAW_AGENT_HIGH || 'main'
       };
-      const agentName = agentMap[level] || config.openclaw.reviewAgent || 'pr-review';
+      const agentName = agentMap[level] || config.openclaw.reviewAgent || 'main';
       const command = `openclaw agent --agent ${agentName} --message '${reviewPrompt.replace(/'/g, "\\'")}' --timeout 180`;
 
       const { stdout, stderr } = await execPromise(command);
