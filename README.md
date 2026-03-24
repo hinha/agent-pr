@@ -1,5 +1,5 @@
-# Simasfin MCP-based PR Monitor Daemon
-Production-grade Node.js daemon for monitoring PT-Sinarmas-Multifinance/simasfin-backend GitHub PRs using OpenClaw MCP tools, AI agents, and Telegram notifications.
+# MCP-based PR Monitor Daemon
+Production-grade Node.js daemon for monitoring repo GitHub PRs using OpenClaw MCP tools, AI agents, and Telegram notifications.
 
 ## Full Project Structure
 ```
