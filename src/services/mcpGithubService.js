@@ -57,7 +57,10 @@ class MCPGitHubService {
       const result = await this.spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
 
       try {
-        return JSON.parse(result.stdout);
+        const parsed = JSON.parse(result.stdout);
+        logger.info(`MCP response parsed for ${method}: type=${typeof parsed}, isArray=${Array.isArray(parsed)}, keys=${Object.keys(parsed || {}).join(', ')}`);
+        logger.info(`MCP response preview: ${JSON.stringify(parsed).substring(0, 500)}`);
+        return parsed;
       } catch (parseErr) {
         logger.error(`Failed to parse MCP output for ${method}: ${result.stdout}`);
         throw new Error(`MCP response parse failed: ${parseErr.message}`);
@@ -80,9 +83,9 @@ class MCPGitHubService {
       logger.debug(`spawn about to execute: ${command} ${args.slice(0, 4).join(' ')}... (${args.length} total args)`);
 
       // Spawn with maxBuffer to handle large payloads (10MB)
+      // Note: encoding option in spawn options doesn't work as expected, so we decode manually
       const spawnProcess = spawn(command, args, {
         maxBuffer: 10 * 1024 * 1024, // 10MB buffer
-        encoding: 'utf8',
         shell: false // Important: disable shell to avoid command injection
       });
 
@@ -90,11 +93,13 @@ class MCPGitHubService {
       let stderr = '';
 
       spawnProcess.stdout.on('data', (data) => {
-        stdout += data.toString();
+        // Explicitly decode buffer to string
+        stdout += data.toString('utf8');
       });
 
       spawnProcess.stderr.on('data', (data) => {
-        stderr += data.toString();
+        // Explicitly decode buffer to string
+        stderr += data.toString('utf8');
       });
 
       spawnProcess.on('close', (code) => {
@@ -130,6 +135,13 @@ class MCPGitHubService {
       per_page: 100,
       page: 1
     });
+
+    // Debug: log the response structure
+    logger.info(`MCP response type: ${typeof rawPRs}, isArray: ${Array.isArray(rawPRs)}`);
+    if (!Array.isArray(rawPRs)) {
+      logger.info(`MCP response keys: ${Object.keys(rawPRs || {}).join(', ')}`);
+      logger.info(`MCP response (first 500 chars): ${JSON.stringify(rawPRs).substring(0, 500)}`);
+    }
 
     return rawPRs.map(pr => ({
       id: pr.id,
