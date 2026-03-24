@@ -285,6 +285,80 @@ class OpenClawAgentService {
       .replace('{{TARGET_BRANCH}}', pr.baseBranch)
       .replace('{{PR_URL}}', pr.url);
   }
+
+  /**
+   * Format review body with proper GitHub markdown for fallback scenarios
+   * @param {Object} params - Format parameters
+   * @param {string} params.originalBody - Original review body
+   * @param {number} params.prNumber - Pull request number
+   * @param {string} params.originalEvent - Original event (e.g., REQUEST_CHANGES)
+   * @param {string} params.newEvent - New event (e.g., COMMENT)
+   * @param {string} params.reason - Reason for the change
+   */
+  async formatReviewBody({ originalBody, prNumber, originalEvent, newEvent, reason }) {
+    return this.retryOperation(async () => {
+      logger.info(`Formatting review body for PR #${prNumber} with OpenClaw agent`);
+
+      const prompt = `Format the following review body with proper GitHub markdown.
+
+REQUIREMENTS:
+1. Keep the original review content EXACTLY as-is at the top
+2. Add a horizontal rule (---) after the original content
+3. Add a blockquote at the bottom explaining the change
+4. Use proper GitHub markdown: bold (**text**), code backticks (\`text\`), emoji (⚠️)
+5. Make it professional and clean
+
+Original review body:
+"""
+${originalBody}
+"""
+
+Change explanation:
+- Original event: ${originalEvent}
+- New event: ${newEvent}
+- Reason: ${reason}
+
+Output ONLY the formatted markdown body (no explanation needed).`;
+
+      // Use the 'main' agent for formatting (or configured format agent)
+      const agentName = process.env.OPENCLAW_AGENT_FORMAT || 'main';
+      const command = `openclaw agent --agent ${agentName} --message '${prompt.replace(/'/g, "\\'")}' --timeout 30`;
+
+      logger.info(`Executing OpenClaw format command for PR #${prNumber} with agent: ${agentName}`);
+      const { stdout, stderr } = await execPromise(command);
+
+      logger.info(`OpenClaw format command completed for PR #${prNumber}`);
+      logger.debug(`stdout length: ${stdout?.length || 0}`);
+      if (stderr) {
+        logger.debug(`stderr: ${stderr?.substring(0, 200)}`);
+      }
+
+      // Parse the response
+      let formattedBody;
+      try {
+        const trimmed = stdout.trim();
+        const openClawResponse = JSON.parse(trimmed);
+
+        // Extract the formatted body from the response
+        if (openClawResponse.result && openClawResponse.result.payloads && openClawResponse.result.payloads.length > 0) {
+          formattedBody = openClawResponse.result.payloads[0].text;
+          // Remove markdown code blocks if present
+          formattedBody = formattedBody.replace(/```\w*\s*/g, '').replace(/```\s*/g, '').trim();
+        } else if (typeof openClawResponse === 'string') {
+          formattedBody = openClawResponse;
+        } else {
+          formattedBody = trimmed;
+        }
+
+        logger.info(`Successfully formatted review body for PR #${prNumber}, length: ${formattedBody?.length || 0}`);
+        return formattedBody || originalBody; // Fallback to original if formatting fails
+      } catch (parseErr) {
+        logger.warn(`Failed to parse format response: ${parseErr.message}, using original body`);
+        // Fallback to simple formatting if agent call fails
+        return `${originalBody}\n\n---\n\n> **⚠️ AUTO-FIXED:** This review was posted as \`${newEvent}\` instead of \`${originalEvent}\` because ${reason}.`;
+      }
+    }, 2, 2000, config.retries.backoffFactor);
+  }
 }
 
 module.exports = new OpenClawAgentService();

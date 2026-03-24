@@ -285,9 +285,23 @@ class MCPGitHubService {
           }
           // Retry with COMMENT event instead of REQUEST_CHANGES
           const fallbackArgs = { ...reviewArgs, event: 'COMMENT' };
-          // Add a note to the body about the change
+          // Use OpenClaw agent to format the body with proper GitHub markdown
           if (fallbackArgs.body) {
-            fallbackArgs.body = `[AUTO-FIXED] ${fallbackArgs.body}\n\n_Note: Changed from REQUEST_CHANGES to COMMENT because GitHub doesn't allow requesting changes on your own PR._`;
+            try {
+              const openclawAgentService = require('./openclawAgentService');
+              fallbackArgs.body = await openclawAgentService.formatReviewBody({
+                originalBody: fallbackArgs.body,
+                prNumber: pr.number,
+                originalEvent: 'REQUEST_CHANGES',
+                newEvent: 'COMMENT',
+                reason: 'GitHub does not allow requesting changes on your own pull request'
+              });
+              logger.info(`Review body formatted by OpenClaw agent for PR #${pr.number}`);
+            } catch (formatErr) {
+              logger.error(`Failed to format review body with agent: ${formatErr.message}, using fallback format`);
+              // Fallback to simple formatting
+              fallbackArgs.body = `${fallbackArgs.body}\n\n---\n\n> **⚠️ AUTO-FIXED:** This review was posted as \`COMMENT\` instead of \`REQUEST_CHANGES\` because GitHub doesn't allow requesting changes on your own PR.`;
+            }
           }
           logger.info(`Retrying batch ${batchNumber} with COMMENT event`);
           result = await this.callMCP('create_pull_request_review', fallbackArgs);
