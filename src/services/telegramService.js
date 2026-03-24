@@ -3,7 +3,6 @@ const config = require('../config');
 const logger = require('../utils/logger');
 const skipManager = require('./skipManager');
 const openclawAgentService = require('./openclawAgentService');
-const prStateManager = require('./prStateManager');
 
 class TelegramService {
   constructor() {
@@ -37,7 +36,9 @@ class TelegramService {
    */
   setupButtonHandlers() {
     this.bot.on('callback_query', async (query) => {
-      const [action, prId] = query.data.split(':');
+      const dataParts = query.data.split(':');
+      const action = dataParts[0];
+      const prId = dataParts[1];
       const prIdNum = parseInt(prId);
 
       try {
@@ -48,8 +49,34 @@ class TelegramService {
         if (!pr) throw new Error(`PR #${prId} not found`);
 
         if (action === 'review_now') {
-          await this.bot.answerCallbackQuery(query.id, { text: '🚀 Memulai proses review PR...' });
-          await this.bot.sendMessage(this.chatId, `🚀 **Memulai review untuk PR #${pr.number}**\n🔗 Link PR: ${pr.url}\nSilakan lakukan review manual pada perubahan kode di GitHub, setelah selesai kamu bisa tekan tombol ✅ Approve jika sudah oke.`, { disable_web_page_preview: false, message_thread_id: this.threadId, parse_mode: 'HTML' });
+          await this.bot.answerCallbackQuery(query.id);
+          // Fetch PR details for the message
+          const mcpService = require('./mcpGithubService');
+          const prDetails = await mcpService.getPRDetails(pr.number);
+          // Show level selection keyboard
+          await this.bot.sendMessage(this.chatId,
+            `🔍 <b>Pilih Level Review untuk PR #${pr.number}</b>\n\n` +
+            `📁 Files changed: ${prDetails?.filesChanged || 'N/A'}\n` +
+            `📊 Total changes: ${prDetails?.totalChanges || 'N/A'}`,
+            {
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: '🟢 Low (Basic)', callback_data: `review_level:${pr.id}:low` },
+                    { text: '🟡 Medium (Standard)', callback_data: `review_level:${pr.id}:medium` }
+                  ],
+                  [
+                    { text: '🔴 High (Comprehensive)', callback_data: `review_level:${pr.id}:high` }
+                  ],
+                  [
+                    { text: '❌ Batal', callback_data: `review_cancel:${pr.id}` }
+                  ]
+                ]
+              },
+              message_thread_id: this.threadId,
+              parse_mode: 'HTML'
+            }
+          );
         } else if (action === 'visit') {
           await this.bot.answerCallbackQuery(query.id, { text: '🔗 Membuka halaman PR...' });
           await this.bot.sendMessage(this.chatId, `🔗 PR URL: ${pr.url}`, { disable_web_page_preview: false, message_thread_id: this.threadId });
@@ -111,6 +138,32 @@ class TelegramService {
             message_id: query.message.message_id,
             message_thread_id: this.threadId
           });
+        } else if (action === 'review_level') {
+          // Format: review_level:prNumber:level
+          const level = dataParts[2];
+          await this.bot.answerCallbackQuery(query.id, { text: `🚀 Memulai review level ${level}...` });
+          await this.bot.sendMessage(this.chatId, `🔄 <b>Sedang melakukan review ${level.toUpperCase()} untuk PR #${prId}</b>\n⏳ Ini mungkin memakan waktu 1-2 menit...`, {
+            message_thread_id: this.threadId,
+            parse_mode: 'HTML'
+          });
+
+          // Trigger AI review with level
+          const reviewResult = await openclawAgentService.runReviewWithLevel(pr, level);
+
+          // Post review to GitHub
+          await mcpService.createReviewWithComments(pr, reviewResult);
+
+          // Send confirmation
+          await this.bot.sendMessage(this.chatId,
+            `✅ <b>Review Selesai!</b>\n\n` +
+            `📝 Level: ${level.toUpperCase()}\n` +
+            `💬 Comments: ${reviewResult.comments.length}\n` +
+            `🔗 ${pr.url}`,
+            { message_thread_id: this.threadId, parse_mode: 'HTML' }
+          );
+        } else if (action === 'review_cancel') {
+          await this.bot.answerCallbackQuery(query.id, { text: '❌ Review dibatalkan' });
+          await this.bot.deleteMessage(this.chatId, query.message.message_id);
         }
       } catch (err) {
         logger.error(`Button handler error: ${err.message}`);
@@ -161,16 +214,6 @@ class TelegramService {
       });
       logger.info(`Notification sent for PR #${pr.number}`);
     }, config.retries.telegramRetries, 3000, config.retries.backoffFactor);
-  }
-
-  /**
-   * Send full review result to Telegram
-   */
-  async sendReviewResult(pr, review) {
-    const escapeMd = (text) => text.replace(/([_*\[\]()~`>#+\-=|{}.!])/g, '\\$1');
-    const reviewText = `✅ *Full AI Review for PR #${pr.number}*
-${escapeMd(JSON.stringify(review, null, 2).substring(0, 4000))}`;
-    await this.bot.sendMessage(this.chatId, reviewText, { disable_web_page_preview: true, message_thread_id: this.threadId, parse_mode: 'MarkdownV2' });
   }
 }
 
