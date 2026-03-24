@@ -41,7 +41,8 @@ class OpenClawAgentService {
       const reviewPrompt = this.buildReviewPrompt(pr, level, levelConfig);
 
       // OpenClaw CLI: use 'agent' subcommand with --message flag
-      const command = `openclaw agent --message '${reviewPrompt.replace(/'/g, "\\'")}' --model ${config.openclaw.reviewModel} --timeout 180`;
+      // Model should be configured via 'openclaw models set' or agent config
+      const command = `openclaw agent --message '${reviewPrompt.replace(/'/g, "\\'")}' --timeout 180`;
 
       const { stdout, stderr } = await execPromise(command);
       if (stderr) logger.warn(`Review agent stderr: ${stderr}`);
