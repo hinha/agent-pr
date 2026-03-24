@@ -276,6 +276,13 @@ class MCPGitHubService {
         // Handle GitHub API restriction: Can not request changes on your own pull request
         if (error.message.includes('Can not request changes on your own pull request')) {
           logger.warn(`Cannot request changes on own PR #${pr.number}, falling back to COMMENT event`);
+          // Send warning notification to Telegram
+          try {
+            const telegramService = require('./telegramService');
+            await telegramService.sendWarning(pr.number, `Cannot request changes on your own PR (GitHub API restriction). Review posted as COMMENT instead.\n\nReview with ${batch.length} comments has been submitted.`);
+          } catch (telegramErr) {
+            logger.error(`Failed to send Telegram warning: ${telegramErr.message}`);
+          }
           // Retry with COMMENT event instead of REQUEST_CHANGES
           const fallbackArgs = { ...reviewArgs, event: 'COMMENT' };
           // Add a note to the body about the change

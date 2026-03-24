@@ -268,6 +268,22 @@ class TelegramService {
       logger.info(`Notification sent for PR #${pr.number}`);
     }, config.retries.telegramRetries, 3000, config.retries.backoffFactor);
   }
+
+  /**
+   * Send warning notification to Telegram (with retries)
+   */
+  async sendWarning(prNumber, message) {
+    return this.retryOperation(async () => {
+      const warningMessage = `⚠️ <b>WARNING</b>
+
+PR #${prNumber}: ${message}`;
+      await this.bot.sendMessage(this.chatId, warningMessage, {
+        message_thread_id: this.threadId,
+        parse_mode: 'HTML'
+      });
+      logger.info(`Warning notification sent for PR #${prNumber}`);
+    }, config.retries.telegramRetries, 3000, config.retries.backoffFactor);
+  }
 }
 
 module.exports = new TelegramService();
