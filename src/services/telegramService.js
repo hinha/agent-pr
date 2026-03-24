@@ -154,17 +154,34 @@ class TelegramService {
 
           // Post review to GitHub
           logger.info(`Posting review to GitHub for PR #${pr.number}`);
-          await mcpService.createReviewWithComments(pr, reviewResult);
+          const ghResult = await mcpService.createReviewWithComments(pr, reviewResult);
           logger.info(`Review posted to GitHub for PR #${pr.number}`);
 
-          // Send confirmation
-          await this.bot.sendMessage(this.chatId,
-            `✅ <b>Review Selesai!</b>\n\n` +
-            `📝 Level: ${level.toUpperCase()}\n` +
-            `💬 Comments: ${reviewResult.comments.length}\n` +
-            `🔗 ${pr.url}`,
-            { message_thread_id: this.threadId, parse_mode: 'HTML' }
-          );
+          // Send confirmation message with error handling
+          try {
+            const reviewUrl = ghResult?.html_url || pr.url;
+            await this.bot.sendMessage(this.chatId,
+              `✅ <b>Review Selesai!</b>\n\n` +
+              `📝 Level: ${level.toUpperCase()}\n` +
+              `💬 Comments: ${reviewResult.comments.length}\n` +
+              `🔗 ${reviewUrl}`,
+              { message_thread_id: this.threadId, parse_mode: 'HTML' }
+            );
+            logger.info(`Confirmation message sent to Telegram for PR #${pr.number}`);
+          } catch (msgErr) {
+            logger.error(`Failed to send confirmation message: ${msgErr.message}`, { stack: msgErr.stack });
+            // Try fallback without thread_id
+            try {
+              const reviewUrl = ghResult?.html_url || pr.url;
+              await this.bot.sendMessage(this.chatId,
+                `✅ Review Selesai!\n\nLevel: ${level.toUpperCase()}\nComments: ${reviewResult.comments.length}\nLink: ${reviewUrl}`,
+                { parse_mode: 'HTML' }
+              );
+              logger.info(`Fallback confirmation sent for PR #${pr.number}`);
+            } catch (fallbackErr) {
+              logger.error(`Fallback confirmation also failed: ${fallbackErr.message}`);
+            }
+          }
         } else if (action === 'review_cancel') {
           await this.bot.answerCallbackQuery(query.id, { text: '❌ Review dibatalkan' });
           await this.bot.deleteMessage(this.chatId, query.message.message_id);

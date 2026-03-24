@@ -117,6 +117,23 @@ class MCPGitHubService {
   async createReviewWithComments(pr, reviewResult) {
     logger.debug(`Creating review for PR #${pr.number} with ${reviewResult.comments.length} comments`);
 
+    // Determine event based on highest severity
+    const severities = reviewResult.comments.map(c => c.severity.toUpperCase());
+    const hasHigh = severities.includes('HIGH');
+    const hasMedium = severities.includes('MEDIUM');
+
+    // Select event based on severity
+    let event = 'COMMENT';
+    if (hasHigh) {
+      event = 'REQUEST_CHANGES';  // HIGH severity → request changes
+    } else if (hasMedium && reviewResult.comments.length > 0) {
+      event = 'COMMENT';  // MEDIUM → neutral comment
+    } else if (reviewResult.comments.length === 0) {
+      event = 'COMMENT';  // No comments → neutral
+    }
+
+    logger.info(`Review event: ${event} (HIGH: ${hasHigh}, MEDIUM: ${hasMedium}, Comments: ${reviewResult.comments.length})`);
+
     // Build comments array for GitHub API
     // Use 'line' + 'commit_id' for the newer API (instead of deprecated 'position')
     const comments = reviewResult.comments.map(c => ({
@@ -131,7 +148,7 @@ class MCPGitHubService {
       repo: this.repo,
       pull_number: pr.number,
       body: reviewResult.summary,
-      event: 'COMMENT',  // Use COMMENT instead of APPROVE/REQUEST_CHANGES for neutral review
+      event: event,
       commit_id: pr.headSha  // Required for line-based comments
     };
 
@@ -142,7 +159,13 @@ class MCPGitHubService {
 
     logger.info(`Review payload: ${JSON.stringify(reviewArgs, null, 2)}`);
     const result = await this.callMCP('create_pull_request_review', reviewArgs);
-    logger.info(`GitHub review created for PR #${pr.number}, result: ${JSON.stringify(result)}`);
+
+    // Verify success
+    if (!result || !result.id) {
+      throw new Error(`GitHub MCP review creation failed: ${JSON.stringify(result)}`);
+    }
+
+    logger.info(`GitHub MCP review created: ID=${result.id}, URL=${result.html_url}, State=${result.state}`);
     return result;
   }
 }
