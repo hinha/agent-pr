@@ -80,7 +80,8 @@ class MCPGitHubService {
       createdAt: new Date(pr.created_at),
       description: pr.body || 'No description provided',
       baseBranch: pr.base?.ref,
-      headBranch: pr.head?.ref
+      headBranch: pr.head?.ref,
+      headSha: pr.head?.sha
     }));
   }
 
@@ -117,9 +118,11 @@ class MCPGitHubService {
     logger.debug(`Creating review for PR #${pr.number} with ${reviewResult.comments.length} comments`);
 
     // Build comments array for GitHub API
+    // Use 'line' + 'commit_id' for the newer API (instead of deprecated 'position')
     const comments = reviewResult.comments.map(c => ({
       path: c.file,
-      position: c.line,  // position is the line index in the diff
+      line: c.line,
+      commit_id: pr.headSha,
       body: `[${c.severity.toUpperCase()}] ${c.message}`
     }));
 
@@ -128,7 +131,8 @@ class MCPGitHubService {
       repo: this.repo,
       pull_number: pr.number,
       body: reviewResult.summary,
-      event: 'COMMENT'  // Use COMMENT instead of APPROVE/REQUEST_CHANGES for neutral review
+      event: 'COMMENT',  // Use COMMENT instead of APPROVE/REQUEST_CHANGES for neutral review
+      commit_id: pr.headSha  // Required for line-based comments
     };
 
     // Only add comments if there are any
@@ -136,6 +140,7 @@ class MCPGitHubService {
       reviewArgs.comments = comments;
     }
 
+    logger.debug(`Review payload: ${JSON.stringify(reviewArgs, null, 2)}`);
     return this.callMCP('create_pull_request_review', reviewArgs);
   }
 }

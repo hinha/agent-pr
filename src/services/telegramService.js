@@ -150,6 +150,7 @@ class TelegramService {
           // Trigger AI review with level
           const reviewResult = await openclawAgentService.runReviewWithLevel(pr, level);
 
+          logger.info(`Review for PR #${pr.number} at level ${level} with ${reviewResult.comments.length} comments`);
           // Post review to GitHub
           await mcpService.createReviewWithComments(pr, reviewResult);
 
