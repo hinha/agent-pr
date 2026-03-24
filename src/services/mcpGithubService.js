@@ -43,11 +43,21 @@ class MCPGitHubService {
       const spawnArgs = ['call', `${this.serverName}.${method}`, '--output', 'json'];
 
       // Add each argument as separate item (avoids shell interpretation)
+      // For mcporter: primitive values (string, number, boolean) use key=value
+      // Complex values (object, array) use key:JSON
       for (const [key, value] of Object.entries(args)) {
-        if (typeof value === 'object') {
+        if (value === null || value === undefined) {
+          spawnArgs.push(`${key}=null`);
+        } else if (typeof value === 'object') {
+          // Objects and arrays: use colon format with JSON
           spawnArgs.push(`${key}:${JSON.stringify(value)}`);
+        } else if (typeof value === 'string') {
+          // Strings: use equals format, but DON'T JSON.stringify (avoids double quotes)
+          // The string value is passed directly as key=value
+          spawnArgs.push(`${key}=${value}`);
         } else {
-          spawnArgs.push(`${key}=${JSON.stringify(value)}`);
+          // Numbers, booleans: use equals format
+          spawnArgs.push(`${key}=${value}`);
         }
       }
 
@@ -60,6 +70,14 @@ class MCPGitHubService {
         const parsed = JSON.parse(result.stdout);
         logger.info(`MCP response parsed for ${method}: type=${typeof parsed}, isArray=${Array.isArray(parsed)}, keys=${Object.keys(parsed || {}).join(', ')}`);
         logger.info(`MCP response preview: ${JSON.stringify(parsed).substring(0, 500)}`);
+
+        // Check if MCP response contains an error
+        if (parsed.error) {
+          const errorMsg = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
+          logger.error(`MCP returned error for ${method}: ${errorMsg}`);
+          throw new Error(`MCP error: ${errorMsg}`);
+        }
+
         return parsed;
       } catch (parseErr) {
         logger.error(`Failed to parse MCP output for ${method}: ${result.stdout}`);
