@@ -1,4 +1,4 @@
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
 const config = require('../config');
@@ -31,67 +31,91 @@ class MCPGitHubService {
   }
 
   /**
-   * Execute MCP tool call with exponential backoff retries
+   * Execute MCP tool call using spawn (bypasses shell to avoid command injection)
    */
   async callMCP(method, args = {}) {
     return this.retryOperation(async () => {
-      // Build argument string for mcporter
-      const argStrings = Object.entries(args)
-        .map(([key, value]) => {
-          if (typeof value === 'object') return `${key}:${JSON.stringify(value)}`;
-          return `${key}=${JSON.stringify(value)}`;
-        })
-        .join(' ');
-
-      const fullCommand = `${this.mcpBaseCmd} call ${this.serverName}.${method} ${argStrings} --output json`;
-      logger.info(`Executing MCP command: ${this.serverName}.${method} (${argStrings.length} chars)`);
-
-      // Add timeout to prevent hanging
       const timeoutMs = 60000; // 60 second timeout for MCP calls
       const startTime = Date.now();
-      logger.info(`Starting MCP call (timeout: ${timeoutMs}ms)`);
+      logger.info(`Starting MCP call ${this.serverName}.${method} (timeout: ${timeoutMs}ms)`);
 
-      const execWithTimeout = new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          const elapsed = Date.now() - startTime;
-          logger.error(`MCP command timeout after ${timeoutMs}ms (elapsed: ${elapsed}ms)`);
-          reject(new Error(`MCP command timeout after ${timeoutMs}ms (elapsed: ${elapsed}ms)`));
-        }, timeoutMs);
+      // Build arguments array for spawn (bypasses shell interpretation)
+      const spawnArgs = ['call', `${this.serverName}.${method}`, '--output', 'json'];
 
-        logger.debug(`execPromise about to execute: ${fullCommand.substring(0, 200)}...`);
+      // Add each argument as separate item (avoids shell interpretation)
+      for (const [key, value] of Object.entries(args)) {
+        if (typeof value === 'object') {
+          spawnArgs.push(`${key}:${JSON.stringify(value)}`);
+        } else {
+          spawnArgs.push(`${key}=${JSON.stringify(value)}`);
+        }
+      }
 
-        // Add exec options to handle large payloads
-        const execOptions = {
-          maxBuffer: 10 * 1024 * 1024, // 10MB buffer (increase from default 1MB)
-          encoding: 'utf8'
-        };
-        logger.debug(`Exec options: maxBuffer=${execOptions.maxBuffer} bytes (${execOptions.maxBuffer / 1024 / 1024}MB)`);
+      logger.info(`Executing MCP command: ${this.serverName}.${method} with ${Object.keys(args).length} args`);
 
-        execPromise(fullCommand, execOptions)
-          .then(({ stdout, stderr }) => {
-            clearTimeout(timer);
-            const elapsed = Date.now() - startTime;
-            logger.info(`MCP command completed in ${elapsed}ms, stdout length: ${stdout?.length || 0}`);
-            if (stderr && !stderr.includes('warning')) logger.warn(`MCP stderr: ${stderr}`);
-            resolve({ stdout, stderr });
-          })
-          .catch(err => {
-            clearTimeout(timer);
-            const elapsed = Date.now() - startTime;
-            logger.error(`MCP command failed after ${elapsed}ms: ${err.message}`);
-            reject(err);
-          });
-      });
-
-      const { stdout, stderr } = await execWithTimeout;
+      // Use spawn with maxBuffer option to handle large payloads
+      const result = await this.spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
 
       try {
-        return JSON.parse(stdout);
+        return JSON.parse(result.stdout);
       } catch (parseErr) {
-        logger.error(`Failed to parse MCP output for ${method}: ${stdout}`);
+        logger.error(`Failed to parse MCP output for ${method}: ${result.stdout}`);
         throw new Error(`MCP response parse failed: ${parseErr.message}`);
       }
     }, config.retries.mcpRetries, 2000, config.retries.backoffFactor);
+  }
+
+  /**
+   * Spawn command with timeout and large buffer support
+   */
+  spawnWithTimeout(command, args, timeoutMs, startTime) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        spawnProcess.kill('SIGTERM');
+        const elapsed = Date.now() - startTime;
+        logger.error(`MCP command timeout after ${timeoutMs}ms (elapsed: ${elapsed}ms)`);
+        reject(new Error(`MCP command timeout after ${timeoutMs}ms (elapsed: ${elapsed}ms)`));
+      }, timeoutMs);
+
+      logger.debug(`spawn about to execute: ${command} ${args.slice(0, 4).join(' ')}... (${args.length} total args)`);
+
+      // Spawn with maxBuffer to handle large payloads (10MB)
+      const spawnProcess = spawn(command, args, {
+        maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+        encoding: 'utf8',
+        shell: false // Important: disable shell to avoid command injection
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      spawnProcess.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      spawnProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      spawnProcess.on('close', (code) => {
+        clearTimeout(timer);
+        const elapsed = Date.now() - startTime;
+        logger.info(`MCP command completed in ${elapsed}ms, exit code: ${code}, stdout length: ${stdout?.length || 0}`);
+        if (stderr && !stderr.includes('warning')) logger.warn(`MCP stderr: ${stderr}`);
+        if (code !== 0) {
+          reject(new Error(`MCP command failed with exit code ${code}: ${stderr || stdout}`));
+        } else {
+          resolve({ stdout, stderr });
+        }
+      });
+
+      spawnProcess.on('error', (err) => {
+        clearTimeout(timer);
+        const elapsed = Date.now() - startTime;
+        logger.error(`MCP command failed after ${elapsed}ms: ${err.message}`);
+        reject(err);
+      });
+    });
   }
 
   /**
