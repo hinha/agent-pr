@@ -136,20 +136,52 @@ class OpenClawAgentService {
         logger.info(`stderr (first 500 chars): ${stderr?.substring(0, 500)}`);
       }
 
-      // Try to parse JSON, with fallback for text response
-      let result;
-      let outputToParse = stdout;
-
       // Try to parse JSON
+      let result;
       try {
         // First try: parse stdout directly (trimmed)
         const trimmed = stdout.trim();
         logger.debug(`Attempting to parse trimmed stdout, length: ${trimmed.length}`);
-        result = JSON.parse(trimmed);
-        logger.info(`Successfully parsed JSON directly from stdout, summary: ${result.summary?.substring(0, 100)}..., comments: ${result.comments?.length || 0}`);
+
+        // Parse the OpenClaw response structure
+        let openClawResponse = JSON.parse(trimmed);
+
+        // Check if this is an OpenClaw response with nested result
+        if (openClawResponse.result && openClawResponse.result.payloads && openClawResponse.result.payloads.length > 0) {
+          logger.info(`Detected OpenClaw response structure with payloads`);
+
+          // Extract the actual review JSON from the first payload's text field
+          const payloadText = openClawResponse.result.payloads[0].text;
+
+          if (payloadText) {
+            // Remove markdown code blocks if present (```json ... ```)
+            let reviewJsonText = payloadText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+            logger.info(`Extracted review JSON from payload (${reviewJsonText.length} chars)`);
+
+            // Parse the actual review JSON
+            try {
+              result = JSON.parse(reviewJsonText);
+              logger.info(`Successfully parsed nested review JSON, summary: "${result.summary?.substring(0, 50)}...", comments: ${result.comments?.length || 0}`);
+            } catch (innerErr) {
+              logger.error(`Failed to parse nested review JSON: ${innerErr.message}`);
+              logger.error(`Nested JSON text (first 500): ${reviewJsonText.substring(0, 500)}`);
+              throw innerErr;
+            }
+          } else {
+            throw new Error('Payload text is empty');
+          }
+        } else if (openClawResponse.summary && openClawResponse.comments) {
+          // Direct review response format
+          logger.info(`Detected direct review response format`);
+          result = openClawResponse;
+          logger.info(`Successfully parsed direct review, comments: ${result.comments?.length || 0}`);
+        } else {
+          throw new Error(`Unknown response format. Keys: ${Object.keys(openClawResponse).join(', ')}`);
+        }
       } catch (parseErr) {
         // If output is not JSON, try to extract JSON from text
-        logger.warn(`Failed to parse JSON directly from stdout: ${parseErr.message}`);
+        logger.error(`Failed to parse JSON: ${parseErr.message}`);
 
         // Find JSON by brace counting - more reliable than regex
         let jsonStr = this.extractJSON(stdout);
