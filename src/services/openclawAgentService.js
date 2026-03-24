@@ -64,7 +64,14 @@ class OpenClawAgentService {
                     logger.warn(`JSON at ${i}-${j} has "summary" and "comments" but failed to parse: ${e.message}`);
                   }
                 } else {
-                  logger.debug(`JSON at ${i}-${j} doesn't have expected keys, continuing...`);
+                  // Log what keys this JSON has for debugging
+                  try {
+                    const parsed = JSON.parse(jsonStr);
+                    const keys = Object.keys(parsed);
+                    logger.debug(`JSON at ${i}-${j} has keys: ${keys.join(', ')} (not our target, continuing...)`);
+                  } catch (parseTry) {
+                    logger.debug(`JSON at ${i}-${j} couldn't be parsed to check keys (continuing...)`);
+                  }
                 }
                 // Found a valid JSON object but not our target, continue to next brace
                 break;
@@ -131,7 +138,8 @@ class OpenClawAgentService {
       logger.info(`OpenClaw command completed for PR #${pr.number}`);
       logger.info(`stdout length: ${stdout?.length || 0}`);
       logger.info(`stderr length: ${stderr?.length || 0}`);
-      logger.info(`stdout (first 1500 chars): ${stdout?.substring(0, 1500)}`);
+      logger.info(`stdout (first 2000 chars): ${stdout?.substring(0, 2000)}`);
+      logger.info(`stdout (last 500 chars): ${stdout?.substring(Math.max(0, (stdout?.length || 0) - 500))}`);
       if (stderr) {
         logger.info(`stderr (first 500 chars): ${stderr?.substring(0, 500)}`);
       }
@@ -146,18 +154,22 @@ class OpenClawAgentService {
         // Parse the OpenClaw response structure
         let openClawResponse = JSON.parse(trimmed);
 
+        logger.info(`Parsed OpenClaw response, keys: ${Object.keys(openClawResponse).join(', ')}`);
+
         // Check if this is an OpenClaw response with nested result
         if (openClawResponse.result && openClawResponse.result.payloads && openClawResponse.result.payloads.length > 0) {
-          logger.info(`Detected OpenClaw response structure with payloads`);
+          logger.info(`Detected OpenClaw response structure with payloads (${openClawResponse.result.payloads.length} payloads)`);
 
           // Extract the actual review JSON from the first payload's text field
           const payloadText = openClawResponse.result.payloads[0].text;
 
           if (payloadText) {
+            logger.info(`Payload text found (${payloadText.length} chars), first 200: ${payloadText.substring(0, 200)}`);
+
             // Remove markdown code blocks if present (```json ... ```)
             let reviewJsonText = payloadText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
 
-            logger.info(`Extracted review JSON from payload (${reviewJsonText.length} chars)`);
+            logger.info(`Extracted review JSON from payload (${reviewJsonText.length} chars), first 200: ${reviewJsonText.substring(0, 200)}`);
 
             // Parse the actual review JSON
             try {
@@ -177,6 +189,8 @@ class OpenClawAgentService {
           result = openClawResponse;
           logger.info(`Successfully parsed direct review, comments: ${result.comments?.length || 0}`);
         } else {
+          logger.warn(`Unknown response format. Keys: ${Object.keys(openClawResponse).join(', ')}`);
+          logger.warn(`Response structure: ${JSON.stringify(openClawResponse, null, 2).substring(0, 500)}`);
           throw new Error(`Unknown response format. Keys: ${Object.keys(openClawResponse).join(', ')}`);
         }
       } catch (parseErr) {
