@@ -95,16 +95,29 @@ class OpenClawAgentService {
   buildReviewPrompt(pr, level, levelConfig) {
     const focusAreas = levelConfig.focusAreas.join(', ');
 
-    // Read prompt template from file
-    const templatePath = path.join(process.cwd(), 'src/prompts/review.txt');
-    logger.info(`Reading prompt template from: ${templatePath}`);
+    // Try multiple paths for prompt template (dev vs prod)
+    const possiblePaths = [
+      path.join(process.cwd(), 'src/prompts/review.txt'),  // Dev environment
+      path.join(process.cwd(), 'prompts/review.txt'),      // Prod environment
+      path.join(__dirname, '../prompts/review.txt')        // Relative to service file
+    ];
+
     let template;
-    try {
-      template = fs.readFileSync(templatePath, 'utf-8');
-      logger.info(`Prompt template loaded successfully, length: ${template.length} chars`);
-    } catch (err) {
-      logger.error(`Failed to read prompt template from ${templatePath}: ${err.message}`);
-      throw new Error(`Prompt template not found: ${templatePath}`);
+    let templatePath = '';
+    for (const tryPath of possiblePaths) {
+      try {
+        template = fs.readFileSync(tryPath, 'utf-8');
+        templatePath = tryPath;
+        logger.info(`Prompt template loaded from: ${tryPath}, length: ${template.length} chars`);
+        break;
+      } catch (err) {
+        // Try next path
+      }
+    }
+
+    if (!template) {
+      logger.error(`Failed to read prompt template from any of: ${possiblePaths.join(', ')}`);
+      throw new Error(`Prompt template not found in any location`);
     }
 
     // Replace placeholders
