@@ -44,10 +44,46 @@ class MCPGitHubService {
         .join(' ');
 
       const fullCommand = `${this.mcpBaseCmd} call ${this.serverName}.${method} ${argStrings} --output json`;
-      logger.debug(`Executing MCP command: ${fullCommand}`);
+      logger.info(`Executing MCP command: ${this.serverName}.${method} (${argStrings.length} chars)`);
 
-      const { stdout, stderr } = await execPromise(fullCommand);
-      if (stderr && !stderr.includes('warning')) logger.warn(`MCP stderr: ${stderr}`);
+      // Add timeout to prevent hanging
+      const timeoutMs = 60000; // 60 second timeout for MCP calls
+      const startTime = Date.now();
+      logger.info(`Starting MCP call (timeout: ${timeoutMs}ms)`);
+
+      const execWithTimeout = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          const elapsed = Date.now() - startTime;
+          logger.error(`MCP command timeout after ${timeoutMs}ms (elapsed: ${elapsed}ms)`);
+          reject(new Error(`MCP command timeout after ${timeoutMs}ms (elapsed: ${elapsed}ms)`));
+        }, timeoutMs);
+
+        logger.debug(`execPromise about to execute: ${fullCommand.substring(0, 200)}...`);
+
+        // Add exec options to handle large payloads
+        const execOptions = {
+          maxBuffer: 10 * 1024 * 1024, // 10MB buffer (increase from default 1MB)
+          encoding: 'utf8'
+        };
+        logger.debug(`Exec options: maxBuffer=${execOptions.maxBuffer} bytes (${execOptions.maxBuffer / 1024 / 1024}MB)`);
+
+        execPromise(fullCommand, execOptions)
+          .then(({ stdout, stderr }) => {
+            clearTimeout(timer);
+            const elapsed = Date.now() - startTime;
+            logger.info(`MCP command completed in ${elapsed}ms, stdout length: ${stdout?.length || 0}`);
+            if (stderr && !stderr.includes('warning')) logger.warn(`MCP stderr: ${stderr}`);
+            resolve({ stdout, stderr });
+          })
+          .catch(err => {
+            clearTimeout(timer);
+            const elapsed = Date.now() - startTime;
+            logger.error(`MCP command failed after ${elapsed}ms: ${err.message}`);
+            reject(err);
+          });
+      });
+
+      const { stdout, stderr } = await execWithTimeout;
 
       try {
         return JSON.parse(stdout);
@@ -143,30 +179,64 @@ class MCPGitHubService {
       body: `[${c.severity.toUpperCase()}] ${c.message}`
     }));
 
-    const reviewArgs = {
-      owner: this.owner,
-      repo: this.repo,
-      pull_number: pr.number,
-      body: reviewResult.summary,
-      event: event,
-      commit_id: pr.headSha  // Required for line-based comments
-    };
+    // Process comments in batches to avoid command line length issues
+    const BATCH_SIZE = 5; // 5 comments per batch
+    const commentBatches = [];
 
-    // Only add comments if there are any
-    if (comments.length > 0) {
-      reviewArgs.comments = comments;
+    for (let i = 0; i < comments.length; i += BATCH_SIZE) {
+      commentBatches.push(comments.slice(i, i + BATCH_SIZE));
     }
 
-    logger.info(`Review payload: ${JSON.stringify(reviewArgs, null, 2)}`);
-    const result = await this.callMCP('create_pull_request_review', reviewArgs);
+    logger.info(`Processing ${comments.length} comments in ${commentBatches.length} batches (${BATCH_SIZE} comments per batch)`);
 
-    // Verify success
-    if (!result || !result.id) {
-      throw new Error(`GitHub MCP review creation failed: ${JSON.stringify(result)}`);
+    let firstReviewResult = null;
+    let batchNumber = 0;
+
+    // Process each batch
+    for (const batch of commentBatches) {
+      batchNumber++;
+
+      // Build review args for this batch
+      const reviewArgs = {
+        owner: this.owner,
+        repo: this.repo,
+        pull_number: pr.number,
+        body: batchNumber === 1 ? reviewResult.summary : `Additional comments (batch ${batchNumber}/${commentBatches.length})`,
+        event: batchNumber === 1 ? event : 'COMMENT', // First batch uses determined event, rest use COMMENT
+        commit_id: pr.headSha
+      };
+
+      // Add comments to this batch
+      if (batch.length > 0) {
+        reviewArgs.comments = batch;
+      }
+
+      logger.info(`Sending batch ${batchNumber}/${commentBatches.length} (${batch.length} comments)`);
+      logger.debug(`Batch ${batchNumber} payload: ${JSON.stringify(reviewArgs, null, 2)}`);
+
+      // Call MCP for this batch
+      const result = await this.callMCP('create_pull_request_review', reviewArgs);
+
+      // Verify success
+      if (!result || !result.id) {
+        throw new Error(`Batch ${batchNumber} failed: ${JSON.stringify(result)}`);
+      }
+
+      logger.info(`Batch ${batchNumber}/${commentBatches.length} created: ID=${result.id}, URL=${result.html_url}, State=${result.state}`);
+
+      // Store first batch result for return
+      if (batchNumber === 1) {
+        firstReviewResult = result;
+      }
+
+      // Small delay between batches to avoid rate limiting (except for last batch)
+      if (batchNumber < commentBatches.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+      }
     }
 
-    logger.info(`GitHub MCP review created: ID=${result.id}, URL=${result.html_url}, State=${result.state}`);
-    return result;
+    logger.info(`All ${commentBatches.length} batches completed successfully for PR #${pr.number}`);
+    return firstReviewResult;
   }
 }
 
