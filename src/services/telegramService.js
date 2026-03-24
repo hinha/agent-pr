@@ -102,19 +102,43 @@ class TelegramService {
         } else if (action === 'reject') {
           await this.bot.answerCallbackQuery(query.id, { text: '❌ Rejecting PR...' });
           // Add rejection comment and request changes
-          await mcpService.callMCP('create_pull_request_review', {
-            owner: config.github.owner,
-            repo: config.github.repo,
-            pull_number: pr.number,
-            event: 'REQUEST_CHANGES',
-            body: 'Changes requested via OpenClaw PR Monitor. Minimal 2 reviewers required, 1 approved so far.'
-          });
-          await this.bot.editMessageText(`❌ PR #${pr.number} changes requested. Waiting for additional approvals (min 2 total required).`, {
-            chat_id: this.chatId,
-            message_id: query.message.message_id,
-            message_thread_id: this.threadId
-          });
-          logger.info(`PR #${pr.number} changes requested`);
+          try {
+            await mcpService.callMCP('create_pull_request_review', {
+              owner: config.github.owner,
+              repo: config.github.repo,
+              pull_number: pr.number,
+              event: 'REQUEST_CHANGES',
+              body: 'Changes requested via OpenClaw PR Monitor. Minimal 2 reviewers required, 1 approved so far.'
+            });
+            await this.bot.editMessageText(`❌ PR #${pr.number} changes requested. Waiting for additional approvals (min 2 total required).`, {
+              chat_id: this.chatId,
+              message_id: query.message.message_id,
+              message_thread_id: this.threadId
+            });
+            logger.info(`PR #${pr.number} changes requested`);
+          } catch (error) {
+            // Handle GitHub API restriction: Can not request changes on your own pull request
+            if (error.message.includes('Can not request changes on your own pull request')) {
+              logger.warn(`Cannot request changes on own PR #${pr.number}, posting as COMMENT instead`);
+              // Fallback to COMMENT
+              await mcpService.callMCP('create_pull_request_review', {
+                owner: config.github.owner,
+                repo: config.github.repo,
+                pull_number: pr.number,
+                event: 'COMMENT',
+                body: '⚠️ Cannot request changes on your own PR (GitHub restriction). Posted as comment instead.\n\nChanges requested via OpenClaw PR Monitor. Minimal 2 reviewers required, 1 approved so far.'
+              });
+              // Inform user about the limitation
+              await this.bot.editMessageText(`⚠️ Cannot request changes on own PR (GitHub restriction). Posted as comment instead.\n\nPR #${pr.number} - Changes requested (min 2 reviewers required, 1 approved so far).`, {
+                chat_id: this.chatId,
+                message_id: query.message.message_id,
+                message_thread_id: this.threadId
+              });
+              logger.info(`PR #${pr.number} rejection posted as COMMENT due to own PR restriction`);
+            } else {
+              throw error; // Re-throw other errors
+            }
+          }
         } else if (action === 'close') {
           await this.bot.answerCallbackQuery(query.id, { text: '🔒 Closing PR...' });
           // Close PR via MCP

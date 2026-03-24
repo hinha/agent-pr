@@ -268,8 +268,27 @@ class MCPGitHubService {
       logger.info(`Sending batch ${batchNumber}/${commentBatches.length} (${batch.length} comments)`);
       logger.debug(`Batch ${batchNumber} payload: ${JSON.stringify(reviewArgs, null, 2)}`);
 
-      // Call MCP for this batch
-      const result = await this.callMCP('create_pull_request_review', reviewArgs);
+      // Call MCP for this batch with fallback for "own PR" restriction
+      let result;
+      try {
+        result = await this.callMCP('create_pull_request_review', reviewArgs);
+      } catch (error) {
+        // Handle GitHub API restriction: Can not request changes on your own pull request
+        if (error.message.includes('Can not request changes on your own pull request')) {
+          logger.warn(`Cannot request changes on own PR #${pr.number}, falling back to COMMENT event`);
+          // Retry with COMMENT event instead of REQUEST_CHANGES
+          const fallbackArgs = { ...reviewArgs, event: 'COMMENT' };
+          // Add a note to the body about the change
+          if (fallbackArgs.body) {
+            fallbackArgs.body = `[AUTO-FIXED] ${fallbackArgs.body}\n\n_Note: Changed from REQUEST_CHANGES to COMMENT because GitHub doesn't allow requesting changes on your own PR._`;
+          }
+          logger.info(`Retrying batch ${batchNumber} with COMMENT event`);
+          result = await this.callMCP('create_pull_request_review', fallbackArgs);
+          logger.info(`Successfully posted review as COMMENT for PR #${pr.number}`);
+        } else {
+          throw error; // Re-throw other errors
+        }
+      }
 
       // Verify success
       if (!result || !result.id) {
