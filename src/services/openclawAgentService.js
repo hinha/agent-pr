@@ -299,26 +299,8 @@ class OpenClawAgentService {
     return this.retryOperation(async () => {
       logger.info(`Formatting review body for PR #${prNumber} with OpenClaw agent`);
 
-      const prompt = `Format the following review body with proper GitHub markdown.
-
-REQUIREMENTS:
-1. Keep the original review content EXACTLY as-is at the top
-2. Add a horizontal rule (---) after the original content
-3. Add a blockquote at the bottom explaining the change
-4. Use proper GitHub markdown: bold (**text**), code backticks (\`text\`), emoji (⚠️)
-5. Make it professional and clean
-
-Original review body:
-"""
-${originalBody}
-"""
-
-Change explanation:
-- Original event: ${originalEvent}
-- New event: ${newEvent}
-- Reason: ${reason}
-
-Output ONLY the formatted markdown body (no explanation needed).`;
+      // Load format prompt template
+      const prompt = this.buildFormatPrompt(originalBody, originalEvent, newEvent, reason);
 
       // Use the 'main' agent for formatting (or configured format agent)
       const agentName = process.env.OPENCLAW_AGENT_FORMAT || 'main';
@@ -358,6 +340,41 @@ Output ONLY the formatted markdown body (no explanation needed).`;
         return `${originalBody}\n\n---\n\n> **⚠️ AUTO-FIXED:** This review was posted as \`${newEvent}\` instead of \`${originalEvent}\` because ${reason}.`;
       }
     }, 2, 2000, config.retries.backoffFactor);
+  }
+
+  /**
+   * Build format prompt from template
+   */
+  buildFormatPrompt(originalBody, originalEvent, newEvent, reason) {
+    // Try multiple paths for prompt template (dev vs prod)
+    const possiblePaths = [
+      path.join(process.cwd(), 'src/prompts/review_body_format.txt'),  // Dev environment
+      path.join(process.cwd(), 'prompts/review_body_format.txt'),      // Prod environment
+      path.join(__dirname, '../prompts/review_body_format.txt')        // Relative to service file
+    ];
+
+    let template;
+    for (const tryPath of possiblePaths) {
+      try {
+        template = fs.readFileSync(tryPath, 'utf-8');
+        logger.info(`Format prompt template loaded from: ${tryPath}, length: ${template.length} chars`);
+        break;
+      } catch (err) {
+        // Try next path
+      }
+    }
+
+    if (!template) {
+      logger.error(`Failed to read format prompt template from any of: ${possiblePaths.join(', ')}`);
+      throw new Error(`Format prompt template not found in any location`);
+    }
+
+    // Replace placeholders
+    return template
+      .replace('{{ORIGINAL_BODY}}', originalBody)
+      .replace('{{ORIGINAL_EVENT}}', originalEvent)
+      .replace('{{NEW_EVENT}}', newEvent)
+      .replace('{{REASON}}', reason);
   }
 }
 
