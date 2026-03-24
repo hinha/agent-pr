@@ -107,6 +107,37 @@ class MCPGitHubService {
       totalChanges: files.reduce((sum, f) => sum + f.changes, 0)
     };
   }
+
+  /**
+   * Create a PR review with per-line comments
+   * @param {Object} pr - PR object
+   * @param {Object} reviewResult - Review result with comments array
+   */
+  async createReviewWithComments(pr, reviewResult) {
+    logger.debug(`Creating review for PR #${pr.number} with ${reviewResult.comments.length} comments`);
+
+    // Build comments array for GitHub API
+    const comments = reviewResult.comments.map(c => ({
+      path: c.file,
+      position: c.line,  // position is the line index in the diff
+      body: `[${c.severity.toUpperCase()}] ${c.message}`
+    }));
+
+    const reviewArgs = {
+      owner: this.owner,
+      repo: this.repo,
+      pull_number: pr.number,
+      body: reviewResult.summary,
+      event: 'COMMENT'  // Use COMMENT instead of APPROVE/REQUEST_CHANGES for neutral review
+    };
+
+    // Only add comments if there are any
+    if (comments.length > 0) {
+      reviewArgs.comments = comments;
+    }
+
+    return this.callMCP('create_pull_request_review', reviewArgs);
+  }
 }
 
 module.exports = new MCPGitHubService();
