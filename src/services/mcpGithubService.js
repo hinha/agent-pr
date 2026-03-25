@@ -176,6 +176,28 @@ class MCPGitHubService {
   }
 
   /**
+   * Check if a file is a test file (should be excluded from review)
+   */
+  isTestFile(filename) {
+    const testPatterns = [
+      '_test.go',           // Go test files
+      '_test.js',           // JavaScript test files
+      '_test.ts',           // TypeScript test files
+      '.test.',             // Files with .test. in name
+      '/e2e_test/',         // E2E test folder
+      '/e2e/',              // E2E folder
+      '/__tests__/',        // JavaScript test folder
+      '/test/',             // Generic test folder
+      '/tests/',            // Generic tests folder
+      '/spec/',             // Spec/test folder
+      '_spec.',             // Spec files (Jasmine, etc)
+      '.spec.',             // Spec files variant
+    ];
+
+    return testPatterns.some(pattern => filename.includes(pattern));
+  }
+
+  /**
    * Get PR changed files and diff metadata via MCP
    */
   async getPRDetails(prNumber) {
@@ -186,16 +208,26 @@ class MCPGitHubService {
       pull_number: prNumber
     });
 
+    // Filter out test files
+    const filteredFiles = files.filter(f => !this.isTestFile(f.filename));
+    const skippedCount = files.length - filteredFiles.length;
+
+    if (skippedCount > 0) {
+      logger.info(`Filtered out ${skippedCount} test file(s) from PR #${prNumber}`);
+    }
+
     return {
-      filesChanged: files.length,
-      files: files.map(f => ({
+      filesChanged: filteredFiles.length,
+      files: filteredFiles.map(f => ({
         filename: f.filename,
         additions: f.additions,
         deletions: f.deletions,
         changes: f.changes,
         status: f.status
       })),
-      totalChanges: files.reduce((sum, f) => sum + f.changes, 0)
+      totalChanges: filteredFiles.reduce((sum, f) => sum + f.changes, 0),
+      // Keep original count for reference
+      totalFilesChanged: files.length
     };
   }
 
@@ -226,12 +258,21 @@ class MCPGitHubService {
 
     // Build comments array for GitHub API
     // Use 'line' + 'commit_id' for the newer API (instead of deprecated 'position')
-    const comments = reviewResult.comments.map(c => ({
-      path: c.file,
-      line: c.line,
-      commit_id: pr.headSha,
-      body: `[${c.severity.toUpperCase()}] ${c.message}`
-    }));
+    const comments = reviewResult.comments.map(c => {
+      let commentBody = `[${c.severity.toUpperCase()}] ${c.message}`;
+
+      // Append suggested code if available
+      if (c.suggestedCode) {
+        commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${c.suggestedCode}\n\`\`\``;
+      }
+
+      return {
+        path: c.file,
+        line: c.line,
+        commit_id: pr.headSha,
+        body: commentBody
+      };
+    });
 
     // Process comments in batches to avoid command line length issues
     const BATCH_SIZE = 5; // 5 comments per batch
