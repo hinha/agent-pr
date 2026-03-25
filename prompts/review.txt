@@ -30,3 +30,9 @@ INFO PR Gunakan MCP github-work:
 - URL: {{PR_URL}}
 
 Pastikan output hanya JSON yang valid, tanpa text tambahan.
+
+PENTING: Output HARUS valid JSON saja, tanpa text tambahan:
+- JANGAN gunakan format markdown (```json ... ```)
+- JANGAN sertakan konten file atau diff dalam output
+- Output harus dimulai langsung dengan { dan berakhir dengan }
+- Pastikan ada field "summary" dan "comments" dalam JSON

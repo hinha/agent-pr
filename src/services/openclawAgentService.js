@@ -16,6 +16,9 @@ class OpenClawAgentService {
 
     // Find all opening braces
     let braceIndex = 0;
+    let sampleLogged = 0; // Track how many samples we've logged (limit to 5)
+    const maxSamples = 5;
+
     for (let i = 0; i < text.length; i++) {
       if (text[i] === '{') {
         braceIndex++;
@@ -64,13 +67,25 @@ class OpenClawAgentService {
                     logger.warn(`JSON at ${i}-${j} has "summary" and "comments" but failed to parse: ${e.message}`);
                   }
                 } else {
-                  // Log what keys this JSON has for debugging
+                  // Log what keys this JSON has for debugging (log first few samples)
                   try {
                     const parsed = JSON.parse(jsonStr);
                     const keys = Object.keys(parsed);
-                    logger.debug(`JSON at ${i}-${j} has keys: ${keys.join(', ')} (not our target, continuing...)`);
+                    const hasSummary = jsonStr.includes('"summary"');
+                    const hasComments = jsonStr.includes('"comments"');
+
+                    // Log more details for debugging
+                    if (sampleLogged < maxSamples) {
+                      logger.info(`JSON at ${i}-${j} has keys: ${keys.join(', ')} (has summary: ${hasSummary}, has comments: ${hasComments})`);
+                      logger.info(`JSON sample (first 200 chars): ${jsonStr.substring(0, 200)}`);
+                      sampleLogged++;
+                    }
                   } catch (parseTry) {
-                    logger.debug(`JSON at ${i}-${j} couldn't be parsed to check keys (continuing...)`);
+                    if (sampleLogged < maxSamples) {
+                      logger.info(`JSON at ${i}-${j} couldn't be parsed to check keys (continuing...)`);
+                      logger.info(`JSON sample (first 200 chars): ${jsonStr.substring(0, 200)}`);
+                      sampleLogged++;
+                    }
                   }
                 }
                 // Found a valid JSON object but not our target, continue to next brace
@@ -140,16 +155,28 @@ class OpenClawAgentService {
       logger.info(`stderr length: ${stderr?.length || 0}`);
       logger.info(`stdout (first 2000 chars): ${stdout?.substring(0, 2000)}`);
       logger.info(`stdout (last 500 chars): ${stdout?.substring(Math.max(0, (stdout?.length || 0) - 500))}`);
+      // Log full output for debugging when parsing fails
+      logger.info(`Full agent output for PR #${pr.number}: ${stdout}`);
       if (stderr) {
         logger.info(`stderr (first 500 chars): ${stderr?.substring(0, 500)}`);
+      }
+
+      // Clean up markdown code blocks from output before parsing
+      let cleanStdout = stdout;
+      if (stdout) {
+        cleanStdout = stdout
+          .replace(/```json\s*/g, '')
+          .replace(/```\s*/g, '')
+          .trim();
+        logger.info(`Cleaned stdout (removed markdown blocks), length: ${cleanStdout.length}`);
       }
 
       // Try to parse JSON
       let result;
       try {
-        // First try: parse stdout directly (trimmed)
-        const trimmed = stdout.trim();
-        logger.debug(`Attempting to parse trimmed stdout, length: ${trimmed.length}`);
+        // First try: parse cleanStdout directly (trimmed, markdown removed)
+        const trimmed = cleanStdout.trim();
+        logger.debug(`Attempting to parse trimmed cleanStdout, length: ${trimmed.length}`);
 
         // Parse the OpenClaw response structure
         let openClawResponse = JSON.parse(trimmed);
@@ -198,7 +225,14 @@ class OpenClawAgentService {
         logger.error(`Failed to parse JSON: ${parseErr.message}`);
 
         // Find JSON by brace counting - more reliable than regex
-        let jsonStr = this.extractJSON(stdout);
+        // Try cleanStdout first (markdown removed), then raw stdout
+        let jsonStr = this.extractJSON(cleanStdout);
+
+        // If not found in cleanStdout, try raw stdout
+        if (!jsonStr && stdout && stdout !== cleanStdout) {
+          logger.info(`JSON not found in cleanStdout, trying raw stdout...`);
+          jsonStr = this.extractJSON(stdout);
+        }
 
         // If not found in stdout, try stderr
         if (!jsonStr && stderr && stderr.length > 0) {
@@ -208,8 +242,8 @@ class OpenClawAgentService {
 
         // If still not found, try combined output
         if (!jsonStr) {
-          logger.info(`JSON not found in stdout/stderr separately, trying combined output...`);
-          jsonStr = this.extractJSON(stdout + '\n' + (stderr || ''));
+          logger.info(`JSON not found in cleanStdout/stdout/stderr separately, trying combined output...`);
+          jsonStr = this.extractJSON(cleanStdout + '\n' + (stderr || ''));
         }
 
         if (jsonStr) {
@@ -226,7 +260,7 @@ class OpenClawAgentService {
           // Fallback: create response from text
           logger.warn(`No JSON found in any output, using text fallback`);
           result = {
-            summary: stdout.substring(0, 500) || `Review ${level} untuk PR #${pr.number}`,
+            summary: cleanStdout.substring(0, 500) || `Review ${level} untuk PR #${pr.number}`,
             comments: []
           };
         }
