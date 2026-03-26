@@ -8,6 +8,18 @@ const logger = require('../utils/logger');
 
 class OpenClawAgentService {
   /**
+   * Escape a string for use inside double-quoted shell command
+   * Escapes: " $ ` \
+   */
+  escapeShellString(str) {
+    return str
+      .replace(/\\/g, '\\\\')  // Backslash must be first
+      .replace(/"/g, '\\"')     // Double quotes
+      .replace(/\$/g, '\\$')    // Dollar signs
+      .replace(/`/g, '\\`');    // Backticks
+  }
+
+  /**
    * Extract JSON from text by counting braces (more reliable than regex)
    * Looks for the first valid JSON object with "summary" and "comments" keys
    */
@@ -144,7 +156,7 @@ class OpenClawAgentService {
         high: process.env.OPENCLAW_AGENT_HIGH || 'main'
       };
       const agentName = agentMap[level] || config.openclaw.reviewAgent || 'main';
-      const command = `openclaw agent --agent ${agentName} --json --message '${reviewPrompt.replace(/'/g, "\\'")}' --timeout ${config.openclaw.reviewTimeoutSeconds}`;
+      const command = `openclaw agent --agent ${agentName} --json --message "${this.escapeShellString(reviewPrompt)}" --timeout ${config.openclaw.reviewTimeoutSeconds}`;
 
       logger.info(`Executing OpenClaw command for PR #${pr.number} with agent: ${agentName}`);
       const { stdout, stderr } = await execPromise(command);
@@ -338,7 +350,7 @@ class OpenClawAgentService {
 
       // Use the 'main' agent for formatting (or configured format agent)
       const agentName = process.env.OPENCLAW_AGENT_FORMAT || 'main';
-      const command = `openclaw agent --agent ${agentName} --message '${prompt.replace(/'/g, "\\'")}' --timeout 30`;
+      const command = `openclaw agent --agent ${agentName} --message "${this.escapeShellString(prompt)}" --timeout 30`;
 
       logger.info(`Executing OpenClaw format command for PR #${prNumber} with agent: ${agentName}`);
       const { stdout, stderr } = await execPromise(command);
