@@ -192,6 +192,12 @@ class MCPGitHubService {
       '/spec/',             // Spec/test folder
       '_spec.',             // Spec files (Jasmine, etc)
       '.spec.',             // Spec files variant
+      'swagger.json',       // Swagger/OpenAPI spec files
+      'swagger.yaml',       // Swagger YAML spec files
+      'swagger.yml',        // Swagger YAML variant
+      'openapi.json',       // OpenAPI spec files
+      'openapi.yaml',       // OpenAPI YAML spec files
+      'openapi.yml',        // OpenAPI YAML variant
     ];
 
     return testPatterns.some(pattern => filename.includes(pattern));
