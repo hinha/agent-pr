@@ -39,7 +39,8 @@ module.exports = {
   storage: {
     processedPrsPath: path.join(DATA_DIR, 'processed_prs.json'),
     skipCachePath: path.join(DATA_DIR, 'skip_cache.json'),
-    notificationCountsPath: path.join(DATA_DIR, 'notification_counts.json')
+    notificationCountsPath: path.join(DATA_DIR, 'notification_counts.json'),
+    processedTimestampsPath: path.join(DATA_DIR, 'processed_timestamps.json')
   },
   logging: {
     level: process.env.LOG_LEVEL || 'info'
