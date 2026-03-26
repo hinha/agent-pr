@@ -9,8 +9,69 @@ class TelegramService {
     this.bot = new TelegramBot(config.telegram.botToken, { polling: true });
     this.chatId = config.telegram.chatId;
     this.threadId = config.telegram.threadId;
+    this.setupPollingErrorHandler();
     this.setupButtonHandlers();
+    this.setupGracefulShutdown();
+    this.cleanWebhook();
     logger.info('Telegram bot initialized successfully with active polling for button interactions');
+  }
+
+  /**
+   * Clean webhook to ensure polling mode (not webhook mode)
+   */
+  async cleanWebhook() {
+    try {
+      await this.bot.deleteWebhook({ drop_pending_updates: false });
+      logger.info('Webhook deleted, ensuring polling mode');
+    } catch (err) {
+      logger.warn(`Failed to delete webhook: ${err.message}`);
+    }
+  }
+
+  /**
+   * Handle polling errors including 409 Conflict
+   */
+  setupPollingErrorHandler() {
+    this.bot.on('polling_error', (error) => {
+      logger.error(`Polling error: ${error.code} - ${error.message}`);
+
+      // 409 Conflict: Another instance is polling
+      if (error.code === 'ETELEGRAM' && error.message.includes('409')) {
+        logger.warn('Detected multiple polling instances. This instance will back off and retry.');
+        // Stop polling and restart after a delay
+        this.bot.stopPolling();
+        setTimeout(() => {
+          this.bot.startPolling();
+          logger.info('Polling restarted after 409 conflict');
+        }, 5000);
+      }
+
+      // EFATAL: Network error, may need restart
+      if (error.code === 'EFATAL') {
+        logger.error('Fatal polling error detected, may require manual intervention');
+      }
+    });
+  }
+
+  /**
+   * Setup graceful shutdown handlers
+   */
+  setupGracefulShutdown() {
+    const shutdown = (signal) => {
+      logger.info(`Received ${signal}, stopping Telegram bot gracefully...`);
+      this.bot.stopPolling()
+        .then(() => {
+          logger.info('Bot stopped successfully');
+          process.exit(0);
+        })
+        .catch((error) => {
+          logger.error(`Error stopping bot: ${error.message}`);
+          process.exit(1);
+        });
+    };
+
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
   }
 
   /**

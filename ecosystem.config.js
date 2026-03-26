@@ -13,6 +13,10 @@ module.exports = {
     out_file: './logs/pm2-out.log',
     log_date_format: 'YYYY-MM-DD HH:mm:ss',
     merge_logs: true,
-    autorestart: true
+    autorestart: true,
+    // Graceful shutdown settings to prevent 409 conflicts
+    kill_timeout: 5000,      // Wait 5 seconds before force kill
+    wait_ready: true,        // Wait for app to be ready
+    listen_timeout: 10000    // Timeout for app to listen
   }]
 };
