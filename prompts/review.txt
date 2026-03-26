@@ -11,6 +11,7 @@ INSTRUKSI:
 8. Pastikan sudah diberi komentar jika ditemukan issue, jangan hanya memberikan ringkasan tanpa komentar spesifik
 9. **HINDARI memberikan komentar pada file test/unit test** - skip file dengan prefix `_test`, suffix `_test.go`, `_test.js`, `*_test.go`, atau folder `e2e_test/`. Fokus review hanya pada main code
 10. **Setiap komentar harus disertai suggested code fix** - berikan contoh kode yang benar untuk membantu developer memperbaiki issue
+11. **Gunakan mcp context7 untuk best practice library** - jika menemukan penggunaan library/framework (Golang, Express, React, Prisma, MongoDB, dll), gunakan MCP Context7 untuk memeriksa best practice dan pola yang direkomendasikan dari dokumentasi resmi library tersebut
 
 OUTPUT FORMAT (JSON):
 {
