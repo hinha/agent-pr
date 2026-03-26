@@ -3,6 +3,7 @@ const util = require('util');
 const execPromise = util.promisify(exec);
 const config = require('../config');
 const logger = require('../utils/logger');
+const TimeoutManager = require('../utils/timeoutManager');
 
 class MCPGitHubService {
   constructor() {
@@ -10,6 +11,7 @@ class MCPGitHubService {
     this.serverName = config.mcp.serverName;
     this.owner = config.github.owner;
     this.repo = config.github.repo;
+    this.timeoutManager = new TimeoutManager();
   }
 
   /**
@@ -25,7 +27,9 @@ class MCPGitHubService {
         if (attempt >= retries) throw err;
         const delay = minTimeout * Math.pow(factor, attempt - 1);
         logger.warn(`MCP attempt ${attempt} failed: ${err.message}, retrying in ${delay}ms, retries left: ${retries - attempt}`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise(resolve => {
+          this.timeoutManager.setTimeout(resolve, delay);
+        });
       }
     }
   }
@@ -88,10 +92,16 @@ class MCPGitHubService {
 
   /**
    * Spawn command with timeout and large buffer support
+   * Includes proper cleanup of event listeners to prevent memory leaks
    */
   spawnWithTimeout(command, args, timeoutMs, startTime) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
+        // Clean up event listeners on timeout
+        spawnProcess.stdout.off('data', onData);
+        spawnProcess.stderr.off('data', onErrorData);
+        spawnProcess.off('close', onClose);
+        spawnProcess.off('error', onError);
         spawnProcess.kill('SIGTERM');
         const elapsed = Date.now() - startTime;
         logger.error(`MCP command timeout after ${timeoutMs}ms (elapsed: ${elapsed}ms)`);
@@ -110,18 +120,25 @@ class MCPGitHubService {
       let stdout = '';
       let stderr = '';
 
-      spawnProcess.stdout.on('data', (data) => {
+      // Store event handlers for cleanup
+      const onData = (data) => {
         // Explicitly decode buffer to string
         stdout += data.toString('utf8');
-      });
+      };
 
-      spawnProcess.stderr.on('data', (data) => {
+      const onErrorData = (data) => {
         // Explicitly decode buffer to string
         stderr += data.toString('utf8');
-      });
+      };
 
-      spawnProcess.on('close', (code) => {
+      const onClose = (code) => {
+        // Clean up all event listeners
+        spawnProcess.stdout.off('data', onData);
+        spawnProcess.stderr.off('data', onErrorData);
+        spawnProcess.off('close', onClose);
+        spawnProcess.off('error', onError);
         clearTimeout(timer);
+
         const elapsed = Date.now() - startTime;
         logger.info(`MCP command completed in ${elapsed}ms, exit code: ${code}, stdout length: ${stdout?.length || 0}`);
         if (stderr && !stderr.includes('warning')) logger.warn(`MCP stderr: ${stderr}`);
@@ -130,14 +147,26 @@ class MCPGitHubService {
         } else {
           resolve({ stdout, stderr });
         }
-      });
+      };
 
-      spawnProcess.on('error', (err) => {
+      const onError = (err) => {
+        // Clean up all event listeners
+        spawnProcess.stdout.off('data', onData);
+        spawnProcess.stderr.off('data', onErrorData);
+        spawnProcess.off('close', onClose);
+        spawnProcess.off('error', onError);
         clearTimeout(timer);
+
         const elapsed = Date.now() - startTime;
         logger.error(`MCP command failed after ${elapsed}ms: ${err.message}`);
         reject(err);
-      });
+      };
+
+      // Register event listeners
+      spawnProcess.stdout.on('data', onData);
+      spawnProcess.stderr.on('data', onErrorData);
+      spawnProcess.on('close', onClose);
+      spawnProcess.on('error', onError);
     });
   }
 

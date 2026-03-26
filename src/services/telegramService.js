@@ -1,6 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const config = require('../config');
 const logger = require('../utils/logger');
+const TimeoutManager = require('../utils/timeoutManager');
 const skipManager = require('./skipManager');
 const openclawAgentService = require('./openclawAgentService');
 
@@ -9,6 +10,13 @@ class TelegramService {
     this.bot = new TelegramBot(config.telegram.botToken, { polling: true });
     this.chatId = config.telegram.chatId;
     this.threadId = config.telegram.threadId;
+    this.timeoutManager = new TimeoutManager();
+    this.pollingRestartTimeout = null;
+
+    // Store event handler references for cleanup
+    this.pollingErrorHandler = this.handlePollingError.bind(this);
+    this.callbackQueryHandler = this.handleCallbackQuery.bind(this);
+
     this.setupPollingErrorHandler();
     this.setupButtonHandlers();
     this.setupGracefulShutdown();
@@ -32,46 +40,45 @@ class TelegramService {
    * Handle polling errors including 409 Conflict
    */
   setupPollingErrorHandler() {
-    this.bot.on('polling_error', (error) => {
-      logger.error(`Polling error: ${error.code} - ${error.message}`);
+    this.bot.on('polling_error', this.pollingErrorHandler);
+  }
 
-      // 409 Conflict: Another instance is polling
-      if (error.code === 'ETELEGRAM' && error.message.includes('409')) {
-        logger.warn('Detected multiple polling instances. This instance will back off and retry.');
-        // Stop polling and restart after a delay
-        this.bot.stopPolling();
-        setTimeout(() => {
-          this.bot.startPolling();
-          logger.info('Polling restarted after 409 conflict');
-        }, 5000);
-      }
+  /**
+   * Handle polling errors including 409 Conflict (bound method)
+   */
+  handlePollingError(error) {
+    logger.error(`Polling error: ${error.code} - ${error.message}`);
 
-      // EFATAL: Network error, may need restart
-      if (error.code === 'EFATAL') {
-        logger.error('Fatal polling error detected, may require manual intervention');
+    // 409 Conflict: Another instance is polling
+    if (error.code === 'ETELEGRAM' && error.message.includes('409')) {
+      logger.warn('Detected multiple polling instances. This instance will back off and retry.');
+      // Clear any existing restart timeout
+      if (this.pollingRestartTimeout) {
+        this.timeoutManager.clearTimeout(this.pollingRestartTimeout);
       }
-    });
+      // Stop polling and restart after a delay
+      this.bot.stopPolling();
+      this.pollingRestartTimeout = this.timeoutManager.setTimeout(() => {
+        this.bot.startPolling();
+        logger.info('Polling restarted after 409 conflict');
+        this.pollingRestartTimeout = null;
+      }, 5000);
+    }
+
+    // EFATAL: Network error, may need restart
+    if (error.code === 'EFATAL') {
+      logger.error('Fatal polling error detected, may require manual intervention');
+    }
   }
 
   /**
    * Setup graceful shutdown handlers
+   * Note: Shutdown is now handled centrally in index.js
    */
   setupGracefulShutdown() {
-    const shutdown = (signal) => {
-      logger.info(`Received ${signal}, stopping Telegram bot gracefully...`);
-      this.bot.stopPolling()
-        .then(() => {
-          logger.info('Bot stopped successfully');
-          process.exit(0);
-        })
-        .catch((error) => {
-          logger.error(`Error stopping bot: ${error.message}`);
-          process.exit(1);
-        });
-    };
-
-    process.on('SIGINT', () => shutdown('SIGINT'));
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    // Shutdown handlers are now managed in index.js
+    // This method is kept for backwards compatibility but does nothing
+    logger.debug('Graceful shutdown handlers managed centrally in index.js');
   }
 
   /**
@@ -96,7 +103,13 @@ class TelegramService {
    * Setup inline button click event handlers
    */
   setupButtonHandlers() {
-    this.bot.on('callback_query', async (query) => {
+    this.bot.on('callback_query', this.callbackQueryHandler);
+  }
+
+  /**
+   * Handle callback query from inline buttons (bound method)
+   */
+  async handleCallbackQuery(query) {
       const dataParts = query.data.split(':');
       const action = dataParts[0];
       const prId = dataParts[1];
@@ -283,7 +296,33 @@ class TelegramService {
           logger.error(`Failed to send error message: ${sendErr.message}`);
         }
       }
-    });
+    }
+
+  /**
+   * Stop the Telegram service and clean up resources
+   */
+  async stop() {
+    logger.info('Stopping Telegram service...');
+
+    // Remove event listeners
+    if (this.bot) {
+      this.bot.off('polling_error', this.pollingErrorHandler);
+      this.bot.off('callback_query', this.callbackQueryHandler);
+
+      // Stop polling
+      try {
+        await this.bot.stopPolling();
+        logger.info('Telegram polling stopped');
+      } catch (error) {
+        logger.error(`Error stopping polling: ${error.message}`);
+      }
+    }
+
+    // Clear all pending timeouts
+    this.timeoutManager.clearAll();
+    this.pollingRestartTimeout = null;
+
+    logger.info('Telegram service stopped');
   }
 
   /**

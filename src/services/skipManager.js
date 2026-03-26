@@ -51,16 +51,40 @@ class SkipManager {
    * Check if PR is currently skipped, cleanup expired entries automatically
    */
   isSkipped(prId) {
+    this.cleanupExpiredEntries(); // Cleanup on every check
     const prIdStr = prId.toString();
     if (!this.skipCache.has(prIdStr)) return false;
 
     const expiry = new Date(this.skipCache.get(prIdStr));
     if (new Date() > expiry) {
       this.skipCache.delete(prIdStr);
-      this.saveSkipCache(); // Cleanup expired entry
       return false;
     }
     return true;
+  }
+
+  /**
+   * Cleanup expired entries from the skip cache
+   * This should be called periodically to prevent unbounded growth
+   */
+  cleanupExpiredEntries() {
+    const now = new Date();
+    let cleaned = 0;
+
+    for (const [prId, expiryStr] of this.skipCache.entries()) {
+      const expiry = new Date(expiryStr);
+      if (now > expiry) {
+        this.skipCache.delete(prId);
+        cleaned++;
+      }
+    }
+
+    if (cleaned > 0) {
+      logger.info(`Cleaned up ${cleaned} expired skip cache entries`);
+      this.saveSkipCache(); // Save after cleanup
+    }
+
+    return cleaned;
   }
 }
 

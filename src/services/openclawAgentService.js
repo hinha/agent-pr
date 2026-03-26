@@ -1,12 +1,17 @@
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const util = require('util');
 const fs = require('fs');
 const path = require('path');
 const execPromise = util.promisify(exec);
 const config = require('../config');
 const logger = require('../utils/logger');
+const TimeoutManager = require('../utils/timeoutManager');
 
 class OpenClawAgentService {
+  constructor() {
+    this.timeoutManager = new TimeoutManager();
+  }
+
   /**
    * Escape a string for use inside double-quoted shell command
    * Escapes: " $ ` \
@@ -126,9 +131,104 @@ class OpenClawAgentService {
         if (attempt >= retries) throw err;
         const delay = minTimeout * Math.pow(factor, attempt - 1);
         logger.warn(`Agent attempt ${attempt} failed: ${err.message}, retrying in ${delay}ms, retries left: ${retries - attempt}`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise(resolve => {
+          this.timeoutManager.setTimeout(resolve, delay);
+        });
       }
     }
+  }
+
+  /**
+   * Spawn command with timeout - replaces execPromise for better control
+   * @param {string} command - Command to execute (shell string)
+   * @param {number} timeoutMs - Timeout in milliseconds
+   * @returns {Promise<{stdout: string, stderr: string}>}
+   */
+  spawnWithTimeout(command, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      // Parse command into executable and args
+      // Handle quoted strings in command
+      const args = [];
+      let current = '';
+      let inQuotes = false;
+      let quoteChar = null;
+
+      for (let i = 0; i < command.length; i++) {
+        const char = command[i];
+
+        if ((char === '"' || char === "'") && (i === 0 || command[i - 1] !== '\\')) {
+          if (!inQuotes) {
+            inQuotes = true;
+            quoteChar = char;
+          } else if (char === quoteChar) {
+            inQuotes = false;
+            quoteChar = null;
+          } else {
+            current += char;
+          }
+        } else if (char === ' ' && !inQuotes) {
+          if (current.length > 0) {
+            args.push(current);
+            current = '';
+          }
+        } else {
+          current += char;
+        }
+      }
+
+      if (current.length > 0) {
+        args.push(current);
+      }
+
+      const [cmd, ...cmdArgs] = args;
+      logger.debug(`Executing command with spawn: ${cmd} ${cmdArgs.slice(0, 3).join(' ')}...`);
+
+      const child = spawn(cmd, cmdArgs, {
+        maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+        shell: false
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      // Store event handlers for cleanup
+      const onData = (data) => { stdout += data.toString(); };
+      const onErrorData = (data) => { stderr += data.toString(); };
+
+      const cleanup = () => {
+        child.stdout.off('data', onData);
+        child.stderr.off('data', onErrorData);
+        child.off('close', onClose);
+        child.off('error', onError);
+      };
+
+      const timeoutId = setTimeout(() => {
+        cleanup();
+        child.kill('SIGTERM');
+        reject(new Error(`Agent timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      const onClose = (code) => {
+        clearTimeout(timeoutId);
+        cleanup();
+        if (code === 0) {
+          resolve({ stdout, stderr });
+        } else {
+          reject(new Error(stderr || `Exit code: ${code}`));
+        }
+      };
+
+      const onError = (err) => {
+        clearTimeout(timeoutId);
+        cleanup();
+        reject(err);
+      };
+
+      child.stdout.on('data', onData);
+      child.stderr.on('data', onErrorData);
+      child.on('close', onClose);
+      child.on('error', onError);
+    });
   }
 
   /**
@@ -159,7 +259,7 @@ class OpenClawAgentService {
       const command = `openclaw agent --agent ${agentName} --json --message "${this.escapeShellString(reviewPrompt)}" --timeout ${config.openclaw.reviewTimeoutSeconds}`;
 
       logger.info(`Executing OpenClaw command for PR #${pr.number} with agent: ${agentName}`);
-      const { stdout, stderr } = await execPromise(command);
+      const { stdout, stderr } = await this.spawnWithTimeout(command, config.openclaw.reviewTimeoutSeconds * 1000);
 
       // Log both stdout and stderr for debugging
       logger.info(`OpenClaw command completed for PR #${pr.number}`);
@@ -353,7 +453,7 @@ class OpenClawAgentService {
       const command = `openclaw agent --agent ${agentName} --message "${this.escapeShellString(prompt)}" --timeout 30`;
 
       logger.info(`Executing OpenClaw format command for PR #${prNumber} with agent: ${agentName}`);
-      const { stdout, stderr } = await execPromise(command);
+      const { stdout, stderr } = await this.spawnWithTimeout(command, 30000); // 30 second timeout for formatting
 
       logger.info(`OpenClaw format command completed for PR #${prNumber}`);
       logger.debug(`stdout length: ${stdout?.length || 0}`);
