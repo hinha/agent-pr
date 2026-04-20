@@ -285,6 +285,32 @@ class TelegramService {
           await this.bot.deleteMessage(this.chatId, query.message.message_id);
         }
       } catch (err) {
+        // Check for specific error: unsupported file types (submodules, special files)
+        if (err.message && err.message.includes('cannot be reviewed: contains unsupported file types')) {
+          logger.warn(`Cannot review PR #${pr.number}: unsupported file types (submodules, special files)`);
+          try {
+            await this.bot.answerCallbackQuery(query.id, {
+              text: '⚠️ PR contains unsupported file types'
+            });
+            await this.bot.sendMessage(
+              this.chatId,
+              `⚠️ <b>Cannot Review PR #${pr.number}</b>\n\n` +
+              `This PR contains files that cannot be automatically reviewed (e.g., submodules, removed files, or special file types).\n\n` +
+              `🔗 <a href="${pr.url}">View PR on GitHub</a> to review manually.`,
+              {
+                parse_mode: 'HTML',
+                disable_web_page_preview: true,
+                message_thread_id: this.threadId,
+                reply_to_message_id: query.message?.message_id
+              }
+            );
+          } catch (sendErr) {
+            logger.error(`Failed to send unsupported file types message: ${sendErr.message}`);
+          }
+          return; // Skip generic error handler
+        }
+
+        // Generic error handler for all other errors
         logger.error(`Button handler error: ${err.message}`, { stack: err.stack, action: dataParts[0], prId: prId });
         try {
           await this.bot.answerCallbackQuery(query.id, { text: '❌ Action failed, check logs' });
