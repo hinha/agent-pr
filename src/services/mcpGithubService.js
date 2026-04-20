@@ -233,15 +233,73 @@ class MCPGitHubService {
   }
 
   /**
+   * Sanitize file data to handle null/undefined values that can cause MCP validation errors
+   */
+  sanitizeFileData(files) {
+    if (!Array.isArray(files)) return [];
+
+    return files.filter(f => {
+      // Filter out files with null/undefined required fields
+      if (!f.filename) return false;
+      // Skip files where blob_url or raw_url are null (causes MCP validation errors)
+      // This happens with submodules, removed files, or certain file types
+      if (f.blob_url === null || f.raw_url === null) {
+        logger.warn(`Skipping file ${f.filename} due to null URL (blob_url=${f.blob_url}, raw_url=${f.raw_url})`);
+        return false;
+      }
+      return true;
+    }).map(f => ({
+      ...f,
+      // Ensure all fields have safe defaults
+      filename: f.filename || '',
+      blob_url: f.blob_url || '',
+      raw_url: f.raw_url || '',
+      additions: f.additions || 0,
+      deletions: f.deletions || 0,
+      changes: f.changes || 0,
+      status: f.status || 'modified'
+    }));
+  }
+
+  /**
+   * Check if an error is the specific MCP validation error for null URLs
+   */
+  isNullUrlValidationError(error) {
+    const errorStr = error.message || JSON.stringify(error);
+    return errorStr.includes('blob_url') &&
+           errorStr.includes('raw_url') &&
+           errorStr.includes('Expected string, received null') &&
+           errorStr.includes('MCP error -32603');
+  }
+
+  /**
    * Get PR changed files and diff metadata via MCP
    */
   async getPRDetails(prNumber) {
     logger.debug(`Fetching PR #${prNumber} details via MCP`);
-    const files = await this.callMCP('get_pull_request_files', {
-      owner: this.owner,
-      repo: this.repo,
-      pull_number: prNumber
-    });
+
+    let rawFiles;
+    try {
+      rawFiles = await this.callMCP('get_pull_request_files', {
+        owner: this.owner,
+        repo: this.repo,
+        pull_number: prNumber
+      });
+    } catch (error) {
+      // Handle MCP validation error for files with null URLs (e.g., submodules)
+      if (this.isNullUrlValidationError(error)) {
+        logger.error(`PR #${prNumber} contains files with null blob_url/raw_url (likely submodules or special files). Skipping PR review.`);
+        throw new Error(`PR #${prNumber} cannot be reviewed: contains unsupported file types (submodules, removed files, etc.)`);
+      }
+      throw error; // Re-throw other errors
+    }
+
+    // Sanitize file data to filter out problematic entries
+    const files = this.sanitizeFileData(rawFiles);
+    const sanitizedSkipped = rawFiles.length - files.length;
+    if (sanitizedSkipped > 0) {
+      logger.warn(`Sanitized ${sanitizedSkipped} file(s) with null URLs from PR #${prNumber}`);
+    }
 
     // Filter out test files
     const filteredFiles = files.filter(f => !this.isTestFile(f.filename));

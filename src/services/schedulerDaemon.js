@@ -51,6 +51,15 @@ class SchedulerDaemon {
       }
     } catch (err) {
       logger.error(`Initial processing failed for PR #${pr.number}: ${err.message}`);
+
+      // If the error is due to unsupported file types (null URLs), permanently skip this PR immediately
+      if (err.message && err.message.includes('cannot be reviewed: contains unsupported file types')) {
+        logger.warn(`Permanently skipping PR #${pr.number} due to unsupported file types (submodules, special files)`);
+        await prStateManager.markProcessed(pr.id);
+        this.activeProcesses.delete(prIdStr);
+        return;
+      }
+
       // Partial failure recovery: retry once after 30s delay
       const retryId = this.timeoutManager.setTimeout(async () => {
         this.pendingRetries.delete(prIdStr);
@@ -72,6 +81,12 @@ class SchedulerDaemon {
             await prStateManager.markProcessed(pr.id);
           } catch (retryErr) {
             logger.error(`Permanent failure processing PR #${pr.number}: ${retryErr.message}`);
+
+            // If the error is due to unsupported file types (null URLs), permanently skip this PR
+            if (retryErr.message && retryErr.message.includes('cannot be reviewed: contains unsupported file types')) {
+              logger.warn(`Permanently skipping PR #${pr.number} due to unsupported file types (submodules, special files)`);
+              await prStateManager.markProcessed(pr.id);
+            }
           }
         }
       }, 30000);
