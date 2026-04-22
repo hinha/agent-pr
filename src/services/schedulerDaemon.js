@@ -210,17 +210,6 @@ class SchedulerDaemon {
             pr.headSha
           );
 
-          // Check if there are new comments after the review
-          const comments = await mcpService.getPRComments(repoName, pr.number);
-          const reviewDate = new Date(reviewState.submitted_at);
-          const hasNewComments = comments.some(c => new Date(c.created_at) > reviewDate);
-
-          if (hasNewComments) {
-            logger.info(`[${instance.owner}/${repoName}] PR #${pr.number} has new comments after review, skipping outdated notification`);
-            await reviewStateManager.clearReviewState(instance.owner, repoName, pr.id);
-            continue;
-          }
-
           if (reviewState.has_outdated && hasNewCommits && !reviewState.dismissed) {
             await telegramService.sendOutdatedReviewNotification(
               instance.owner,
