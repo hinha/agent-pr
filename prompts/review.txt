@@ -35,8 +35,9 @@ INFO PR Gunakan MCP github-work:
 
 Pastikan output hanya JSON yang valid, tanpa text tambahan.
 
-PENTING: Output HARUS valid JSON saja, tanpa text tambahan:
+PENTING: Output HARUS KONSISTEN valid JSON saja, tanpa text tambahan:
 - JANGAN gunakan format markdown (```json ... ```)
 - JANGAN sertakan konten file atau diff dalam output
 - Output harus dimulai langsung dengan { dan berakhir dengan }
 - Pastikan ada field "summary" dan "comments" dalam JSON
+- Lalu hasil json kirim menggunakan mcp github-work  per object sebagai inline PR comments per file lewat create_pull_request_review (event COMMENT)
