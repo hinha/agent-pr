@@ -1,33 +1,44 @@
-const config = require('../config');
+const config = require('../config/yamlConfig');
 const logger = require('../utils/logger');
 const TimeoutManager = require('../utils/timeoutManager');
-const mcpGithubService = require('./mcpGithubService');
+const { getMCPService } = require('./mcpGithubService');
 const telegramService = require('./telegramService');
 const skipManager = require('./skipManager');
-const prStateManager = require('./prStateManager');
+const repositoryStateManager = require('./repositoryStateManager');
+const reviewStateManager = require('./reviewStateManager');
 
 class SchedulerDaemon {
   constructor() {
     this.checkInterval = null;
-    this.activeProcesses = new Map(); // Track ongoing PR processing to avoid duplicates
+    this.outdatedReviewCheckInterval = null;
+    this.activeProcesses = new Map();
     this.timeoutManager = new TimeoutManager();
-    this.pendingRetries = new Map(); // Track retry timeouts per PR
+    this.pendingRetries = new Map();
+    this.mcpServices = new Map();
   }
 
   /**
-   * Process a single new PR with full error isolation
+   * Get or create MCP service for an instance
    */
-  async processSinglePR(pr) {
+  getMCPService(instanceKey) {
+    if (!this.mcpServices.has(instanceKey)) {
+      this.mcpServices.set(instanceKey, getMCPService(instanceKey));
+    }
+    return this.mcpServices.get(instanceKey);
+  }
+
+  /**
+   * Process a single PR with full error isolation
+   */
+  async processSinglePR(instance, repoName, repoConfig, pr, mcpService) {
     const prIdStr = pr.id.toString();
     this.activeProcesses.set(prIdStr, true);
-    logger.info(`Starting processing for PR #${pr.number}`);
+
+    logger.info(`[${instance.owner}/${repoName}] Starting processing for PR #${pr.number}`);
 
     try {
-      logger.info(`Fetching PR details for #${pr.number}`);
-      // Get PR details via MCP
-      const prDetails = await mcpGithubService.getPRDetails(pr.number);
-      logger.info(`Preparing to send Telegram notification for PR #${pr.number}`);
-      // Generate valid structured summary (sanitized for Telegram markdown)
+      const prDetails = await mcpService.getPRDetails(repoName, pr.number);
+
       const cleanDescription = (pr.description || 'No description').replace(/[*_`#[\]()]/g, '').substring(0, 120);
       const summary = {
         purpose: `${cleanDescription}...`,
@@ -38,35 +49,40 @@ class SchedulerDaemon {
         suspiciousPatterns: prDetails.files.some(f => f.filename.includes('migration')) ? ['database_migration'] : [],
         recommendedReview: 'safe review'
       };
-      const currentCount = prStateManager.getNotificationCount(pr.id);
+
+      const currentCount = repositoryStateManager.getNotificationCount(instance.owner, repoName, pr.id);
       if (currentCount < 3) {
-        await telegramService.sendPRNotification(pr, summary);
-        const newCount = await prStateManager.incrementNotificationCount(pr.id);
-        logger.info(`✅ Telegram notification sent for PR #${pr.number} (${newCount}/3 times)`);
-        // Mark as processed only if 3 notifications have been sent
+        await telegramService.sendPRNotification(
+          instance.owner,
+          repoName,
+          pr,
+          summary,
+          repoConfig.thread_id
+        );
+        const newCount = await repositoryStateManager.incrementNotificationCount(instance.owner, repoName, pr.id);
+        logger.info(`[${instance.owner}/${repoName}] Telegram notification sent for PR #${pr.number} (${newCount}/3 times)`);
+
         if (newCount >= 3) {
-          await prStateManager.markProcessed(pr.id);
-          logger.info(`Marked PR #${pr.number} as fully processed after 3 notifications`);
+          await repositoryStateManager.markProcessed(instance.owner, repoName, pr.id);
+          logger.info(`[${instance.owner}/${repoName}] Marked PR #${pr.number} as fully processed`);
         }
       }
     } catch (err) {
-      logger.error(`Initial processing failed for PR #${pr.number}: ${err.message}`);
+      logger.error(`[${instance.owner}/${repoName}] Initial processing failed for PR #${pr.number}: ${err.message}`);
 
-      // If the error is due to unsupported file types (null URLs), permanently skip this PR immediately
       if (err.message && err.message.includes('cannot be reviewed: contains unsupported file types')) {
-        logger.warn(`Permanently skipping PR #${pr.number} due to unsupported file types (submodules, special files)`);
-        await prStateManager.markProcessed(pr.id);
+        logger.warn(`[${instance.owner}/${repoName}] Permanently skipping PR #${pr.number} due to unsupported file types`);
+        await repositoryStateManager.markProcessed(instance.owner, repoName, pr.id);
         this.activeProcesses.delete(prIdStr);
         return;
       }
 
-      // Partial failure recovery: retry once after 30s delay
       const retryId = this.timeoutManager.setTimeout(async () => {
         this.pendingRetries.delete(prIdStr);
-        if (!await prStateManager.isProcessed(pr.id)) {
-          logger.info(`Retrying processing for PR #${pr.number}`);
+        if (!await repositoryStateManager.isProcessed(instance.owner, repoName, pr.id)) {
+          logger.info(`[${instance.owner}/${repoName}] Retrying processing for PR #${pr.number}`);
           try {
-            const prDetails = await mcpGithubService.getPRDetails(pr.number);
+            const prDetails = await mcpService.getPRDetails(repoName, pr.number);
             const cleanDescription = (pr.description || 'No description').replace(/[*_`#[\]()]/g, '').substring(0, 120);
             const summary = {
               purpose: `${cleanDescription}...`,
@@ -77,15 +93,20 @@ class SchedulerDaemon {
               suspiciousPatterns: prDetails.files.some(f => f.filename.includes('migration')) ? ['database_migration'] : [],
               recommendedReview: 'safe review'
             };
-            await telegramService.sendPRNotification(pr, summary);
-            await prStateManager.markProcessed(pr.id);
+            await telegramService.sendPRNotification(
+              instance.owner,
+              repoName,
+              pr,
+              summary,
+              repoConfig.thread_id
+            );
+            await repositoryStateManager.markProcessed(instance.owner, repoName, pr.id);
           } catch (retryErr) {
-            logger.error(`Permanent failure processing PR #${pr.number}: ${retryErr.message}`);
+            logger.error(`[${instance.owner}/${repoName}] Permanent failure for PR #${pr.number}: ${retryErr.message}`);
 
-            // If the error is due to unsupported file types (null URLs), permanently skip this PR
             if (retryErr.message && retryErr.message.includes('cannot be reviewed: contains unsupported file types')) {
-              logger.warn(`Permanently skipping PR #${pr.number} due to unsupported file types (submodules, special files)`);
-              await prStateManager.markProcessed(pr.id);
+              logger.warn(`[${instance.owner}/${repoName}] Permanently skipping PR #${pr.number} due to unsupported file types`);
+              await repositoryStateManager.markProcessed(instance.owner, repoName, pr.id);
             }
           }
         }
@@ -97,35 +118,138 @@ class SchedulerDaemon {
   }
 
   /**
-   * Main PR check cycle
+   * Process all PRs for a specific repository
+   */
+  async processRepository(instanceKey, instance, repoName, repoConfig) {
+    const mcpService = this.getMCPService(instanceKey);
+
+    try {
+      const openPRs = await mcpService.getOpenPRs(repoName);
+      logger.info(`[${instanceKey}/${repoName}] Found ${openPRs.length} open PRs`);
+
+      for (const pr of openPRs) {
+        if (this.activeProcesses.has(pr.id.toString())) {
+          logger.debug(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: already processing`);
+          continue;
+        }
+
+        if (await repositoryStateManager.isProcessed(instance.owner, repoName, pr.id)) {
+          logger.debug(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: already processed`);
+          continue;
+        }
+
+        const repoKey = skipManager.getRepoKey(instance.owner, repoName);
+        if (skipManager.isSkipped(instance.owner, repoName, pr.id)) {
+          logger.debug(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: skipped`);
+          continue;
+        }
+
+        const prAge = Date.now() - pr.createdAt.getTime();
+        if (prAge > instance.maxAgeMs) {
+          logger.debug(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: older than ${instance.maxAgeMs / 3600000}h`);
+          await repositoryStateManager.markProcessed(instance.owner, repoName, pr.id);
+          continue;
+        }
+
+        this.processSinglePR(instance, repoName, repoConfig, pr, mcpService);
+      }
+    } catch (err) {
+      logger.error(`[${instanceKey}/${repoName}] Repository processing failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Main PR check cycle - iterate through all instances and repos
    */
   async runPRCheckCycle() {
     try {
-      // Fetch all open PRs from GitHub via MCP
-      const openPRs = await mcpGithubService.getOpenPRs();
-      logger.info(`Found ${openPRs.length} total open PRs in repository`);
+      const instanceCount = Object.keys(config.instances).length;
+      logger.info(`Starting PR check cycle for ${instanceCount} instance(s)`);
 
-      // Process all eligible PRs concurrently
-      for (const pr of openPRs) {
-        // Skip if already processing, processed, or skipped
-        if (this.activeProcesses.has(pr.id.toString()) || await prStateManager.isProcessed(pr.id) || skipManager.isSkipped(pr.id)) {
-          logger.debug(`Skipping PR #${pr.number}: already in progress/processed/skipped`);
-          continue;
+      for (const [instanceKey, instance] of Object.entries(config.instances)) {
+        const repoCount = Object.keys(instance.repos || {}).length;
+        logger.info(`[${instanceKey}] Processing ${repoCount} repository(ies)`);
+
+        for (const [repoName, repoConfig] of Object.entries(instance.repos || {})) {
+          await this.processRepository(instanceKey, instance, repoName, repoConfig);
         }
-
-        // Skip PRs older than 1 hour
-        const prAge = Date.now() - pr.createdAt.getTime();
-        if (prAge > config.scheduler.maxAgeMs) {
-          logger.debug(`Skipping PR #${pr.number}: older than 1 hour`);
-          await prStateManager.markProcessed(pr.id);
-          continue;
-        }
-
-        // Start processing PR in background
-        this.processSinglePR(pr);
       }
+
+      const stats = repositoryStateManager.getStats();
+      logger.info(`PR check cycle completed. Stats: ${stats.totalRepos} repos, ${stats.totalProcessedPRs} processed PRs, ${stats.totalNotifications} notifications`);
     } catch (cycleErr) {
       logger.error(`PR check cycle failed: ${cycleErr.message}`);
+    }
+  }
+
+  /**
+   * Check for outdated reviews in a repository
+   */
+  async checkOutdatedReviews(instance, repoName, repoConfig, mcpService) {
+    try {
+      const openPRs = await mcpService.getOpenPRs(repoName);
+
+      for (const pr of openPRs) {
+        try {
+          const reviews = await mcpService.getPRReviews(repoName, pr.number);
+
+          const reviewState = await reviewStateManager.updateReviewState(
+            instance.owner,
+            repoName,
+            pr.id,
+            reviews,
+            pr.headSha
+          );
+
+          if (!reviewState) continue;
+
+          const hasNewCommits = reviewStateManager.hasNewCommits(
+            instance.owner,
+            repoName,
+            pr.id,
+            pr.headSha
+          );
+
+          if (reviewState.has_outdated && hasNewCommits && !reviewState.dismissed) {
+            await telegramService.sendOutdatedReviewNotification(
+              instance.owner,
+              repoName,
+              pr,
+              reviewState,
+              repoConfig.thread_id
+            );
+          }
+        } catch (err) {
+          logger.error(`[${instance.owner}/${repoName}] Error checking PR #${pr.number} for outdated reviews: ${err.message}`);
+        }
+      }
+    } catch (err) {
+      logger.error(`[${instance.owner}/${repoName}] Outdated review check failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Run outdated review check cycle
+   */
+  async runOutdatedReviewCheckCycle() {
+    try {
+      logger.info('Starting outdated review check cycle');
+
+      for (const [instanceKey, instance] of Object.entries(config.instances)) {
+        const repoCount = Object.keys(instance.repos || {}).length;
+        logger.info(`[${instanceKey}] Checking ${repoCount} repository(ies) for outdated reviews`);
+
+        const mcpService = this.getMCPService(instanceKey);
+
+        for (const [repoName, repoConfig] of Object.entries(instance.repos || {})) {
+          await this.checkOutdatedReviews(instance, repoName, repoConfig, mcpService);
+        }
+      }
+
+      const stats = reviewStateManager.getStats();
+      logger.info(`Outdated review check cycle completed. Stats: ${stats.totalRepos} repos, ${stats.totalReviews} tracked reviews, ${stats.totalOutdated} outdated, ${stats.totalDismissed} dismissed`);
+    } catch (cycleErr) {
+      logger.error(`Outdated review check cycle failed: ${cycleErr.message}`);
     }
   }
 
@@ -133,16 +257,34 @@ class SchedulerDaemon {
    * Start the scheduler daemon
    */
   start() {
-    logger.info('✅ MCP-based PR monitor daemon started');
-    // Run first check immediately
+    const instanceCount = Object.keys(config.instances).length;
+    let totalRepos = 0;
+    for (const instance of Object.values(config.instances)) {
+      totalRepos += Object.keys(instance.repos || {}).length;
+    }
+
+    logger.info(`✅ Multi-instance PR monitor daemon started`);
+    logger.info(`📊 Monitoring ${instanceCount} instance(s), ${totalRepos} repository(ies)`);
+
     this.runPRCheckCycle();
-    // Set recurring check interval
-    this.checkInterval = setInterval(() => this.runPRCheckCycle(), config.scheduler.checkIntervalMs);
-    // Allow process to exit if this is the only active timer
+    this.checkInterval = setInterval(() => this.runPRCheckCycle(), config.app.checkIntervalMs);
+
     if (typeof this.checkInterval.unref === 'function') {
       this.checkInterval.unref();
     }
-    logger.info(`Scheduled recurring PR checks every ${config.scheduler.checkIntervalMs / 60000} minutes`);
+
+    logger.info(`⏰ Scheduled recurring PR checks every ${config.app.checkIntervalMs / 60000} minutes`);
+
+    if (config.app.outdatedReviewCheckIntervalMs > 0) {
+      this.runOutdatedReviewCheckCycle();
+      this.outdatedReviewCheckInterval = setInterval(() => this.runOutdatedReviewCheckCycle(), config.app.outdatedReviewCheckIntervalMs);
+
+      if (typeof this.outdatedReviewCheckInterval.unref === 'function') {
+        this.outdatedReviewCheckInterval.unref();
+      }
+
+      logger.info(`⏰ Scheduled outdated review checks every ${config.app.outdatedReviewCheckIntervalMs / 60000} minutes`);
+    }
   }
 
   /**
@@ -153,16 +295,29 @@ class SchedulerDaemon {
       clearInterval(this.checkInterval);
       this.checkInterval = null;
     }
-    // Clear all pending timeouts
+
+    if (this.outdatedReviewCheckInterval) {
+      clearInterval(this.outdatedReviewCheckInterval);
+      this.outdatedReviewCheckInterval = null;
+    }
+
     this.timeoutManager.clearAll();
     this.pendingRetries.clear();
+
+    for (const [instanceKey, mcpService] of this.mcpServices.entries()) {
+      try {
+        mcpService.cleanup();
+      } catch (err) {
+        logger.error(`Failed to cleanup MCP service for ${instanceKey}: ${err.message}`);
+      }
+    }
+    this.mcpServices.clear();
+
     logger.info('Scheduler daemon stopped');
   }
 
   /**
    * Wait for all active processes to complete
-   * @param {number} timeoutMs - Maximum time to wait in milliseconds (default: 30s)
-   * @returns {Promise<boolean>} True if all processes completed, false if timeout
    */
   async waitForCompletion(timeoutMs = 30000) {
     const startTime = Date.now();
@@ -173,7 +328,6 @@ class SchedulerDaemon {
         logger.warn(`Timeout waiting for ${this.activeProcesses.size} processes to complete`);
         return false;
       }
-      // Check every 100ms
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 

@@ -1,10 +1,10 @@
-# MCP-based PR Monitor Daemon
+# Multi-Instance PR Monitor Daemon
 
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![PM2](https://img.shields.io/badge/pm2-compatible-orange)](https://pm2.keymetrics.io)
 
-A production-grade Node.js daemon that monitors GitHub Pull Requests using OpenClaw MCP (Model Context Protocol) tools, provides AI-powered code reviews with configurable intensity levels, and delivers real-time notifications via Telegram bot.
+A production-grade Node.js daemon that monitors GitHub Pull Requests across multiple instances and repositories using OpenClaw MCP (Model Context Protocol) tools, provides AI-powered code reviews with configurable intensity levels, and delivers real-time notifications via Telegram bot.
 
 ## Overview
 
@@ -12,21 +12,24 @@ This daemon is designed for teams that want automated PR monitoring with intelli
 
 ### Key Features
 
+- **Multi-Instance Support**: Monitor multiple GitHub organizations/users with different MCP servers
+- **Multi-Repository**: Track multiple repositories per instance with independent state management
+- **Per-Repo Telegram Threads**: Each repository can have its own Telegram thread for organized notifications
 - **MCP-First Architecture**: All GitHub operations use OpenClaw MCP tools - no direct GitHub REST API calls
 - **AI-Powered Reviews**: Three configurable review levels (Low/Medium/High) with different focus areas
-- **Smart Notifications**: Each PR notified up to 3 times with 3-hour skip option
+- **Smart Notifications**: Each PR notified up to 3 times with 3-hour skip option per repository
 - **Telegram Integration**: Interactive bot with inline buttons for Review, Approve, Reject, Close, and Skip
-- **State Persistence**: All tracking data persisted to disk - survives restarts without duplicates
+- **Repository-Scoped State**: All tracking data persisted per repository - survives restarts without duplicates
 - **Production-Ready**: Built-in retry logic, error isolation, graceful shutdown, and comprehensive logging
 - **PM2 Optimized**: Includes PM2 ecosystem configuration for easy process management
 
 ### Use Cases
 
-- Automated PR monitoring for development teams
-- AI-assisted code review workflow
-- Notification system for GitHub activity
+- Monitor multiple repositories across different GitHub organizations
+- AI-assisted code review workflow for teams
+- Organized notification system with per-repo Telegram threads
 - Integration with existing MCP/OpenClaw infrastructure
-- Lightweight alternative to webhook-based systems
+- Lightweight alternative to webhook-based multi-repo monitoring
 
 ## Architecture
 
@@ -98,7 +101,7 @@ This daemon is designed for teams that want automated PR monitoring with intelli
 
 ## Installation
 
-### Option 1: Install from Source
+### Install from Source
 
 Clone the repository and install dependencies:
 
@@ -110,59 +113,75 @@ cd agent-pr
 # Install dependencies
 npm install
 
-# Copy environment template
-cp .env.example .env
+# Create configuration file
+cp config.yml.example config.yml
 
-# Edit .env with your configuration
-nano .env
-```
-
-### Option 2: Install from Binary/npm Package
-
-```bash
-# Install globally via npm (if published)
-npm install -g agent-pr-monitor
-
-# Or install from binary
-# Download the latest binary release
-# Extract and configure
+# Edit config.yml with your settings
+nano config.yml
 ```
 
 ## Configuration
 
-### Environment Variables
+### YAML Configuration
 
-Create a `.env` file in the project root with the following variables:
+The daemon uses `config.yml` for configuration. Copy `config.yml.example` to create your configuration:
 
 ```bash
-# Telegram Configuration
-TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
-TELEGRAM_CHAT_ID=0000000001
-TELEGRAM_THREAD_ID=              # Optional: for threaded conversations
-
-# MCP Configuration
-MCP_CONFIG_PATH=/path/to/mcporter.json
-MCP_SERVER_NAME=github-work
-
-# OpenClaw Agent Configuration
-OPENCLAW_AGENT_SUMMARY=pr-summary-agent
-OPENCLAW_AGENT_REVIEW=pr-review-agent
-OPENCLAW_REVIEW_MODEL=openai/claude-sonnet-4.6
-OPENCLAW_REVIEW_TIMEOUT_SECONDS=600    # Default: 600 (10 minutes)
-OPENCLAW_REVIEW_TIMEOUT_MESSAGE=10 menit  # Default: "10 menit"
-
-# GitHub Repository Details
-GITHUB_OWNER=your-organization
-GITHUB_REPO=your-repository
-
-# Scheduling Configuration
-CHECK_INTERVAL_MINUTES=7          # Default: 7 minutes
-SKIP_CACHE_DURATION_HOURS=3       # Default: 3 hours
-MAX_PR_AGE_HOURS=24              # Default: 24 hours
-
-# Logging
-LOG_LEVEL=info                   # Options: error, warn, info, debug
+cp config.yml.example config.yml
+nano config.yml
 ```
+
+**Configuration Structure:**
+
+```yaml
+app:
+  check_interval_minutes: 7
+  telegram:
+    bot_token: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+    chat_id: 0000000001
+
+github/your-organization:
+  mcp_name: github-work
+  max_age_hours: 48
+  skip_cache_duration_hours: 3
+  agent:
+    review: main
+    summary: main
+    level: [low, medium, high]
+    review_timeout_seconds: 1200
+    review_timeot_string: "20 menit"
+  repos:
+    repo-name-1:
+      thread_id: 12345
+    repo-name-2:
+      thread_id: 12346
+
+github/another-organization:
+  mcp_name: github-personal
+  max_age_hours: 48
+  skip_cache_duration_hours: 3
+  agent:
+    review: main
+    level: [low, medium, high]
+    review_timeout_seconds: 1200
+  repos:
+    personal-repo:
+      thread_id: 12347
+```
+
+**Configuration Options:**
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `app.check_interval_minutes` | Polling frequency in minutes | 7 |
+| `app.telegram.bot_token` | Telegram bot token from @BotFather | Required |
+| `app.telegram.chat_id` | Main Telegram chat ID | Required |
+| `{instance}.mcp_name` | MCP server name for this instance | Required |
+| `{instance}.max_age_hours` | Maximum PR age to process | 48 |
+| `{instance}.skip_cache_duration_hours` | Skip cache duration | 3 |
+| `{instance}.agent.review` | OpenClaw agent for reviews | main |
+| `{instance}.agent.level` | Available review levels | [low, medium, high] |
+| `{repos}.{repo}.thread_id` | Telegram thread ID for this repo | Required |
 
 ### Review Levels
 
@@ -277,22 +296,22 @@ tail -f logs/daemon.out
 
 ### How It Works
 
-1. **Automatic Polling**: The daemon checks for open GitHub PRs every 7 minutes (configurable)
+1. **Multi-Instance Polling**: The daemon checks all configured instances and repositories every 7 minutes
 
 2. **Smart Filtering**:
-   - Only PRs younger than 24 hours are processed
-   - Already processed PRs are skipped
+   - Only PRs younger than configured max age (default: 48 hours) are processed
+   - Already processed PRs (per repository) are skipped
    - Each PR gets notified up to 3 times before being marked as fully processed
+   - Repository-scoped skip cache prevents duplicate processing
 
-3. **Telegram Notifications**: Each notification includes:
-   - PR title and number
+3. **Telegram Notifications**: Each notification is sent to a repository-specific thread:
+   - PR title and number with repository context
    - Author name
-   - PR status (open/closed/draft)
-   - Creation time
+   - AI-generated PR summary
    - Direct action buttons
 
 4. **Action Buttons**: Each notification includes inline buttons:
-   - **Review Now** - Triggers AI review with level selection (Low/Medium/High)
+   - **Review Now** - Shows level selection (Low/Medium/High)
    - **Visit PR** - Opens the PR page in browser
    - **Approve** - Submits an APPROVE review via GitHub MCP
    - **Reject** - Submits a REQUEST_CHANGES review via GitHub MCP
@@ -301,16 +320,24 @@ tail -f logs/daemon.out
 
 ### State Management
 
-All state is persisted to the `data/` directory:
+All state is persisted per repository to the `data/` directory:
 
 ```
 data/
-├── processed_prs.json       # Fully processed PRs (after 3 notifications or approval)
-├── notification_counts.json # How many times each PR has been notified
-└── skip_cache.json          # Temporary skips with expiry timestamps
+└── instances/
+    ├── github-organization-name/
+    │   ├── repo-name-1/
+    │   │   ├── processed_prs.json       # Fully processed PRs
+    │   │   ├── notification_counts.json # Notification counts
+    │   │   ├── skip_cache.json          # Temporary skips
+    │   │   └── processed_timestamps.json # Processing timestamps
+    │   └── repo-name-2/
+    │       └── ...
+    └── github-other-org/
+        └── ...
 ```
 
-This state survives restarts - no duplicate notifications will be sent.
+This repository-scoped state survives restarts - no duplicate notifications will be sent, and PRs from different repositories won't collide.
 
 ## Monitoring & Logs
 
@@ -346,12 +373,14 @@ pm2 logs pr-monitor-daemon --lines 100 --nostream
 
 | Issue | Solution |
 |-------|----------|
-| Daemon not starting | Check `.env` file exists and all required variables are set |
-| No Telegram notifications | Verify `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are correct |
-| MCP connection failed | Check `MCP_CONFIG_PATH` and ensure mcporter is configured |
-| PRs not being processed | Check GitHub repository details and MCP server status |
-| High memory usage | Restart with `pm2 restart pr-monitor-daemon` |
-| Duplicate notifications | Check `data/notification_counts.json` and clear if needed |
+| Daemon not starting | Check `config.yml` exists and is valid YAML |
+| No Telegram notifications | Verify `bot_token` and `chat_id` in config.yml |
+| MCP connection failed | Check MCP server name is correct and mcporter is configured |
+| Agent not found | Run `openclaw agents list` and use correct agent name in config.yml |
+| Buttons not working | Check callback data format (uses compact indices) |
+| PRs not being processed | Check instance/repo configuration in config.yml |
+| High memory usage | Restart with `pm2 restart` |
+| Duplicate notifications | Check per-repo state in `data/instances/` |
 
 ## Architecture Deep Dive
 
@@ -382,15 +411,25 @@ All GitHub interactions **exclusively use the MCP server**, maintaining security
 
 ### Scaling Strategy
 
-To monitor multiple repositories:
+**Built-in Multi-Instance Support:**
+- Single daemon monitors multiple GitHub instances and repositories
+- Repository-scoped state management prevents PR ID collisions
+- Per-repo Telegram thread routing for organized notifications
 
-1. Add repository list to configuration
-2. Initialize separate `mcpGithubService` instances per repository
-3. Maintain separate data storage directories per repo
-4. Deploy as Kubernetes deployment with Redis shared cache for distributed deployments
-5. Scale horizontally to monitor 100+ repositories with minimal resource usage
+**To add more repositories:**
+1. Add instance configuration to `config.yml`
+2. Specify MCP server name for each instance
+3. Configure thread_id for each repository
+4. Restart daemon - no code changes needed
 
-**Current Limitation:** Single repository per daemon instance. Run multiple instances for multiple repos.
+**Horizontal Scaling:**
+- Deploy multiple daemon instances for high-volume scenarios
+- Each instance can monitor the same or different repositories
+- Use distributed locking (Redis) for coordinated deployments if needed
+
+**Capacity:**
+- Single daemon: 50+ repositories with 7-min polling
+- With optimized intervals: 200+ repositories per daemon
 
 ### GitHub Webhook Migration Design
 
@@ -419,31 +458,40 @@ Current polling architecture can be migrated to event-driven webhooks:
 agent-pr/
 ├── src/
 │   ├── config/
-│   │   └── index.js              # Environment configuration
+│   │   └── yamlConfig.js         # YAML configuration loader
 │   ├── services/                 # Core modular services
-│   │   ├── mcpGithubService.js   # GitHub via MCP
-│   │   ├── openclawAgentService.js  # AI reviews
-│   │   ├── telegramService.js    # Telegram bot
-│   │   ├── skipManager.js        # Skip cache logic
-│   │   ├── prStateManager.js     # PR tracking
-│   │   └── schedulerDaemon.js    # Main orchestration
+│   │   ├── mcpGithubService.js   # MCP GitHub service factory
+│   │   ├── repositoryStateManager.js # Per-repo state management
+│   │   ├── openclawAgentService.js  # AI reviews with owner/repo context
+│   │   ├── telegramService.js    # Telegram bot with thread routing
+│   │   ├── skipManager.js        # Per-repo skip cache
+│   │   └── schedulerDaemon.js    # Multi-instance orchestration
 │   └── utils/
-│       └── logger.js             # Winston logging
+│       ├── logger.js             # Winston logging
+│       ├── memoryMonitor.js      # Memory monitoring
+│       └── timeoutManager.js     # Timeout management
 ├── data/                         # Persistent storage (runtime)
+│   └── instances/                # Per-instance/repo state
 ├── logs/                         # Application logs (runtime)
-├── .env.example                  # Environment template
+├── prompts/                      # AI prompt templates
+│   └── review.txt                # PR review prompt
+├── scripts/                      # Utility scripts
+│   └── migrateState.js           # State migration tool
+├── config.yml.example            # Configuration template
 ├── package.json                  # Dependencies
 ├── ecosystem.config.js           # PM2 configuration
 ├── index.js                      # Entry point
-└── CLAUDE.md                     # Claude Code instructions
+├── CLAUDE.md                     # Claude Code instructions
+└── README.md                     # This file
 ```
 
 ### Adding Features
 
-1. **New Telegram Actions**: Add buttons in `telegramService.js`
-2. **New Review Levels**: Configure in `src/config/index.js`
-3. **Custom Filters**: Modify `schedulerDaemon.js` filtering logic
-4. **Additional State**: Extend `prStateManager.js`
+1. **New Telegram Actions**: Add buttons in `telegramService.js` with compact callback format
+2. **New Review Levels**: Configure in `src/config/yamlConfig.js`
+3. **New Instances**: Add to `config.yml` with instance/repo configuration
+4. **Custom Filters**: Modify `schedulerDaemon.js` filtering logic
+5. **Additional State**: Extend `repositoryStateManager.js`
 
 ### Testing
 

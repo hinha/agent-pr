@@ -1,21 +1,24 @@
-const { exec, spawn } = require('child_process');
-const util = require('util');
-const execPromise = util.promisify(exec);
-const config = require('../config');
+const { spawn } = require('child_process');
 const logger = require('../utils/logger');
 const TimeoutManager = require('../utils/timeoutManager');
+const config = require('../config/yamlConfig');
 
+/**
+ * MCP GitHub Service - Factory pattern for per-instance services
+ * Each instance (GitHub organization) gets its own MCP service with its own serverName
+ */
 class MCPGitHubService {
-  constructor() {
-    this.mcpBaseCmd = config.mcp.baseCommand;
-    this.serverName = config.mcp.serverName;
-    this.owner = config.github.owner;
-    this.repo = config.github.repo;
+  constructor(instanceConfig) {
+    this.mcpBaseCmd = 'mcporter';
+    this.serverName = instanceConfig.mcpName;
+    this.owner = instanceConfig.owner;
+    this.instanceKey = instanceConfig.key;
     this.timeoutManager = new TimeoutManager();
+    logger.info(`[MCP:${this.instanceKey}] Initialized with server=${this.serverName}, owner=${this.owner}`);
   }
 
   /**
-   * Custom exponential backoff retry logic to avoid external dependency issues
+   * Custom exponential backoff retry logic
    */
   async retryOperation(operation, retries, minTimeout, factor) {
     let attempt = 0;
@@ -26,7 +29,7 @@ class MCPGitHubService {
         attempt++;
         if (attempt >= retries) throw err;
         const delay = minTimeout * Math.pow(factor, attempt - 1);
-        logger.warn(`MCP attempt ${attempt} failed: ${err.message}, retrying in ${delay}ms, retries left: ${retries - attempt}`);
+        logger.warn(`[MCP:${this.instanceKey}] Attempt ${attempt} failed: ${err.message}, retrying in ${delay}ms`);
         await new Promise(resolve => {
           this.timeoutManager.setTimeout(resolve, delay);
         });
@@ -35,104 +38,75 @@ class MCPGitHubService {
   }
 
   /**
-   * Execute MCP tool call using spawn (bypasses shell to avoid command injection)
+   * Execute MCP tool call using spawn
    */
   async callMCP(method, args = {}) {
     return this.retryOperation(async () => {
-      const timeoutMs = 60000; // 60 second timeout for MCP calls
+      const timeoutMs = 60000;
       const startTime = Date.now();
-      logger.info(`Starting MCP call ${this.serverName}.${method} (timeout: ${timeoutMs}ms)`);
+      logger.info(`[MCP:${this.instanceKey}] Calling ${this.serverName}.${method}`);
 
-      // Build arguments array for spawn (bypasses shell interpretation)
       const spawnArgs = ['call', `${this.serverName}.${method}`, '--output', 'json'];
 
-      // Add each argument as separate item (avoids shell interpretation)
-      // For mcporter: primitive values (string, number, boolean) use key=value
-      // Complex values (object, array) use key:JSON
       for (const [key, value] of Object.entries(args)) {
         if (value === null || value === undefined) {
           spawnArgs.push(`${key}=null`);
         } else if (typeof value === 'object') {
-          // Objects and arrays: use colon format with JSON
           spawnArgs.push(`${key}:${JSON.stringify(value)}`);
         } else if (typeof value === 'string') {
-          // Strings: use equals format, but DON'T JSON.stringify (avoids double quotes)
-          // The string value is passed directly as key=value
           spawnArgs.push(`${key}=${value}`);
         } else {
-          // Numbers, booleans: use equals format
           spawnArgs.push(`${key}=${value}`);
         }
       }
 
-      logger.info(`Executing MCP command: ${this.serverName}.${method} with ${Object.keys(args).length} args`);
-
-      // Use spawn with maxBuffer option to handle large payloads
       const result = await this.spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
 
       try {
         const parsed = JSON.parse(result.stdout);
-        logger.info(`MCP response parsed for ${method}: type=${typeof parsed}, isArray=${Array.isArray(parsed)}, keys=${Object.keys(parsed || {}).join(', ')}`);
-        logger.info(`MCP response preview: ${JSON.stringify(parsed).substring(0, 500)}`);
 
-        // Check if MCP response contains an error
         if (parsed.error) {
           const errorMsg = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
-          logger.error(`MCP returned error for ${method}: ${errorMsg}`);
+          logger.error(`[MCP:${this.instanceKey}] Error for ${method}: ${errorMsg}`);
           throw new Error(`MCP error: ${errorMsg}`);
         }
 
         return parsed;
       } catch (parseErr) {
-        logger.error(`Failed to parse MCP output for ${method}: ${result.stdout}`);
+        logger.error(`[MCP:${this.instanceKey}] Failed to parse output for ${method}: ${result.stdout}`);
         throw new Error(`MCP response parse failed: ${parseErr.message}`);
       }
     }, config.retries.mcpRetries, 2000, config.retries.backoffFactor);
   }
 
   /**
-   * Spawn command with timeout and large buffer support
-   * Includes proper cleanup of event listeners to prevent memory leaks
+   * Spawn command with timeout
    */
   spawnWithTimeout(command, args, timeoutMs, startTime) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        // Clean up event listeners on timeout
         spawnProcess.stdout.off('data', onData);
         spawnProcess.stderr.off('data', onErrorData);
         spawnProcess.off('close', onClose);
         spawnProcess.off('error', onError);
         spawnProcess.kill('SIGTERM');
         const elapsed = Date.now() - startTime;
-        logger.error(`MCP command timeout after ${timeoutMs}ms (elapsed: ${elapsed}ms)`);
-        reject(new Error(`MCP command timeout after ${timeoutMs}ms (elapsed: ${elapsed}ms)`));
+        logger.error(`[MCP:${this.instanceKey}] Timeout after ${timeoutMs}ms`);
+        reject(new Error(`MCP command timeout after ${timeoutMs}ms`));
       }, timeoutMs);
 
-      logger.debug(`spawn about to execute: ${command} ${args.slice(0, 4).join(' ')}... (${args.length} total args)`);
-
-      // Spawn with maxBuffer to handle large payloads (10MB)
-      // Note: encoding option in spawn options doesn't work as expected, so we decode manually
       const spawnProcess = spawn(command, args, {
-        maxBuffer: 10 * 1024 * 1024, // 10MB buffer
-        shell: false // Important: disable shell to avoid command injection
+        maxBuffer: 10 * 1024 * 1024,
+        shell: false
       });
 
       let stdout = '';
       let stderr = '';
 
-      // Store event handlers for cleanup
-      const onData = (data) => {
-        // Explicitly decode buffer to string
-        stdout += data.toString('utf8');
-      };
-
-      const onErrorData = (data) => {
-        // Explicitly decode buffer to string
-        stderr += data.toString('utf8');
-      };
+      const onData = (data) => { stdout += data.toString('utf8'); };
+      const onErrorData = (data) => { stderr += data.toString('utf8'); };
 
       const onClose = (code) => {
-        // Clean up all event listeners
         spawnProcess.stdout.off('data', onData);
         spawnProcess.stderr.off('data', onErrorData);
         spawnProcess.off('close', onClose);
@@ -140,8 +114,8 @@ class MCPGitHubService {
         clearTimeout(timer);
 
         const elapsed = Date.now() - startTime;
-        logger.info(`MCP command completed in ${elapsed}ms, exit code: ${code}, stdout length: ${stdout?.length || 0}`);
-        if (stderr && !stderr.includes('warning')) logger.warn(`MCP stderr: ${stderr}`);
+        logger.debug(`[MCP:${this.instanceKey}] Command completed in ${elapsed}ms, exit code: ${code}`);
+
         if (code !== 0) {
           reject(new Error(`MCP command failed with exit code ${code}: ${stderr || stdout}`));
         } else {
@@ -150,19 +124,16 @@ class MCPGitHubService {
       };
 
       const onError = (err) => {
-        // Clean up all event listeners
         spawnProcess.stdout.off('data', onData);
         spawnProcess.stderr.off('data', onErrorData);
         spawnProcess.off('close', onClose);
         spawnProcess.off('error', onError);
         clearTimeout(timer);
 
-        const elapsed = Date.now() - startTime;
-        logger.error(`MCP command failed after ${elapsed}ms: ${err.message}`);
+        logger.error(`[MCP:${this.instanceKey}] Command failed: ${err.message}`);
         reject(err);
       };
 
-      // Register event listeners
       spawnProcess.stdout.on('data', onData);
       spawnProcess.stderr.on('data', onErrorData);
       spawnProcess.on('close', onClose);
@@ -171,86 +142,65 @@ class MCPGitHubService {
   }
 
   /**
-   * Fetch all open pull requests via MCP list_pull_requests
+   * Fetch all open pull requests for a repository
    */
-  async getOpenPRs() {
-    logger.debug('Fetching open PRs via MCP');
+  async getOpenPRs(repo) {
+    logger.debug(`[MCP:${this.instanceKey}/${repo}] Fetching open PRs`);
+
     const rawPRs = await this.callMCP('list_pull_requests', {
       owner: this.owner,
-      repo: this.repo,
+      repo: repo,
       state: 'open',
       per_page: 100,
       page: 1
     });
 
-    // Debug: log the response structure
-    logger.info(`MCP response type: ${typeof rawPRs}, isArray: ${Array.isArray(rawPRs)}`);
-    if (!Array.isArray(rawPRs)) {
-      logger.info(`MCP response keys: ${Object.keys(rawPRs || {}).join(', ')}`);
-      logger.info(`MCP response (first 500 chars): ${JSON.stringify(rawPRs).substring(0, 500)}`);
-    }
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Found ${rawPRs.length} open PRs`);
 
     return rawPRs.map(pr => ({
       id: pr.id,
       number: pr.number,
       title: pr.title,
       url: pr.html_url,
-      author: pr.user?.login || 'tinuswan',
+      author: pr.user?.login || 'unknown',
       createdAt: new Date(pr.created_at),
       description: pr.body || 'No description provided',
       baseBranch: pr.base?.ref,
       headBranch: pr.head?.ref,
-      headSha: pr.head?.sha
+      headSha: pr.head?.sha,
+      owner: this.owner,
+      repo: repo
     }));
   }
 
   /**
-   * Check if a file is a test file (should be excluded from review)
+   * Check if a file is a test file
    */
   isTestFile(filename) {
     const testPatterns = [
-      '_test.go',           // Go test files
-      '_test.js',           // JavaScript test files
-      '_test.ts',           // TypeScript test files
-      '.test.',             // Files with .test. in name
-      '/e2e_test/',         // E2E test folder
-      '/e2e/',              // E2E folder
-      '/__tests__/',        // JavaScript test folder
-      '/test/',             // Generic test folder
-      '/tests/',            // Generic tests folder
-      '/spec/',             // Spec/test folder
-      '_spec.',             // Spec files (Jasmine, etc)
-      '.spec.',             // Spec files variant
-      'swagger.json',       // Swagger/OpenAPI spec files
-      'swagger.yaml',       // Swagger YAML spec files
-      'swagger.yml',        // Swagger YAML variant
-      'openapi.json',       // OpenAPI spec files
-      'openapi.yaml',       // OpenAPI YAML spec files
-      'openapi.yml',        // OpenAPI YAML variant
+      '_test.go', '_test.js', '_test.ts', '.test.', '/e2e_test/', '/e2e/',
+      '/__tests__/', '/test/', '/tests/', '/spec/', '_spec.', '.spec.',
+      'swagger.json', 'swagger.yaml', 'swagger.yml',
+      'openapi.json', 'openapi.yaml', 'openapi.yml'
     ];
-
     return testPatterns.some(pattern => filename.includes(pattern));
   }
 
   /**
-   * Sanitize file data to handle null/undefined values that can cause MCP validation errors
+   * Sanitize file data to handle null/undefined values
    */
   sanitizeFileData(files) {
     if (!Array.isArray(files)) return [];
 
     return files.filter(f => {
-      // Filter out files with null/undefined required fields
       if (!f.filename) return false;
-      // Skip files where blob_url or raw_url are null (causes MCP validation errors)
-      // This happens with submodules, removed files, or certain file types
       if (f.blob_url === null || f.raw_url === null) {
-        logger.warn(`Skipping file ${f.filename} due to null URL (blob_url=${f.blob_url}, raw_url=${f.raw_url})`);
+        logger.warn(`[MCP:${this.instanceKey}] Skipping file ${f.filename} due to null URL`);
         return false;
       }
       return true;
     }).map(f => ({
       ...f,
-      // Ensure all fields have safe defaults
       filename: f.filename || '',
       blob_url: f.blob_url || '',
       raw_url: f.raw_url || '',
@@ -273,40 +223,37 @@ class MCPGitHubService {
   }
 
   /**
-   * Get PR changed files and diff metadata via MCP
+   * Get PR changed files and diff metadata
    */
-  async getPRDetails(prNumber) {
-    logger.debug(`Fetching PR #${prNumber} details via MCP`);
+  async getPRDetails(repo, prNumber) {
+    logger.debug(`[MCP:${this.instanceKey}/${repo}] Fetching PR #${prNumber} details`);
 
     let rawFiles;
     try {
       rawFiles = await this.callMCP('get_pull_request_files', {
         owner: this.owner,
-        repo: this.repo,
+        repo: repo,
         pull_number: prNumber
       });
     } catch (error) {
-      // Handle MCP validation error for files with null URLs (e.g., submodules)
       if (this.isNullUrlValidationError(error)) {
-        logger.error(`PR #${prNumber} contains files with null blob_url/raw_url (likely submodules or special files). Skipping PR review.`);
-        throw new Error(`PR #${prNumber} cannot be reviewed: contains unsupported file types (submodules, removed files, etc.)`);
+        logger.error(`[MCP:${this.instanceKey}/${repo}] PR #${prNumber} contains files with null URLs`);
+        throw new Error(`PR #${prNumber} cannot be reviewed: contains unsupported file types`);
       }
-      throw error; // Re-throw other errors
+      throw error;
     }
 
-    // Sanitize file data to filter out problematic entries
     const files = this.sanitizeFileData(rawFiles);
     const sanitizedSkipped = rawFiles.length - files.length;
     if (sanitizedSkipped > 0) {
-      logger.warn(`Sanitized ${sanitizedSkipped} file(s) with null URLs from PR #${prNumber}`);
+      logger.warn(`[MCP:${this.instanceKey}/${repo}] Sanitized ${sanitizedSkipped} file(s) from PR #${prNumber}`);
     }
 
-    // Filter out test files
     const filteredFiles = files.filter(f => !this.isTestFile(f.filename));
     const skippedCount = files.length - filteredFiles.length;
 
     if (skippedCount > 0) {
-      logger.info(`Filtered out ${skippedCount} test file(s) from PR #${prNumber}`);
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Filtered out ${skippedCount} test file(s) from PR #${prNumber}`);
     }
 
     return {
@@ -319,42 +266,100 @@ class MCPGitHubService {
         status: f.status
       })),
       totalChanges: filteredFiles.reduce((sum, f) => sum + f.changes, 0),
-      // Keep original count for reference
       totalFilesChanged: files.length
     };
   }
 
   /**
-   * Create a PR review with per-line comments
-   * @param {Object} pr - PR object
-   * @param {Object} reviewResult - Review result with comments array
+   * Fetch all reviews for a PR
    */
-  async createReviewWithComments(pr, reviewResult) {
-    logger.debug(`Creating review for PR #${pr.number} with ${reviewResult.comments.length} comments`);
+  async getPRReviews(repo, prNumber) {
+    logger.debug(`[MCP:${this.instanceKey}/${repo}] Fetching reviews for PR #${prNumber}`);
 
-    // Determine event based on highest severity
+    try {
+      const rawReviews = await this.callMCP('get_pull_request_reviews', {
+        owner: this.owner,
+        repo: repo,
+        pull_number: prNumber
+      });
+
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Found ${rawReviews.length} reviews for PR #${prNumber}`);
+
+      return rawReviews.map(r => ({
+        id: r.id,
+        state: r.state,
+        body: r.body,
+        user: r.user?.login,
+        submitted_at: r.submitted_at,
+        head_sha: r.commit_id,
+        comments: r.comments || []
+      }));
+    } catch (err) {
+      if (err.message.includes('Unknown tool')) {
+        logger.warn(`[MCP:${this.instanceKey}] get_pull_request_reviews tool not available - outdated review feature disabled for this instance`);
+      } else {
+        logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch reviews for PR #${prNumber}: ${err.message}`);
+      }
+      return [];
+    }
+  }
+
+  /**
+   * Fetch all issue comments (general discussion) for a PR
+   */
+  async getPRComments(repo, prNumber) {
+    logger.debug(`[MCP:${this.instanceKey}/${repo}] Fetching comments for PR #${prNumber}`);
+
+    try {
+      const rawComments = await this.callMCP('get_pull_request_comments', {
+        owner: this.owner,
+        repo: repo,
+        pull_number: prNumber
+      });
+
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Found ${rawComments.length} comments for PR #${prNumber}`);
+
+      return rawComments.map(c => ({
+        id: c.id,
+        body: c.body,
+        user: c.user?.login,
+        created_at: c.created_at,
+        updated_at: c.updated_at
+      }));
+    } catch (err) {
+      if (err.message.includes('Unknown tool')) {
+        logger.warn(`[MCP:${this.instanceKey}] get_pull_request_comments tool not available - outdated review feature disabled for this instance`);
+      } else {
+        logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch comments for PR #${prNumber}: ${err.message}`);
+      }
+      return [];
+    }
+  }
+
+  /**
+   * Create a PR review with per-line comments
+   */
+  async createReviewWithComments(repo, pr, reviewResult) {
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Creating review for PR #${pr.number} with ${reviewResult.comments.length} comments`);
+
     const severities = reviewResult.comments.map(c => c.severity.toUpperCase());
     const hasHigh = severities.includes('HIGH');
     const hasMedium = severities.includes('MEDIUM');
 
-    // Select event based on severity
     let event = 'COMMENT';
     if (hasHigh) {
-      event = 'REQUEST_CHANGES';  // HIGH severity → request changes
+      event = 'REQUEST_CHANGES';
     } else if (hasMedium && reviewResult.comments.length > 0) {
-      event = 'COMMENT';  // MEDIUM → neutral comment
+      event = 'COMMENT';
     } else if (reviewResult.comments.length === 0) {
-      event = 'COMMENT';  // No comments → neutral
+      event = 'COMMENT';
     }
 
-    logger.info(`Review event: ${event} (HIGH: ${hasHigh}, MEDIUM: ${hasMedium}, Comments: ${reviewResult.comments.length})`);
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Review event: ${event}`);
 
-    // Build comments array for GitHub API
-    // Use 'line' + 'commit_id' for the newer API (instead of deprecated 'position')
     const comments = reviewResult.comments.map(c => {
       let commentBody = `[${c.severity.toUpperCase()}] ${c.message}`;
 
-      // Append suggested code if available
       if (c.suggestedCode) {
         commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${c.suggestedCode}\n\`\`\``;
       }
@@ -367,59 +372,49 @@ class MCPGitHubService {
       };
     });
 
-    // Process comments in batches to avoid command line length issues
-    const BATCH_SIZE = 5; // 5 comments per batch
+    const BATCH_SIZE = 5;
     const commentBatches = [];
 
     for (let i = 0; i < comments.length; i += BATCH_SIZE) {
       commentBatches.push(comments.slice(i, i + BATCH_SIZE));
     }
 
-    logger.info(`Processing ${comments.length} comments in ${commentBatches.length} batches (${BATCH_SIZE} comments per batch)`);
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Processing ${comments.length} comments in ${commentBatches.length} batches`);
 
     let firstReviewResult = null;
-    let batchNumber = 0;
 
-    // Process each batch
     for (const batch of commentBatches) {
-      batchNumber++;
+      const batchNumber = commentBatches.indexOf(batch) + 1;
 
-      // Build review args for this batch
       const reviewArgs = {
         owner: this.owner,
-        repo: this.repo,
+        repo: repo,
         pull_number: pr.number,
         body: batchNumber === 1 ? reviewResult.summary : `Additional comments (batch ${batchNumber}/${commentBatches.length})`,
-        event: batchNumber === 1 ? event : 'COMMENT', // First batch uses determined event, rest use COMMENT
+        event: batchNumber === 1 ? event : 'COMMENT',
         commit_id: pr.headSha
       };
 
-      // Add comments to this batch
       if (batch.length > 0) {
         reviewArgs.comments = batch;
       }
 
-      logger.info(`Sending batch ${batchNumber}/${commentBatches.length} (${batch.length} comments)`);
-      logger.debug(`Batch ${batchNumber} payload: ${JSON.stringify(reviewArgs, null, 2)}`);
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Sending batch ${batchNumber}/${commentBatches.length}`);
 
-      // Call MCP for this batch with fallback for "own PR" restriction
       let result;
       try {
         result = await this.callMCP('create_pull_request_review', reviewArgs);
       } catch (error) {
-        // Handle GitHub API restriction: Can not request changes on your own pull request
         if (error.message.includes('Can not request changes on your own pull request')) {
-          logger.warn(`Cannot request changes on own PR #${pr.number}, falling back to COMMENT event`);
-          // Send warning notification to Telegram
+          logger.warn(`[MCP:${this.instanceKey}/${repo}] Cannot request changes on own PR, falling back to COMMENT`);
           try {
             const telegramService = require('./telegramService');
-            await telegramService.sendWarning(pr.number, `Cannot request changes on your own PR (GitHub API restriction). Review posted as COMMENT instead.\n\nReview with ${batch.length} comments has been submitted.`);
+            await telegramService.sendWarning(this.owner, repo, pr.number, `Cannot request changes on your own PR. Review posted as COMMENT instead.`);
           } catch (telegramErr) {
             logger.error(`Failed to send Telegram warning: ${telegramErr.message}`);
           }
-          // Retry with COMMENT event instead of REQUEST_CHANGES
+
           const fallbackArgs = { ...reviewArgs, event: 'COMMENT' };
-          // Use OpenClaw agent to format the body with proper GitHub markdown
           if (fallbackArgs.body) {
             try {
               const openclawAgentService = require('./openclawAgentService');
@@ -428,44 +423,110 @@ class MCPGitHubService {
                 prNumber: pr.number,
                 originalEvent: 'REQUEST_CHANGES',
                 newEvent: 'COMMENT',
-                reason: 'GitHub does not allow requesting changes on your own pull request'
+                reason: 'GitHub does not allow requesting changes on your own pull request',
+                owner: this.owner,
+                repo: repo
               });
-              logger.info(`Review body formatted by OpenClaw agent for PR #${pr.number}`);
             } catch (formatErr) {
-              logger.error(`Failed to format review body with agent: ${formatErr.message}, using fallback format`);
-              // Fallback to simple formatting
-              fallbackArgs.body = `${fallbackArgs.body}\n\n---\n\n> **⚠️ AUTO-FIXED:** This review was posted as \`COMMENT\` instead of \`REQUEST_CHANGES\` because GitHub doesn't allow requesting changes on your own PR.`;
+              logger.error(`Failed to format review body: ${formatErr.message}`);
+              fallbackArgs.body = `${fallbackArgs.body}\n\n---\n\n> **⚠️ AUTO-FIXED:** This review was posted as \`COMMENT\` instead of \`REQUEST_CHANGES\`.`;
             }
           }
-          logger.info(`Retrying batch ${batchNumber} with COMMENT event`);
           result = await this.callMCP('create_pull_request_review', fallbackArgs);
-          logger.info(`Successfully posted review as COMMENT for PR #${pr.number}`);
         } else {
-          throw error; // Re-throw other errors
+          throw error;
         }
       }
 
-      // Verify success
       if (!result || !result.id) {
         throw new Error(`Batch ${batchNumber} failed: ${JSON.stringify(result)}`);
       }
 
-      logger.info(`Batch ${batchNumber}/${commentBatches.length} created: ID=${result.id}, URL=${result.html_url}, State=${result.state}`);
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Batch ${batchNumber} created: ID=${result.id}`);
 
-      // Store first batch result for return
       if (batchNumber === 1) {
         firstReviewResult = result;
       }
 
-      // Small delay between batches to avoid rate limiting (except for last batch)
       if (batchNumber < commentBatches.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
 
-    logger.info(`All ${commentBatches.length} batches completed successfully for PR #${pr.number}`);
     return firstReviewResult;
+  }
+
+  /**
+   * Approve a PR
+   */
+  async approvePR(repo, prNumber, body = 'Approved via OpenClaw PR Monitor') {
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Approving PR #${prNumber}`);
+    return await this.callMCP('create_pull_request_review', {
+      owner: this.owner,
+      repo: repo,
+      pull_number: prNumber,
+      event: 'APPROVE',
+      body: body
+    });
+  }
+
+  /**
+   * Request changes on a PR
+   */
+  async requestChanges(repo, prNumber, body) {
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Requesting changes for PR #${prNumber}`);
+    return await this.callMCP('create_pull_request_review', {
+      owner: this.owner,
+      repo: repo,
+      pull_number: prNumber,
+      event: 'REQUEST_CHANGES',
+      body: body
+    });
+  }
+
+  /**
+   * Close a PR
+   */
+  async closePR(repo, prNumber) {
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Closing PR #${prNumber}`);
+    return await this.callMCP('update_pull_request', {
+      owner: this.owner,
+      repo: repo,
+      pull_number: prNumber,
+      state: 'closed'
+    });
+  }
+
+  /**
+   * Clean up resources
+   */
+  cleanup() {
+    this.timeoutManager.clearAll();
+    logger.info(`[MCP:${this.instanceKey}] Service cleaned up`);
   }
 }
 
-module.exports = new MCPGitHubService();
+/**
+ * Factory function to create MCP service for an instance
+ */
+function createMCPService(instanceKey) {
+  const instance = config.instances[instanceKey];
+  if (!instance) {
+    throw new Error(`Instance not found: ${instanceKey}`);
+  }
+  return new MCPGitHubService(instance);
+}
+
+/**
+ * Get or create MCP service for an instance (cached)
+ */
+const mcpServiceCache = new Map();
+
+function getMCPService(instanceKey) {
+  if (!mcpServiceCache.has(instanceKey)) {
+    mcpServiceCache.set(instanceKey, createMCPService(instanceKey));
+  }
+  return mcpServiceCache.get(instanceKey);
+}
+
+module.exports = { MCPGitHubService, createMCPService, getMCPService };
