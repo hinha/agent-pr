@@ -282,9 +282,9 @@ class MCPGitHubService {
 
     this.reviewToolsChecked = true;
 
-    // Try to call list_pull_request_reviews to check if it's available
+    // Try to call get_pull_request_reviews to check if it's available
     try {
-      await this.callMCP('list_pull_request_reviews', {
+      await this.callMCP('get_pull_request_reviews', {
         owner: this.owner,
         repo: '_test_',
         pull_number: 1
@@ -293,7 +293,7 @@ class MCPGitHubService {
       logger.info(`[MCP:${this.instanceKey}] Review tools are available`);
       return true;
     } catch (err) {
-      if (err.message.includes('Unknown tool') || err.message.includes('list_pull_request_reviews')) {
+      if (err.message.includes('Unknown tool') || err.message.includes('get_pull_request_reviews')) {
         this.reviewToolsAvailable = false;
         logger.warn(`[MCP:${this.instanceKey}] Review tools NOT available - outdated review feature disabled`);
         return false;
@@ -317,7 +317,7 @@ class MCPGitHubService {
     }
 
     try {
-      const rawReviews = await this.callMCP('list_pull_request_reviews', {
+      const rawReviews = await this.callMCP('get_pull_request_reviews', {
         owner: this.owner,
         repo: repo,
         pull_number: prNumber
@@ -353,7 +353,7 @@ class MCPGitHubService {
     }
 
     try {
-      const rawComments = await this.callMCP('list_pull_request_comments', {
+      const rawComments = await this.callMCP('get_pull_request_comments', {
         owner: this.owner,
         repo: repo,
         pull_number: prNumber
