@@ -325,28 +325,6 @@ class TelegramService {
         await this.handleReviewLevelOutdated(query, instanceIdx, repoIdx, prId, reviewId, level, owner, repo, repoConfig);
       }
     } catch (err) {
-      if (err.message && err.message.includes('cannot be reviewed: contains unsupported file types')) {
-        logger.warn(`[${owner}/${repo}] Cannot review PR #${prId}: unsupported file types`);
-        try {
-          await this.bot.answerCallbackQuery(query.id, { text: '⚠️ Unsupported file types' });
-          await this.bot.sendMessage(
-            this.chatId,
-            `⚠️ <b>Cannot Review ${owner}/${repo} PR #${prId}</b>\n\n` +
-            `This PR contains files that cannot be automatically reviewed.\n\n` +
-            `🔗 <a href="${pr.url}">View on GitHub</a>`,
-            {
-              parse_mode: 'HTML',
-              disable_web_page_preview: true,
-              message_thread_id: query.message?.message_thread_id,
-              reply_to_message_id: query.message?.message_id
-            }
-          );
-        } catch (sendErr) {
-          logger.error(`Failed to send error message: ${sendErr.message}`);
-        }
-        return;
-      }
-
       logger.error(`Button handler error: ${err.message}`, { action, owner, repo, prId });
       try {
         await this.bot.answerCallbackQuery(query.id, { text: '❌ Action failed' });
