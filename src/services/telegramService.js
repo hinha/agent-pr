@@ -341,7 +341,7 @@ class TelegramService {
     try {
       const mcpService = getMCPService(repoConfig.instance.key);
 
-      await mcpService.approvePR(repo, pr.number, '✅ Approved after addressing previous review comments.');
+      await mcpService.approvePR(repo, pr.number);
 
       await this.bot.editMessageText(`✅ ${owner}/${repo} PR #${pr.number} has been approved!`, {
         chat_id: this.chatId,
@@ -354,7 +354,7 @@ class TelegramService {
 
       logger.info(`[${owner}/${repo}] PR #${pr.number} approved (outdated review ${reviewId})`);
     } catch (err) {
-      logger.error(`[${owner}/${repo}] Failed to approve PR #${prId}: ${err.message}`);
+      logger.error(`[${owner}/${repo}] Failed to approve PR #${pr.number}: ${err.message}`);
       await this.bot.answerCallbackQuery(query.id, { text: `❌ Error: ${err.message}`, show_alert: true });
     }
   }
