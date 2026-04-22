@@ -3,7 +3,7 @@ const util = require('util');
 const fs = require('fs');
 const path = require('path');
 const execPromise = util.promisify(exec);
-const config = require('../config');
+const config = require('../config/yamlConfig');
 const logger = require('../utils/logger');
 const TimeoutManager = require('../utils/timeoutManager');
 
@@ -233,33 +233,34 @@ class OpenClawAgentService {
 
   /**
    * Run review with specified level (low/medium/high)
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
    * @param {Object} pr - Pull request object
    * @param {string} level - Review level: 'low', 'medium', or 'high'
    */
-  async runReviewWithLevel(pr, level) {
+  async runReviewWithLevel(owner, repo, pr, level) {
     const levelConfig = config.reviewLevels[level];
     if (!levelConfig) {
       throw new Error(`Invalid review level: ${level}`);
     }
 
+    const instance = config.getInstanceByOwner(owner);
+
     return this.retryOperation(async () => {
-      logger.info(`Starting ${level} level review for PR #${pr.number}`);
+      logger.info(`[${owner}/${repo}] Starting ${level} level review for PR #${pr.number}`);
 
-      // Build level-specific prompt
-      const reviewPrompt = this.buildReviewPrompt(pr, level, levelConfig);
+      const reviewPrompt = this.buildReviewPrompt(owner, repo, pr, level, levelConfig);
 
-      // OpenClaw CLI: use level-specific agent via Gateway
-      // Falls back to 'main' (default agent) or OPENCLAW_AGENT_REVIEW
       const agentMap = {
-        low: process.env.OPENCLAW_AGENT_LOW || 'main',
-        medium: process.env.OPENCLAW_AGENT_MEDIUM || 'main',
-        high: process.env.OPENCLAW_AGENT_HIGH || 'main'
+        low: instance.agent.reviewAgent,
+        medium: instance.agent.reviewAgent,
+        high: instance.agent.reviewAgent
       };
-      const agentName = agentMap[level] || config.openclaw.reviewAgent || 'main';
-      const command = `openclaw agent --agent ${agentName} --json --message "${this.escapeShellString(reviewPrompt)}" --timeout ${config.openclaw.reviewTimeoutSeconds}`;
+      const agentName = agentMap[level] || instance.agent.reviewAgent;
+      const command = `openclaw agent --agent ${agentName} --json --message "${this.escapeShellString(reviewPrompt)}" --timeout ${instance.agent.reviewTimeoutSeconds}`;
 
-      logger.info(`Executing OpenClaw command for PR #${pr.number} with agent: ${agentName}`);
-      const { stdout, stderr } = await this.spawnWithTimeout(command, config.openclaw.reviewTimeoutSeconds * 1000);
+      logger.info(`[${owner}/${repo}] Executing OpenClaw command for PR #${pr.number} with agent: ${agentName}`);
+      const { stdout, stderr } = await this.spawnWithTimeout(command, instance.agent.reviewTimeoutSeconds * 1000);
 
       // Log both stdout and stderr for debugging
       logger.info(`OpenClaw command completed for PR #${pr.number}`);
@@ -391,14 +392,13 @@ class OpenClawAgentService {
   /**
    * Build review prompt based on level
    */
-  buildReviewPrompt(pr, level, levelConfig) {
+  buildReviewPrompt(owner, repo, pr, level, levelConfig) {
     const focusAreas = levelConfig.focusAreas.join(', ');
 
-    // Try multiple paths for prompt template (dev vs prod)
     const possiblePaths = [
-      path.join(process.cwd(), 'src/prompts/review.txt'),  // Dev environment
-      path.join(process.cwd(), 'prompts/review.txt'),      // Prod environment
-      path.join(__dirname, '../prompts/review.txt')        // Relative to service file
+      path.join(process.cwd(), 'src/prompts/review.txt'),
+      path.join(process.cwd(), 'prompts/review.txt'),
+      path.join(__dirname, '../prompts/review.txt')
     ];
 
     let template;
@@ -407,26 +407,24 @@ class OpenClawAgentService {
       try {
         template = fs.readFileSync(tryPath, 'utf-8');
         templatePath = tryPath;
-        logger.info(`Prompt template loaded from: ${tryPath}, length: ${template.length} chars`);
+        logger.info(`[${owner}/${repo}] Prompt template loaded from: ${tryPath}, length: ${template.length} chars`);
         break;
       } catch (err) {
-        // Try next path
       }
     }
 
     if (!template) {
-      logger.error(`Failed to read prompt template from any of: ${possiblePaths.join(', ')}`);
+      logger.error(`[${owner}/${repo}] Failed to read prompt template from any of: ${possiblePaths.join(', ')}`);
       throw new Error(`Prompt template not found in any location`);
     }
 
-    // Replace placeholders
     return template
       .replace('{{PR_NUMBER}}', pr.number)
       .replace('{{LEVEL}}', level.toUpperCase())
       .replace('{{FOCUS_AREAS}}', focusAreas)
       .replace('{{MAX_COMMENTS}}', levelConfig.maxCommentsPerFile)
-      .replace('{{OWNER}}', config.github.owner)
-      .replace('{{REPO}}', config.github.repo)
+      .replace('{{OWNER}}', owner)
+      .replace('{{REPO}}', repo)
       .replace('{{SOURCE_BRANCH}}', pr.headBranch)
       .replace('{{TARGET_BRANCH}}', pr.baseBranch)
       .replace('{{PR_URL}}', pr.url);
@@ -440,37 +438,35 @@ class OpenClawAgentService {
    * @param {string} params.originalEvent - Original event (e.g., REQUEST_CHANGES)
    * @param {string} params.newEvent - New event (e.g., COMMENT)
    * @param {string} params.reason - Reason for the change
+   * @param {string} params.owner - Repository owner
+   * @param {string} params.repo - Repository name
    */
-  async formatReviewBody({ originalBody, prNumber, originalEvent, newEvent, reason }) {
+  async formatReviewBody({ originalBody, prNumber, originalEvent, newEvent, reason, owner, repo }) {
     return this.retryOperation(async () => {
-      logger.info(`Formatting review body for PR #${prNumber} with OpenClaw agent`);
+      logger.info(`[${owner}/${repo}] Formatting review body for PR #${prNumber} with OpenClaw agent`);
 
-      // Load format prompt template
-      const prompt = this.buildFormatPrompt(originalBody, originalEvent, newEvent, reason);
+      const prompt = this.buildFormatPrompt(originalBody, originalEvent, newEvent, reason, owner, repo);
 
-      // Use the 'main' agent for formatting (or configured format agent)
-      const agentName = process.env.OPENCLAW_AGENT_FORMAT || 'main';
+      const instance = config.getInstanceByOwner(owner);
+      const agentName = instance.agent.reviewAgent;
       const command = `openclaw agent --agent ${agentName} --message "${this.escapeShellString(prompt)}" --timeout 30`;
 
-      logger.info(`Executing OpenClaw format command for PR #${prNumber} with agent: ${agentName}`);
-      const { stdout, stderr } = await this.spawnWithTimeout(command, 30000); // 30 second timeout for formatting
+      logger.info(`[${owner}/${repo}] Executing OpenClaw format command for PR #${prNumber} with agent: ${agentName}`);
+      const { stdout, stderr } = await this.spawnWithTimeout(command, 30000);
 
-      logger.info(`OpenClaw format command completed for PR #${prNumber}`);
+      logger.info(`[${owner}/${repo}] OpenClaw format command completed for PR #${prNumber}`);
       logger.debug(`stdout length: ${stdout?.length || 0}`);
       if (stderr) {
         logger.debug(`stderr: ${stderr?.substring(0, 200)}`);
       }
 
-      // Parse the response
       let formattedBody;
       try {
         const trimmed = stdout.trim();
         const openClawResponse = JSON.parse(trimmed);
 
-        // Extract the formatted body from the response
         if (openClawResponse.result && openClawResponse.result.payloads && openClawResponse.result.payloads.length > 0) {
           formattedBody = openClawResponse.result.payloads[0].text;
-          // Remove markdown code blocks if present
           formattedBody = formattedBody.replace(/```\w*\s*/g, '').replace(/```\s*/g, '').trim();
         } else if (typeof openClawResponse === 'string') {
           formattedBody = openClawResponse;
@@ -478,11 +474,10 @@ class OpenClawAgentService {
           formattedBody = trimmed;
         }
 
-        logger.info(`Successfully formatted review body for PR #${prNumber}, length: ${formattedBody?.length || 0}`);
-        return formattedBody || originalBody; // Fallback to original if formatting fails
+        logger.info(`[${owner}/${repo}] Successfully formatted review body for PR #${prNumber}, length: ${formattedBody?.length || 0}`);
+        return formattedBody || originalBody;
       } catch (parseErr) {
-        logger.warn(`Failed to parse format response: ${parseErr.message}, using original body`);
-        // Fallback to simple formatting if agent call fails
+        logger.warn(`[${owner}/${repo}] Failed to parse format response: ${parseErr.message}, using original body`);
         return `${originalBody}\n\n---\n\n> **⚠️ AUTO-FIXED:** This review was posted as \`${newEvent}\` instead of \`${originalEvent}\` because ${reason}.`;
       }
     }, 2, 2000, config.retries.backoffFactor);
@@ -491,36 +486,35 @@ class OpenClawAgentService {
   /**
    * Build format prompt from template
    */
-  buildFormatPrompt(originalBody, originalEvent, newEvent, reason) {
-    // Try multiple paths for prompt template (dev vs prod)
+  buildFormatPrompt(originalBody, originalEvent, newEvent, reason, owner, repo) {
     const possiblePaths = [
-      path.join(process.cwd(), 'src/prompts/review_body_format.txt'),  // Dev environment
-      path.join(process.cwd(), 'prompts/review_body_format.txt'),      // Prod environment
-      path.join(__dirname, '../prompts/review_body_format.txt')        // Relative to service file
+      path.join(process.cwd(), 'src/prompts/review_body_format.txt'),
+      path.join(process.cwd(), 'prompts/review_body_format.txt'),
+      path.join(__dirname, '../prompts/review_body_format.txt')
     ];
 
     let template;
     for (const tryPath of possiblePaths) {
       try {
         template = fs.readFileSync(tryPath, 'utf-8');
-        logger.info(`Format prompt template loaded from: ${tryPath}, length: ${template.length} chars`);
+        logger.info(`[${owner}/${repo}] Format prompt template loaded from: ${tryPath}, length: ${template.length} chars`);
         break;
       } catch (err) {
-        // Try next path
       }
     }
 
     if (!template) {
-      logger.error(`Failed to read format prompt template from any of: ${possiblePaths.join(', ')}`);
+      logger.error(`[${owner}/${repo}] Failed to read format prompt template from any of: ${possiblePaths.join(', ')}`);
       throw new Error(`Format prompt template not found in any location`);
     }
 
-    // Replace placeholders
     return template
       .replace('{{ORIGINAL_BODY}}', originalBody)
       .replace('{{ORIGINAL_EVENT}}', originalEvent)
       .replace('{{NEW_EVENT}}', newEvent)
-      .replace('{{REASON}}', reason);
+      .replace('{{REASON}}', reason)
+      .replace('{{OWNER}}', owner)
+      .replace('{{REPO}}', repo);
   }
 }
 
