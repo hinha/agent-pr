@@ -9,7 +9,7 @@ const { getMCPService } = require('./mcpGithubService');
 class TelegramService {
   constructor() {
     this.bot = new TelegramBot(config.app.telegram.botToken, { polling: true });
-    this.chatId = config.app.telegram.chat_id;
+    this.chatId = config.app.telegram.chatId;
     this.timeoutManager = new TimeoutManager();
     this.pollingRestartTimeout = null;
 

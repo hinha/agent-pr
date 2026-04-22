@@ -36,7 +36,7 @@ function buildInternalConfig(config) {
       checkIntervalMs: config.app.check_interval_minutes * 60 * 1000,
       telegram: {
         botToken: config.app.telegram.bot_token,
-        chatId: config.app.telegram.chat_id
+        chatId: parseInt(config.app.telegram.chat_id, 10)
       }
     },
     instances: buildInstances(config),
@@ -131,7 +131,7 @@ function getRepoConfig(owner, repoName) {
   }
 
   return {
-    threadId: instance.repos[repoName].thread_id,
+    threadId: parseInt(instance.repos[repoName].thread_id, 10),
     instance: instance
   };
 }
