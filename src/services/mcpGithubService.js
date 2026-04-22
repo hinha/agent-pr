@@ -14,8 +14,6 @@ class MCPGitHubService {
     this.owner = instanceConfig.owner;
     this.instanceKey = instanceConfig.key;
     this.timeoutManager = new TimeoutManager();
-    this.reviewToolsAvailable = null;
-    this.reviewToolsChecked = undefined;
     logger.info(`[MCP:${this.instanceKey}] Initialized with server=${this.serverName}, owner=${this.owner}`);
   }
 
@@ -273,48 +271,10 @@ class MCPGitHubService {
   }
 
   /**
-   * Check if review tools are available
-   */
-  async checkReviewToolsAvailable() {
-    if (this.reviewToolsChecked !== undefined) {
-      return this.reviewToolsAvailable;
-    }
-
-    this.reviewToolsChecked = true;
-
-    // Try to call get_pull_request_reviews to check if it's available
-    try {
-      await this.callMCP('get_pull_request_reviews', {
-        owner: this.owner,
-        repo: '_test_',
-        pull_number: 1
-      });
-      this.reviewToolsAvailable = true;
-      logger.info(`[MCP:${this.instanceKey}] Review tools are available`);
-      return true;
-    } catch (err) {
-      if (err.message.includes('Unknown tool') || err.message.includes('get_pull_request_reviews')) {
-        this.reviewToolsAvailable = false;
-        logger.warn(`[MCP:${this.instanceKey}] Review tools NOT available - outdated review feature disabled`);
-        return false;
-      }
-      // Other errors (like repo not found) - assume tool is available
-      this.reviewToolsAvailable = true;
-      return true;
-    }
-  }
-
-  /**
    * Fetch all reviews for a PR
    */
   async getPRReviews(repo, prNumber) {
     logger.debug(`[MCP:${this.instanceKey}/${repo}] Fetching reviews for PR #${prNumber}`);
-
-    // Check if tools are available first
-    if (await this.checkReviewToolsAvailable() === false) {
-      logger.debug(`[MCP:${this.instanceKey}/${repo}] Skipping review fetch - tool not available`);
-      return [];
-    }
 
     try {
       const rawReviews = await this.callMCP('get_pull_request_reviews', {
@@ -335,7 +295,11 @@ class MCPGitHubService {
         comments: r.comments || []
       }));
     } catch (err) {
-      logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch reviews for PR #${prNumber}: ${err.message}`);
+      if (err.message.includes('Unknown tool')) {
+        logger.warn(`[MCP:${this.instanceKey}] get_pull_request_reviews tool not available - outdated review feature disabled for this instance`);
+      } else {
+        logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch reviews for PR #${prNumber}: ${err.message}`);
+      }
       return [];
     }
   }
@@ -345,12 +309,6 @@ class MCPGitHubService {
    */
   async getPRComments(repo, prNumber) {
     logger.debug(`[MCP:${this.instanceKey}/${repo}] Fetching comments for PR #${prNumber}`);
-
-    // Check if tools are available first
-    if (await this.checkReviewToolsAvailable() === false) {
-      logger.debug(`[MCP:${this.instanceKey}/${repo}] Skipping comment fetch - tool not available`);
-      return [];
-    }
 
     try {
       const rawComments = await this.callMCP('get_pull_request_comments', {
@@ -369,7 +327,11 @@ class MCPGitHubService {
         updated_at: c.updated_at
       }));
     } catch (err) {
-      logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch comments for PR #${prNumber}: ${err.message}`);
+      if (err.message.includes('Unknown tool')) {
+        logger.warn(`[MCP:${this.instanceKey}] get_pull_request_comments tool not available - outdated review feature disabled for this instance`);
+      } else {
+        logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch comments for PR #${prNumber}: ${err.message}`);
+      }
       return [];
     }
   }

@@ -187,12 +187,6 @@ class SchedulerDaemon {
    */
   async checkOutdatedReviews(instance, repoName, repoConfig, mcpService) {
     try {
-      // Skip if review tools are not available
-      if (await mcpService.checkReviewToolsAvailable() === false) {
-        logger.debug(`[${instance.owner}/${repoName}] Skipping outdated review check - tools not available`);
-        return;
-      }
-
       const openPRs = await mcpService.getOpenPRs(repoName);
 
       for (const pr of openPRs) {
@@ -252,27 +246,15 @@ class SchedulerDaemon {
     try {
       logger.info('Starting outdated review check cycle');
 
-      let toolsAvailableForAny = false;
-
       for (const [instanceKey, instance] of Object.entries(config.instances)) {
         const repoCount = Object.keys(instance.repos || {}).length;
         logger.info(`[${instanceKey}] Checking ${repoCount} repository(ies) for outdated reviews`);
 
         const mcpService = this.getMCPService(instanceKey);
 
-        // Check if tools are available for this instance
-        const toolsAvailable = await mcpService.checkReviewToolsAvailable();
-        if (toolsAvailable) {
-          toolsAvailableForAny = true;
-        }
-
         for (const [repoName, repoConfig] of Object.entries(instance.repos || {})) {
           await this.checkOutdatedReviews(instance, repoName, repoConfig, mcpService);
         }
-      }
-
-      if (!toolsAvailableForAny) {
-        logger.warn('Outdated review check feature is not available for any instances - MCP servers may not support the required tools');
       }
 
       const stats = reviewStateManager.getStats();
