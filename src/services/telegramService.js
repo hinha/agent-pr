@@ -28,8 +28,12 @@ class TelegramService {
    */
   async cleanWebhook() {
     try {
-      await this.bot.deleteWebhook({ drop_pending_updates: false });
-      logger.info('Webhook deleted, ensuring polling mode');
+      if (typeof this.bot.deleteWebhook === 'function') {
+        await this.bot.deleteWebhook({ drop_pending_updates: false });
+        logger.info('Webhook deleted, ensuring polling mode');
+      } else {
+        logger.debug('deleteWebhook not available, skipping webhook cleanup');
+      }
     } catch (err) {
       logger.warn(`Failed to delete webhook: ${err.message}`);
     }

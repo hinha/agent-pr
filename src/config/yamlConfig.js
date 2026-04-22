@@ -34,7 +34,10 @@ function buildInternalConfig(config) {
   const internalConfig = {
     app: {
       checkIntervalMs: config.app.check_interval_minutes * 60 * 1000,
-      telegram: config.app.telegram
+      telegram: {
+        botToken: config.app.telegram.bot_token,
+        chatId: config.app.telegram.chat_id
+      }
     },
     instances: buildInstances(config),
     log: { level: config.log.level || 'info' },
