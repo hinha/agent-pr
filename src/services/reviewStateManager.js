@@ -126,17 +126,13 @@ class ReviewStateManager {
       return null;
     }
 
-    const hasOutdatedComments = latestReview.comments?.some(
-      c => c.body?.toLowerCase().includes('outdated')
-    ) || false;
-
     const reviewState = {
       review_id: latestReview.id,
       state: latestReview.state,
       submitted_at: latestReview.submitted_at,
       head_sha: latestReview.head_sha,
       current_head_sha: currentHeadSha,
-      has_outdated: hasOutdatedComments,
+      has_outdated: true, // Always true for REQUEST_CHANGES reviews
       last_checked: new Date().toISOString(),
       dismissed: false
     };
@@ -144,7 +140,7 @@ class ReviewStateManager {
     repoState.reviews.set(prIdStr, reviewState);
     await this.saveRepoState(owner, repo);
 
-    logger.debug(`[${key}] Updated review state for PR #${prId}: has_outdated=${hasOutdatedComments}`);
+    logger.debug(`[${key}] Updated review state for PR #${prId}: REQUEST_CHANGES review tracked`);
 
     return reviewState;
   }
