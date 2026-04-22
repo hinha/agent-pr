@@ -403,7 +403,7 @@ class MCPGitHubService {
 
       let result;
       try {
-        result = await this.callMCP('pull_request_review_write', reviewArgs);
+        result = await this.callMCP('create_pull_request_review', reviewArgs);
       } catch (error) {
         if (error.message.includes('Can not request changes on your own pull request')) {
           logger.warn(`[MCP:${this.instanceKey}/${repo}] Cannot request changes on own PR, falling back to COMMENT`);
@@ -432,7 +432,7 @@ class MCPGitHubService {
               fallbackArgs.body = `${fallbackArgs.body}\n\n---\n\n> **⚠️ AUTO-FIXED:** This review was posted as \`COMMENT\` instead of \`REQUEST_CHANGES\`.`;
             }
           }
-          result = await this.callMCP('pull_request_review_write', fallbackArgs);
+          result = await this.callMCP('create_pull_request_review', fallbackArgs);
         } else {
           throw error;
         }
@@ -461,7 +461,7 @@ class MCPGitHubService {
    */
   async approvePR(repo, prNumber, body = 'Approved via OpenClaw PR Monitor') {
     logger.info(`[MCP:${this.instanceKey}/${repo}] Approving PR #${prNumber}`);
-    return await this.callMCP('pull_request_review_write', {
+    return await this.callMCP('create_pull_request_review', {
       owner: this.owner,
       repo: repo,
       pull_number: prNumber,
@@ -475,7 +475,7 @@ class MCPGitHubService {
    */
   async requestChanges(repo, prNumber, body) {
     logger.info(`[MCP:${this.instanceKey}/${repo}] Requesting changes for PR #${prNumber}`);
-    return await this.callMCP('pull_request_review_write', {
+    return await this.callMCP('create_pull_request_review', {
       owner: this.owner,
       repo: repo,
       pull_number: prNumber,
