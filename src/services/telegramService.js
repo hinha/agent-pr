@@ -316,13 +316,13 @@ class TelegramService {
         await this.bot.answerCallbackQuery(query.id, { text: '❌ Review cancelled' });
         await this.bot.deleteMessage(this.chatId, query.message.message_id);
       } else if (action === 'approve_outdated') {
-        await this.handleApproveOutdated(query, instanceIdx, repoIdx, prId, reviewId, owner, repo, repoConfig);
+        await this.handleApproveOutdated(query, instanceIdx, repoIdx, prId, reviewId, owner, repo, repoConfig, pr);
       } else if (action === 're_review') {
-        await this.handleReReview(query, instanceIdx, repoIdx, prId, reviewId, owner, repo, repoConfig);
+        await this.handleReReview(query, instanceIdx, repoIdx, prId, reviewId, owner, repo, repoConfig, pr);
       } else if (action === 'dismiss_outdated') {
         await this.handleDismissOutdated(query, instanceIdx, repoIdx, prId, reviewId, owner, repo, repoConfig);
       } else if (action === 'review_level_outdated') {
-        await this.handleReviewLevelOutdated(query, instanceIdx, repoIdx, prId, reviewId, level, owner, repo, repoConfig);
+        await this.handleReviewLevelOutdated(query, instanceIdx, repoIdx, prId, reviewId, level, owner, repo, repoConfig, pr);
       }
     } catch (err) {
       logger.error(`Button handler error: ${err.message}`, { action, owner, repo, prId });
@@ -337,22 +337,22 @@ class TelegramService {
   /**
    * Handle approve after outdated review
    */
-  async handleApproveOutdated(query, instanceIdx, repoIdx, prId, reviewId, owner, repo, repoConfig) {
+  async handleApproveOutdated(query, instanceIdx, repoIdx, prId, reviewId, owner, repo, repoConfig, pr) {
     try {
       const mcpService = getMCPService(repoConfig.instance.key);
 
-      await mcpService.approvePR(repo, parseInt(prId), '✅ Approved after addressing previous review comments.');
+      await mcpService.approvePR(repo, pr.number, '✅ Approved after addressing previous review comments.');
 
-      await this.bot.editMessageText(`✅ ${owner}/${repo} PR #${prId} has been approved!`, {
+      await this.bot.editMessageText(`✅ ${owner}/${repo} PR #${pr.number} has been approved!`, {
         chat_id: this.chatId,
         message_id: query.message.message_id,
         message_thread_id: repoConfig.threadId
       });
 
-      await reviewStateManager.clearReviewState(owner, repo, parseInt(prId));
+      await reviewStateManager.clearReviewState(owner, repo, pr.id);
       await this.bot.answerCallbackQuery(query.id);
 
-      logger.info(`[${owner}/${repo}] PR #${prId} approved (outdated review ${reviewId})`);
+      logger.info(`[${owner}/${repo}] PR #${pr.number} approved (outdated review ${reviewId})`);
     } catch (err) {
       logger.error(`[${owner}/${repo}] Failed to approve PR #${prId}: ${err.message}`);
       await this.bot.answerCallbackQuery(query.id, { text: `❌ Error: ${err.message}`, show_alert: true });
@@ -362,7 +362,7 @@ class TelegramService {
   /**
    * Handle re-review request
    */
-  async handleReReview(query, instanceIdx, repoIdx, prId, reviewId, owner, repo, repoConfig) {
+  async handleReReview(query, instanceIdx, repoIdx, prId, reviewId, owner, repo, repoConfig, pr) {
     try {
       await this.bot.answerCallbackQuery(query.id);
 
@@ -417,21 +417,14 @@ class TelegramService {
   /**
    * Handle review level selection for outdated PR
    */
-  async handleReviewLevelOutdated(query, instanceIdx, repoIdx, prId, reviewId, level, owner, repo, repoConfig) {
+  async handleReviewLevelOutdated(query, instanceIdx, repoIdx, prId, reviewId, level, owner, repo, repoConfig, pr) {
     try {
       const mcpService = getMCPService(repoConfig.instance.key);
-      const openPRs = await mcpService.getOpenPRs(repo);
-      const pr = openPRs.find(p => p.id === parseInt(prId));
-
-      if (!pr) {
-        await this.bot.answerCallbackQuery(query.id, { text: `❌ PR not found` });
-        return;
-      }
 
       await this.bot.answerCallbackQuery(query.id, { text: `🚀 Starting ${level} re-review...` });
 
       await this.bot.sendMessage(this.chatId,
-        `🔄 <b>Re-reviewing ${owner}/${repo} PR #${prId} at ${level.toUpperCase()} level</b>\n` +
+        `🔄 <b>Re-reviewing ${owner}/${repo} PR #${pr.number} at ${level.toUpperCase()} level</b>\n` +
         `⏳ This may take ${repoConfig.instance.agent.reviewTimeoutMessage}...`,
         {
           message_thread_id: repoConfig.threadId,
@@ -458,8 +451,8 @@ class TelegramService {
         logger.error(`Failed to send confirmation: ${msgErr.message}`);
       }
 
-      await reviewStateManager.clearReviewState(owner, repo, parseInt(prId));
-      logger.info(`[${owner}/${repo}] Started ${level} re-review for PR #${prId}`);
+      await reviewStateManager.clearReviewState(owner, repo, pr.id);
+      logger.info(`[${owner}/${repo}] Started ${level} re-review for PR #${pr.number}`);
     } catch (err) {
       logger.error(`[${owner}/${repo}] Failed to start re-review: ${err.message}`);
       await this.bot.answerCallbackQuery(query.id, { text: `❌ Error: ${err.message}`, show_alert: true });
