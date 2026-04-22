@@ -4,6 +4,7 @@ const logger = require('../utils/logger');
 const TimeoutManager = require('../utils/timeoutManager');
 const skipManager = require('./skipManager');
 const repositoryStateManager = require('./repositoryStateManager');
+const reviewStateManager = require('./reviewStateManager');
 const { getMCPService } = require('./mcpGithubService');
 
 class TelegramService {
@@ -150,14 +151,25 @@ class TelegramService {
   async handleCallbackQuery(query) {
     const dataParts = query.data.split(':');
 
-    let action, instanceIdx, repoIdx, prId, level;
+    let action, instanceIdx, repoIdx, prId, level, reviewId;
 
     if (dataParts.length === 4) {
       // Standard action: action:instanceIdx:repoIdx:prId
       [action, instanceIdx, repoIdx, prId] = dataParts;
     } else if (dataParts.length === 5) {
-      // review_level action: review_level:instanceIdx:repoIdx:prId:level
-      [action, instanceIdx, repoIdx, prId, level] = dataParts;
+      // Could be: review_level:instanceIdx:repoIdx:prId:level
+      // Or: approve_outdated:instanceIdx:repoIdx:prId:reviewId
+      // Or: re_review:instanceIdx:repoIdx:prId:reviewId
+      // Or: dismiss_outdated:instanceIdx:repoIdx:prId:reviewId
+      const firstPart = dataParts[0];
+      if (firstPart === 'review_level') {
+        [action, instanceIdx, repoIdx, prId, level] = dataParts;
+      } else {
+        [action, instanceIdx, repoIdx, prId, reviewId] = dataParts;
+      }
+    } else if (dataParts.length === 6) {
+      // review_level_outdated:instanceIdx:repoIdx:prId:reviewId:level
+      [action, instanceIdx, repoIdx, prId, reviewId, level] = dataParts;
     } else {
       await this.bot.answerCallbackQuery(query.id, { text: '❌ Invalid callback data format' });
       return;
@@ -303,6 +315,14 @@ class TelegramService {
       } else if (action === 'review_cancel') {
         await this.bot.answerCallbackQuery(query.id, { text: '❌ Review cancelled' });
         await this.bot.deleteMessage(this.chatId, query.message.message_id);
+      } else if (action === 'approve_outdated') {
+        await this.handleApproveOutdated(query, instanceIdx, repoIdx, prId, reviewId, owner, repo, repoConfig);
+      } else if (action === 're_review') {
+        await this.handleReReview(query, instanceIdx, repoIdx, prId, reviewId, owner, repo, repoConfig);
+      } else if (action === 'dismiss_outdated') {
+        await this.handleDismissOutdated(query, instanceIdx, repoIdx, prId, reviewId, owner, repo, repoConfig);
+      } else if (action === 'review_level_outdated') {
+        await this.handleReviewLevelOutdated(query, instanceIdx, repoIdx, prId, reviewId, level, owner, repo, repoConfig);
       }
     } catch (err) {
       if (err.message && err.message.includes('cannot be reviewed: contains unsupported file types')) {
@@ -333,6 +353,138 @@ class TelegramService {
       } catch (answerErr) {
         logger.error(`Failed to answer callback query: ${answerErr.message}`);
       }
+    }
+  }
+
+  /**
+   * Handle approve after outdated review
+   */
+  async handleApproveOutdated(query, instanceIdx, repoIdx, prId, reviewId, owner, repo, repoConfig) {
+    try {
+      const mcpService = getMCPService(repoConfig.instance.key);
+
+      await mcpService.approvePR(repo, parseInt(prId), '✅ Approved after addressing previous review comments.');
+
+      await this.bot.editMessageText(`✅ ${owner}/${repo} PR #${prId} has been approved!`, {
+        chat_id: this.chatId,
+        message_id: query.message.message_id,
+        message_thread_id: repoConfig.threadId
+      });
+
+      await reviewStateManager.clearReviewState(owner, repo, parseInt(prId));
+      await this.bot.answerCallbackQuery(query.id);
+
+      logger.info(`[${owner}/${repo}] PR #${prId} approved (outdated review ${reviewId})`);
+    } catch (err) {
+      logger.error(`[${owner}/${repo}] Failed to approve PR #${prId}: ${err.message}`);
+      await this.bot.answerCallbackQuery(query.id, { text: `❌ Error: ${err.message}`, show_alert: true });
+    }
+  }
+
+  /**
+   * Handle re-review request
+   */
+  async handleReReview(query, instanceIdx, repoIdx, prId, reviewId, owner, repo, repoConfig) {
+    try {
+      await this.bot.answerCallbackQuery(query.id);
+
+      const keyboard = {
+        inline_keyboard: [
+          [
+            { text: '🟢 Low', callback_data: `review_level_outdated:${instanceIdx}:${repoIdx}:${prId}:${reviewId}:low` },
+            { text: '🟡 Medium', callback_data: `review_level_outdated:${instanceIdx}:${repoIdx}:${prId}:${reviewId}:medium` }
+          ],
+          [
+            { text: '🔴 High', callback_data: `review_level_outdated:${instanceIdx}:${repoIdx}:${prId}:${reviewId}:high` }
+          ],
+          [
+            { text: '❌ Cancel', callback_data: `review_cancel:${instanceIdx}:${repoIdx}:${prId}` }
+          ]
+        ]
+      };
+
+      await this.bot.editMessageReplyMarkup(keyboard, {
+        chat_id: this.chatId,
+        message_id: query.message.message_id,
+        message_thread_id: repoConfig.threadId
+      });
+    } catch (err) {
+      logger.error(`[${owner}/${repo}] Failed to show re-review options: ${err.message}`);
+      await this.bot.answerCallbackQuery(query.id, { text: `❌ Error: ${err.message}`, show_alert: true });
+    }
+  }
+
+  /**
+   * Handle dismiss outdated review
+   */
+  async handleDismissOutdated(query, instanceIdx, repoIdx, prId, reviewId, owner, repo, repoConfig) {
+    try {
+      await reviewStateManager.markDismissed(owner, repo, parseInt(prId));
+
+      await this.bot.editMessageText(`✅ Dismissed outdated review notification for ${owner}/${repo} PR #${prId}`, {
+        chat_id: this.chatId,
+        message_id: query.message.message_id,
+        message_thread_id: repoConfig.threadId
+      });
+
+      await this.bot.answerCallbackQuery(query.id);
+
+      logger.info(`[${owner}/${repo}] User dismissed outdated review ${reviewId} for PR #${prId}`);
+    } catch (err) {
+      logger.error(`[${owner}/${repo}] Failed to dismiss outdated review: ${err.message}`);
+      await this.bot.answerCallbackQuery(query.id, { text: `❌ Error: ${err.message}`, show_alert: true });
+    }
+  }
+
+  /**
+   * Handle review level selection for outdated PR
+   */
+  async handleReviewLevelOutdated(query, instanceIdx, repoIdx, prId, reviewId, level, owner, repo, repoConfig) {
+    try {
+      const mcpService = getMCPService(repoConfig.instance.key);
+      const openPRs = await mcpService.getOpenPRs(repo);
+      const pr = openPRs.find(p => p.id === parseInt(prId));
+
+      if (!pr) {
+        await this.bot.answerCallbackQuery(query.id, { text: `❌ PR not found` });
+        return;
+      }
+
+      await this.bot.answerCallbackQuery(query.id, { text: `🚀 Starting ${level} re-review...` });
+
+      await this.bot.sendMessage(this.chatId,
+        `🔄 <b>Re-reviewing ${owner}/${repo} PR #${prId} at ${level.toUpperCase()} level</b>\n` +
+        `⏳ This may take ${repoConfig.instance.agent.reviewTimeoutMessage}...`,
+        {
+          message_thread_id: repoConfig.threadId,
+          parse_mode: 'HTML'
+        }
+      );
+
+      const openclawAgentService = require('./openclawAgentService');
+      const reviewResult = await openclawAgentService.runReviewWithLevel(owner, repo, pr, level);
+
+      const ghResult = await mcpService.createReviewWithComments(repo, pr, reviewResult);
+
+      try {
+        const reviewUrl = ghResult?.html_url || pr.url;
+        await this.bot.sendMessage(this.chatId,
+          `✅ <b>Re-review Complete!</b>\n\n` +
+          `📁 <b>Repo:</b> ${owner}/${repo}\n` +
+          `📝 <b>Level:</b> ${level.toUpperCase()}\n` +
+          `💬 <b>Comments:</b> ${reviewResult.comments.length}\n` +
+          `🔗 ${reviewUrl}`,
+          { message_thread_id: repoConfig.threadId, parse_mode: 'HTML' }
+        );
+      } catch (msgErr) {
+        logger.error(`Failed to send confirmation: ${msgErr.message}`);
+      }
+
+      await reviewStateManager.clearReviewState(owner, repo, parseInt(prId));
+      logger.info(`[${owner}/${repo}] Started ${level} re-review for PR #${prId}`);
+    } catch (err) {
+      logger.error(`[${owner}/${repo}] Failed to start re-review: ${err.message}`);
+      await this.bot.answerCallbackQuery(query.id, { text: `❌ Error: ${err.message}`, show_alert: true });
     }
   }
 
@@ -428,6 +580,60 @@ class TelegramService {
         parse_mode: 'HTML'
       });
       logger.info(`[${owner}/${repo}] Warning sent for PR #${prNumber}`);
+    }, config.retries.telegramRetries, 3000, config.retries.backoffFactor);
+  }
+
+  /**
+   * Send outdated review notification
+   */
+  async sendOutdatedReviewNotification(owner, repo, pr, reviewState, threadId) {
+    return this.retryOperation(async () => {
+      const indices = this.getRepoIndices(owner, repo);
+      if (!indices) {
+        logger.error(`[${owner}/${repo}] Failed to find repo indices for callback data`);
+        return;
+      }
+      const { instanceIdx, repoIdx } = indices;
+
+      const reviewDate = new Date(reviewState.submitted_at).toLocaleString('id-ID', {
+        dateStyle: 'medium',
+        timeStyle: 'short'
+      });
+
+      const message = `🔄 <b>OUTDATED REVIEW DETECTED</b>
+<b>${owner}/${repo} PR #${pr.number}: ${pr.title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</b>
+👤 Author: ${pr.author.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+🔗 ${pr.url}
+
+---
+📋 <b>Review Status:</b>
+• Review requested changes on ${reviewDate}
+• Review HEAD: <code>${reviewState.head_sha?.substring(0, 7) || 'N/A'}</code>
+• Current HEAD: <code>${pr.headSha?.substring(0, 7) || 'N/A'}</code>
+• <b>New commits detected!</b>
+
+This PR has changes that may address previous review comments.`;
+
+      const inlineKeyboard = {
+        inline_keyboard: [
+          [
+            { text: '✅ Approve', callback_data: `approve_outdated:${instanceIdx}:${repoIdx}:${pr.id}:${reviewState.review_id}` },
+            { text: '🔍 Re-review', callback_data: `re_review:${instanceIdx}:${repoIdx}:${pr.id}:${reviewState.review_id}` }
+          ],
+          [
+            { text: '🔗 Visit PR', callback_data: `visit:${instanceIdx}:${repoIdx}:${pr.id}` },
+            { text: '❌ Dismiss', callback_data: `dismiss_outdated:${instanceIdx}:${repoIdx}:${pr.id}:${reviewState.review_id}` }
+          ]
+        ]
+      };
+
+      await this.bot.sendMessage(this.chatId, message, {
+        reply_markup: inlineKeyboard,
+        disable_web_page_preview: true,
+        message_thread_id: threadId,
+        parse_mode: 'HTML'
+      });
+      logger.info(`[${owner}/${repo}] Outdated review notification sent for PR #${pr.number}`);
     }, config.retries.telegramRetries, 3000, config.retries.backoffFactor);
   }
 }

@@ -5,10 +5,12 @@ const { getMCPService } = require('./mcpGithubService');
 const telegramService = require('./telegramService');
 const skipManager = require('./skipManager');
 const repositoryStateManager = require('./repositoryStateManager');
+const reviewStateManager = require('./reviewStateManager');
 
 class SchedulerDaemon {
   constructor() {
     this.checkInterval = null;
+    this.outdatedReviewCheckInterval = null;
     this.activeProcesses = new Map();
     this.timeoutManager = new TimeoutManager();
     this.pendingRetries = new Map();
@@ -181,6 +183,88 @@ class SchedulerDaemon {
   }
 
   /**
+   * Check for outdated reviews in a repository
+   */
+  async checkOutdatedReviews(instance, repoName, repoConfig, mcpService) {
+    try {
+      const openPRs = await mcpService.getOpenPRs(repoName);
+
+      for (const pr of openPRs) {
+        try {
+          const reviews = await mcpService.getPRReviews(repoName, pr.number);
+
+          const reviewState = await reviewStateManager.updateReviewState(
+            instance.owner,
+            repoName,
+            pr.id,
+            reviews,
+            pr.headSha
+          );
+
+          if (!reviewState) continue;
+
+          const hasNewCommits = reviewStateManager.hasNewCommits(
+            instance.owner,
+            repoName,
+            pr.id,
+            pr.headSha
+          );
+
+          // Check if there are new comments after the review
+          const comments = await mcpService.getPRComments(repoName, pr.number);
+          const reviewDate = new Date(reviewState.submitted_at);
+          const hasNewComments = comments.some(c => new Date(c.created_at) > reviewDate);
+
+          if (hasNewComments) {
+            logger.info(`[${instance.owner}/${repoName}] PR #${pr.number} has new comments after review, skipping outdated notification`);
+            await reviewStateManager.clearReviewState(instance.owner, repoName, pr.id);
+            continue;
+          }
+
+          if (reviewState.has_outdated && hasNewCommits && !reviewState.dismissed) {
+            await telegramService.sendOutdatedReviewNotification(
+              instance.owner,
+              repoName,
+              pr,
+              reviewState,
+              repoConfig.thread_id
+            );
+          }
+        } catch (err) {
+          logger.error(`[${instance.owner}/${repoName}] Error checking PR #${pr.number} for outdated reviews: ${err.message}`);
+        }
+      }
+    } catch (err) {
+      logger.error(`[${instance.owner}/${repoName}] Outdated review check failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Run outdated review check cycle
+   */
+  async runOutdatedReviewCheckCycle() {
+    try {
+      logger.info('Starting outdated review check cycle');
+
+      for (const [instanceKey, instance] of Object.entries(config.instances)) {
+        const repoCount = Object.keys(instance.repos || {}).length;
+        logger.info(`[${instanceKey}] Checking ${repoCount} repository(ies) for outdated reviews`);
+
+        const mcpService = this.getMCPService(instanceKey);
+
+        for (const [repoName, repoConfig] of Object.entries(instance.repos || {})) {
+          await this.checkOutdatedReviews(instance, repoName, repoConfig, mcpService);
+        }
+      }
+
+      const stats = reviewStateManager.getStats();
+      logger.info(`Outdated review check cycle completed. Stats: ${stats.totalRepos} repos, ${stats.totalReviews} tracked reviews, ${stats.totalOutdated} outdated, ${stats.totalDismissed} dismissed`);
+    } catch (cycleErr) {
+      logger.error(`Outdated review check cycle failed: ${cycleErr.message}`);
+    }
+  }
+
+  /**
    * Start the scheduler daemon
    */
   start() {
@@ -201,6 +285,17 @@ class SchedulerDaemon {
     }
 
     logger.info(`⏰ Scheduled recurring PR checks every ${config.app.checkIntervalMs / 60000} minutes`);
+
+    if (config.app.outdatedReviewCheckIntervalMs > 0) {
+      this.runOutdatedReviewCheckCycle();
+      this.outdatedReviewCheckInterval = setInterval(() => this.runOutdatedReviewCheckCycle(), config.app.outdatedReviewCheckIntervalMs);
+
+      if (typeof this.outdatedReviewCheckInterval.unref === 'function') {
+        this.outdatedReviewCheckInterval.unref();
+      }
+
+      logger.info(`⏰ Scheduled outdated review checks every ${config.app.outdatedReviewCheckIntervalMs / 60000} minutes`);
+    }
   }
 
   /**
@@ -210,6 +305,11 @@ class SchedulerDaemon {
     if (this.checkInterval) {
       clearInterval(this.checkInterval);
       this.checkInterval = null;
+    }
+
+    if (this.outdatedReviewCheckInterval) {
+      clearInterval(this.outdatedReviewCheckInterval);
+      this.outdatedReviewCheckInterval = null;
     }
 
     this.timeoutManager.clearAll();

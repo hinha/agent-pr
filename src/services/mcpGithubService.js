@@ -271,6 +271,64 @@ class MCPGitHubService {
   }
 
   /**
+   * Fetch all reviews for a PR
+   */
+  async getPRReviews(repo, prNumber) {
+    logger.debug(`[MCP:${this.instanceKey}/${repo}] Fetching reviews for PR #${prNumber}`);
+
+    try {
+      const rawReviews = await this.callMCP('list_pull_request_reviews', {
+        owner: this.owner,
+        repo: repo,
+        pull_number: prNumber
+      });
+
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Found ${rawReviews.length} reviews for PR #${prNumber}`);
+
+      return rawReviews.map(r => ({
+        id: r.id,
+        state: r.state,
+        body: r.body,
+        user: r.user?.login,
+        submitted_at: r.submitted_at,
+        head_sha: r.commit_id,
+        comments: r.comments || []
+      }));
+    } catch (err) {
+      logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch reviews for PR #${prNumber}: ${err.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Fetch all issue comments (general discussion) for a PR
+   */
+  async getPRComments(repo, prNumber) {
+    logger.debug(`[MCP:${this.instanceKey}/${repo}] Fetching comments for PR #${prNumber}`);
+
+    try {
+      const rawComments = await this.callMCP('list_pull_request_comments', {
+        owner: this.owner,
+        repo: repo,
+        pull_number: prNumber
+      });
+
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Found ${rawComments.length} comments for PR #${prNumber}`);
+
+      return rawComments.map(c => ({
+        id: c.id,
+        body: c.body,
+        user: c.user?.login,
+        created_at: c.created_at,
+        updated_at: c.updated_at
+      }));
+    } catch (err) {
+      logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch comments for PR #${prNumber}: ${err.message}`);
+      return [];
+    }
+  }
+
+  /**
    * Create a PR review with per-line comments
    */
   async createReviewWithComments(repo, pr, reviewResult) {
