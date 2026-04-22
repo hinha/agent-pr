@@ -249,7 +249,7 @@ class TelegramService {
         } catch (error) {
           if (error.message.includes('Can not request changes on your own pull request')) {
             logger.warn(`[${owner}/${repo}] Cannot request changes on own PR`);
-            await mcpService.callMCP('create_pull_request_review', {
+            await mcpService.callMCP('pull_request_review_write', {
               owner: owner,
               repo: repo,
               pull_number: pr.number,
