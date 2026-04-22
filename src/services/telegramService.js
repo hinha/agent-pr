@@ -105,15 +105,14 @@ class TelegramService {
   async handleCallbackQuery(query) {
     const dataParts = query.data.split(':');
 
-    const action = dataParts[0];
-    let owner, repo, prId;
+    let action, owner, repo, prId, level;
 
     if (dataParts.length === 4) {
+      // Standard action: action:owner:repo:prId
       [action, owner, repo, prId] = dataParts;
-    } else if (dataParts.length === 2) {
-      [action, prId] = dataParts;
-      owner = query.data;
-      repo = query.data;
+    } else if (dataParts.length === 5) {
+      // review_level action: review_level:owner:repo:prId:level
+      [action, owner, repo, prId, level] = dataParts;
     } else {
       await this.bot.answerCallbackQuery(query.id, { text: '❌ Invalid callback data format' });
       return;
@@ -219,7 +218,6 @@ class TelegramService {
           message_thread_id: repoConfig.threadId
         });
       } else if (action === 'review_level') {
-        const level = dataParts[4];
         await this.bot.answerCallbackQuery(query.id, { text: `🚀 Starting ${level} review...` });
 
         const instance = repoConfig.instance;
