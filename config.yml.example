@@ -34,6 +34,7 @@ github/your-org-or-user:
 
   # OpenClaw agent configuration
   agent:
+    # Use 'openclaw agents list' to see available agents
     review: please-create-agent-first
     summary: please-create-agent-first
     # Available review levels
@@ -54,8 +55,8 @@ github/your-org-or-user:
       thread_id: "<THREAD_ID>"
 
 # Optional: Additional GitHub instances can be added by duplicating the block below and updating the instance name and configuration
-github/your-org-or-user:
-  mcp_name: your-mcp-name
+github/another-org-or-user:
+  mcp_name: your-other-mcp-name
   max_age_hours: 48
   skip_cache_duration_hours: 3
   agent:

@@ -418,6 +418,9 @@ class OpenClawAgentService {
       throw new Error(`Prompt template not found in any location`);
     }
 
+    const instance = config.getInstanceByOwner(owner);
+    const mcpName = instance.mcpName;
+
     return template
       .replace('{{PR_NUMBER}}', pr.number)
       .replace('{{LEVEL}}', level.toUpperCase())
@@ -427,7 +430,8 @@ class OpenClawAgentService {
       .replace('{{REPO}}', repo)
       .replace('{{SOURCE_BRANCH}}', pr.headBranch)
       .replace('{{TARGET_BRANCH}}', pr.baseBranch)
-      .replace('{{PR_URL}}', pr.url);
+      .replace('{{PR_URL}}', pr.url)
+      .replace('{{MCP_NAME}}', mcpName);
   }
 
   /**

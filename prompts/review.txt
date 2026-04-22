@@ -27,7 +27,7 @@ OUTPUT FORMAT (JSON):
   ]
 }
 
-INFO PR Gunakan MCP github-work:
+INFO PR Gunakan MCP {{MCP_NAME}}:
 - Repository: {{OWNER}}/{{REPO}}
 - Source branch: {{SOURCE_BRANCH}}
 - Target branch: {{TARGET_BRANCH}}
@@ -40,4 +40,4 @@ PENTING: Output HARUS KONSISTEN valid JSON saja, tanpa text tambahan:
 - JANGAN sertakan konten file atau diff dalam output
 - Output harus dimulai langsung dengan { dan berakhir dengan }
 - Pastikan ada field "summary" dan "comments" dalam JSON
-- Lalu hasil json kirim menggunakan mcp github-work  per object sebagai inline PR comments per file lewat create_pull_request_review (event COMMENT)
+- Lalu hasil json kirim menggunakan mcp {{MCP_NAME}} per object sebagai inline PR comments per file lewat create_pull_request_review (event COMMENT)
