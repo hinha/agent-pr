@@ -1,8 +1,7 @@
-const pRetry = require('p-retry');
 const config = require('../config');
 const logger = require('../utils/logger');
+const TimeoutManager = require('../utils/timeoutManager');
 const mcpGithubService = require('./mcpGithubService');
-const openclawAgentService = require('./openclawAgentService');
 const telegramService = require('./telegramService');
 const skipManager = require('./skipManager');
 const prStateManager = require('./prStateManager');
@@ -11,6 +10,8 @@ class SchedulerDaemon {
   constructor() {
     this.checkInterval = null;
     this.activeProcesses = new Map(); // Track ongoing PR processing to avoid duplicates
+    this.timeoutManager = new TimeoutManager();
+    this.pendingRetries = new Map(); // Track retry timeouts per PR
   }
 
   /**
@@ -50,8 +51,18 @@ class SchedulerDaemon {
       }
     } catch (err) {
       logger.error(`Initial processing failed for PR #${pr.number}: ${err.message}`);
+
+      // If the error is due to unsupported file types (null URLs), permanently skip this PR immediately
+      if (err.message && err.message.includes('cannot be reviewed: contains unsupported file types')) {
+        logger.warn(`Permanently skipping PR #${pr.number} due to unsupported file types (submodules, special files)`);
+        await prStateManager.markProcessed(pr.id);
+        this.activeProcesses.delete(prIdStr);
+        return;
+      }
+
       // Partial failure recovery: retry once after 30s delay
-      setTimeout(async () => {
+      const retryId = this.timeoutManager.setTimeout(async () => {
+        this.pendingRetries.delete(prIdStr);
         if (!await prStateManager.isProcessed(pr.id)) {
           logger.info(`Retrying processing for PR #${pr.number}`);
           try {
@@ -70,9 +81,16 @@ class SchedulerDaemon {
             await prStateManager.markProcessed(pr.id);
           } catch (retryErr) {
             logger.error(`Permanent failure processing PR #${pr.number}: ${retryErr.message}`);
+
+            // If the error is due to unsupported file types (null URLs), permanently skip this PR
+            if (retryErr.message && retryErr.message.includes('cannot be reviewed: contains unsupported file types')) {
+              logger.warn(`Permanently skipping PR #${pr.number} due to unsupported file types (submodules, special files)`);
+              await prStateManager.markProcessed(pr.id);
+            }
           }
         }
       }, 30000);
+      this.pendingRetries.set(prIdStr, retryId);
     } finally {
       this.activeProcesses.delete(prIdStr);
     }
@@ -120,6 +138,10 @@ class SchedulerDaemon {
     this.runPRCheckCycle();
     // Set recurring check interval
     this.checkInterval = setInterval(() => this.runPRCheckCycle(), config.scheduler.checkIntervalMs);
+    // Allow process to exit if this is the only active timer
+    if (typeof this.checkInterval.unref === 'function') {
+      this.checkInterval.unref();
+    }
     logger.info(`Scheduled recurring PR checks every ${config.scheduler.checkIntervalMs / 60000} minutes`);
   }
 
@@ -127,8 +149,36 @@ class SchedulerDaemon {
    * Gracefully stop the daemon
    */
   stop() {
-    if (this.checkInterval) clearInterval(this.checkInterval);
+    if (this.checkInterval) {
+      clearInterval(this.checkInterval);
+      this.checkInterval = null;
+    }
+    // Clear all pending timeouts
+    this.timeoutManager.clearAll();
+    this.pendingRetries.clear();
     logger.info('Scheduler daemon stopped');
+  }
+
+  /**
+   * Wait for all active processes to complete
+   * @param {number} timeoutMs - Maximum time to wait in milliseconds (default: 30s)
+   * @returns {Promise<boolean>} True if all processes completed, false if timeout
+   */
+  async waitForCompletion(timeoutMs = 30000) {
+    const startTime = Date.now();
+    logger.info(`Waiting for ${this.activeProcesses.size} active PR processes to complete...`);
+
+    while (this.activeProcesses.size > 0) {
+      if (Date.now() - startTime > timeoutMs) {
+        logger.warn(`Timeout waiting for ${this.activeProcesses.size} processes to complete`);
+        return false;
+      }
+      // Check every 100ms
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    logger.info('All active PR processes completed');
+    return true;
   }
 }
 

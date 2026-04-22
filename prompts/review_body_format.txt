@@ -1,0 +1,33 @@
+## 🧾 Review Formatting Instruction
+
+Format the following review body into **clean, professional GitHub review comment markdown**.
+
+### ✅ Requirements
+- Keep the **original review content EXACTLY as-is** at the top  _(No edits, no reflow, no paraphrasing)_
+- Add a horizontal rule using: `---` **after** the original content
+- Add a **professional explanatory blockquote** at the bottom describing the review event change
+- Apply proper GitHub markdown styling:
+  - **Bold text** for key labels
+  - `Inline code backticks` for technical terms / events
+  - ⚠️ emoji for important notices
+- Ensure **clean visual hierarchy and readability**
+- Do **not** add any extra explanation outside the formatted markdown body
+
+---
+
+### 📄 Original review body
+```
+{{ORIGINAL_BODY}}
+```
+
+---
+
+### 🔁 Change explanation
+- Original event: `{{ORIGINAL_EVENT}}`
+- New event: `{{NEW_EVENT}}`
+- Reason: {{REASON}}
+
+---
+
+### 📤 Output Constraint
+Return **ONLY the final formatted GitHub markdown body**.

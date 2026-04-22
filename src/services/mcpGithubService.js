@@ -1,8 +1,9 @@
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
 const config = require('../config');
 const logger = require('../utils/logger');
+const TimeoutManager = require('../utils/timeoutManager');
 
 class MCPGitHubService {
   constructor() {
@@ -10,6 +11,7 @@ class MCPGitHubService {
     this.serverName = config.mcp.serverName;
     this.owner = config.github.owner;
     this.repo = config.github.repo;
+    this.timeoutManager = new TimeoutManager();
   }
 
   /**
@@ -25,37 +27,147 @@ class MCPGitHubService {
         if (attempt >= retries) throw err;
         const delay = minTimeout * Math.pow(factor, attempt - 1);
         logger.warn(`MCP attempt ${attempt} failed: ${err.message}, retrying in ${delay}ms, retries left: ${retries - attempt}`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise(resolve => {
+          this.timeoutManager.setTimeout(resolve, delay);
+        });
       }
     }
   }
 
   /**
-   * Execute MCP tool call with exponential backoff retries
+   * Execute MCP tool call using spawn (bypasses shell to avoid command injection)
    */
   async callMCP(method, args = {}) {
     return this.retryOperation(async () => {
-      // Build argument string for mcporter
-      const argStrings = Object.entries(args)
-        .map(([key, value]) => {
-          if (typeof value === 'object') return `${key}:${JSON.stringify(value)}`;
-          return `${key}=${JSON.stringify(value)}`;
-        })
-        .join(' ');
+      const timeoutMs = 60000; // 60 second timeout for MCP calls
+      const startTime = Date.now();
+      logger.info(`Starting MCP call ${this.serverName}.${method} (timeout: ${timeoutMs}ms)`);
 
-      const fullCommand = `${this.mcpBaseCmd} call ${this.serverName}.${method} ${argStrings} --output json`;
-      logger.debug(`Executing MCP command: ${fullCommand}`);
+      // Build arguments array for spawn (bypasses shell interpretation)
+      const spawnArgs = ['call', `${this.serverName}.${method}`, '--output', 'json'];
 
-      const { stdout, stderr } = await execPromise(fullCommand);
-      if (stderr && !stderr.includes('warning')) logger.warn(`MCP stderr: ${stderr}`);
+      // Add each argument as separate item (avoids shell interpretation)
+      // For mcporter: primitive values (string, number, boolean) use key=value
+      // Complex values (object, array) use key:JSON
+      for (const [key, value] of Object.entries(args)) {
+        if (value === null || value === undefined) {
+          spawnArgs.push(`${key}=null`);
+        } else if (typeof value === 'object') {
+          // Objects and arrays: use colon format with JSON
+          spawnArgs.push(`${key}:${JSON.stringify(value)}`);
+        } else if (typeof value === 'string') {
+          // Strings: use equals format, but DON'T JSON.stringify (avoids double quotes)
+          // The string value is passed directly as key=value
+          spawnArgs.push(`${key}=${value}`);
+        } else {
+          // Numbers, booleans: use equals format
+          spawnArgs.push(`${key}=${value}`);
+        }
+      }
+
+      logger.info(`Executing MCP command: ${this.serverName}.${method} with ${Object.keys(args).length} args`);
+
+      // Use spawn with maxBuffer option to handle large payloads
+      const result = await this.spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
 
       try {
-        return JSON.parse(stdout);
+        const parsed = JSON.parse(result.stdout);
+        logger.info(`MCP response parsed for ${method}: type=${typeof parsed}, isArray=${Array.isArray(parsed)}, keys=${Object.keys(parsed || {}).join(', ')}`);
+        logger.info(`MCP response preview: ${JSON.stringify(parsed).substring(0, 500)}`);
+
+        // Check if MCP response contains an error
+        if (parsed.error) {
+          const errorMsg = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
+          logger.error(`MCP returned error for ${method}: ${errorMsg}`);
+          throw new Error(`MCP error: ${errorMsg}`);
+        }
+
+        return parsed;
       } catch (parseErr) {
-        logger.error(`Failed to parse MCP output for ${method}: ${stdout}`);
+        logger.error(`Failed to parse MCP output for ${method}: ${result.stdout}`);
         throw new Error(`MCP response parse failed: ${parseErr.message}`);
       }
     }, config.retries.mcpRetries, 2000, config.retries.backoffFactor);
+  }
+
+  /**
+   * Spawn command with timeout and large buffer support
+   * Includes proper cleanup of event listeners to prevent memory leaks
+   */
+  spawnWithTimeout(command, args, timeoutMs, startTime) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        // Clean up event listeners on timeout
+        spawnProcess.stdout.off('data', onData);
+        spawnProcess.stderr.off('data', onErrorData);
+        spawnProcess.off('close', onClose);
+        spawnProcess.off('error', onError);
+        spawnProcess.kill('SIGTERM');
+        const elapsed = Date.now() - startTime;
+        logger.error(`MCP command timeout after ${timeoutMs}ms (elapsed: ${elapsed}ms)`);
+        reject(new Error(`MCP command timeout after ${timeoutMs}ms (elapsed: ${elapsed}ms)`));
+      }, timeoutMs);
+
+      logger.debug(`spawn about to execute: ${command} ${args.slice(0, 4).join(' ')}... (${args.length} total args)`);
+
+      // Spawn with maxBuffer to handle large payloads (10MB)
+      // Note: encoding option in spawn options doesn't work as expected, so we decode manually
+      const spawnProcess = spawn(command, args, {
+        maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+        shell: false // Important: disable shell to avoid command injection
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      // Store event handlers for cleanup
+      const onData = (data) => {
+        // Explicitly decode buffer to string
+        stdout += data.toString('utf8');
+      };
+
+      const onErrorData = (data) => {
+        // Explicitly decode buffer to string
+        stderr += data.toString('utf8');
+      };
+
+      const onClose = (code) => {
+        // Clean up all event listeners
+        spawnProcess.stdout.off('data', onData);
+        spawnProcess.stderr.off('data', onErrorData);
+        spawnProcess.off('close', onClose);
+        spawnProcess.off('error', onError);
+        clearTimeout(timer);
+
+        const elapsed = Date.now() - startTime;
+        logger.info(`MCP command completed in ${elapsed}ms, exit code: ${code}, stdout length: ${stdout?.length || 0}`);
+        if (stderr && !stderr.includes('warning')) logger.warn(`MCP stderr: ${stderr}`);
+        if (code !== 0) {
+          reject(new Error(`MCP command failed with exit code ${code}: ${stderr || stdout}`));
+        } else {
+          resolve({ stdout, stderr });
+        }
+      };
+
+      const onError = (err) => {
+        // Clean up all event listeners
+        spawnProcess.stdout.off('data', onData);
+        spawnProcess.stderr.off('data', onErrorData);
+        spawnProcess.off('close', onClose);
+        spawnProcess.off('error', onError);
+        clearTimeout(timer);
+
+        const elapsed = Date.now() - startTime;
+        logger.error(`MCP command failed after ${elapsed}ms: ${err.message}`);
+        reject(err);
+      };
+
+      // Register event listeners
+      spawnProcess.stdout.on('data', onData);
+      spawnProcess.stderr.on('data', onErrorData);
+      spawnProcess.on('close', onClose);
+      spawnProcess.on('error', onError);
+    });
   }
 
   /**
@@ -71,6 +183,13 @@ class MCPGitHubService {
       page: 1
     });
 
+    // Debug: log the response structure
+    logger.info(`MCP response type: ${typeof rawPRs}, isArray: ${Array.isArray(rawPRs)}`);
+    if (!Array.isArray(rawPRs)) {
+      logger.info(`MCP response keys: ${Object.keys(rawPRs || {}).join(', ')}`);
+      logger.info(`MCP response (first 500 chars): ${JSON.stringify(rawPRs).substring(0, 500)}`);
+    }
+
     return rawPRs.map(pr => ({
       id: pr.id,
       number: pr.number,
@@ -80,8 +199,77 @@ class MCPGitHubService {
       createdAt: new Date(pr.created_at),
       description: pr.body || 'No description provided',
       baseBranch: pr.base?.ref,
-      headBranch: pr.head?.ref
+      headBranch: pr.head?.ref,
+      headSha: pr.head?.sha
     }));
+  }
+
+  /**
+   * Check if a file is a test file (should be excluded from review)
+   */
+  isTestFile(filename) {
+    const testPatterns = [
+      '_test.go',           // Go test files
+      '_test.js',           // JavaScript test files
+      '_test.ts',           // TypeScript test files
+      '.test.',             // Files with .test. in name
+      '/e2e_test/',         // E2E test folder
+      '/e2e/',              // E2E folder
+      '/__tests__/',        // JavaScript test folder
+      '/test/',             // Generic test folder
+      '/tests/',            // Generic tests folder
+      '/spec/',             // Spec/test folder
+      '_spec.',             // Spec files (Jasmine, etc)
+      '.spec.',             // Spec files variant
+      'swagger.json',       // Swagger/OpenAPI spec files
+      'swagger.yaml',       // Swagger YAML spec files
+      'swagger.yml',        // Swagger YAML variant
+      'openapi.json',       // OpenAPI spec files
+      'openapi.yaml',       // OpenAPI YAML spec files
+      'openapi.yml',        // OpenAPI YAML variant
+    ];
+
+    return testPatterns.some(pattern => filename.includes(pattern));
+  }
+
+  /**
+   * Sanitize file data to handle null/undefined values that can cause MCP validation errors
+   */
+  sanitizeFileData(files) {
+    if (!Array.isArray(files)) return [];
+
+    return files.filter(f => {
+      // Filter out files with null/undefined required fields
+      if (!f.filename) return false;
+      // Skip files where blob_url or raw_url are null (causes MCP validation errors)
+      // This happens with submodules, removed files, or certain file types
+      if (f.blob_url === null || f.raw_url === null) {
+        logger.warn(`Skipping file ${f.filename} due to null URL (blob_url=${f.blob_url}, raw_url=${f.raw_url})`);
+        return false;
+      }
+      return true;
+    }).map(f => ({
+      ...f,
+      // Ensure all fields have safe defaults
+      filename: f.filename || '',
+      blob_url: f.blob_url || '',
+      raw_url: f.raw_url || '',
+      additions: f.additions || 0,
+      deletions: f.deletions || 0,
+      changes: f.changes || 0,
+      status: f.status || 'modified'
+    }));
+  }
+
+  /**
+   * Check if an error is the specific MCP validation error for null URLs
+   */
+  isNullUrlValidationError(error) {
+    const errorStr = error.message || JSON.stringify(error);
+    return errorStr.includes('blob_url') &&
+           errorStr.includes('raw_url') &&
+           errorStr.includes('Expected string, received null') &&
+           errorStr.includes('MCP error -32603');
   }
 
   /**
@@ -89,23 +277,194 @@ class MCPGitHubService {
    */
   async getPRDetails(prNumber) {
     logger.debug(`Fetching PR #${prNumber} details via MCP`);
-    const files = await this.callMCP('get_pull_request_files', {
-      owner: this.owner,
-      repo: this.repo,
-      pull_number: prNumber
-    });
+
+    let rawFiles;
+    try {
+      rawFiles = await this.callMCP('get_pull_request_files', {
+        owner: this.owner,
+        repo: this.repo,
+        pull_number: prNumber
+      });
+    } catch (error) {
+      // Handle MCP validation error for files with null URLs (e.g., submodules)
+      if (this.isNullUrlValidationError(error)) {
+        logger.error(`PR #${prNumber} contains files with null blob_url/raw_url (likely submodules or special files). Skipping PR review.`);
+        throw new Error(`PR #${prNumber} cannot be reviewed: contains unsupported file types (submodules, removed files, etc.)`);
+      }
+      throw error; // Re-throw other errors
+    }
+
+    // Sanitize file data to filter out problematic entries
+    const files = this.sanitizeFileData(rawFiles);
+    const sanitizedSkipped = rawFiles.length - files.length;
+    if (sanitizedSkipped > 0) {
+      logger.warn(`Sanitized ${sanitizedSkipped} file(s) with null URLs from PR #${prNumber}`);
+    }
+
+    // Filter out test files
+    const filteredFiles = files.filter(f => !this.isTestFile(f.filename));
+    const skippedCount = files.length - filteredFiles.length;
+
+    if (skippedCount > 0) {
+      logger.info(`Filtered out ${skippedCount} test file(s) from PR #${prNumber}`);
+    }
 
     return {
-      filesChanged: files.length,
-      files: files.map(f => ({
+      filesChanged: filteredFiles.length,
+      files: filteredFiles.map(f => ({
         filename: f.filename,
         additions: f.additions,
         deletions: f.deletions,
         changes: f.changes,
         status: f.status
       })),
-      totalChanges: files.reduce((sum, f) => sum + f.changes, 0)
+      totalChanges: filteredFiles.reduce((sum, f) => sum + f.changes, 0),
+      // Keep original count for reference
+      totalFilesChanged: files.length
     };
+  }
+
+  /**
+   * Create a PR review with per-line comments
+   * @param {Object} pr - PR object
+   * @param {Object} reviewResult - Review result with comments array
+   */
+  async createReviewWithComments(pr, reviewResult) {
+    logger.debug(`Creating review for PR #${pr.number} with ${reviewResult.comments.length} comments`);
+
+    // Determine event based on highest severity
+    const severities = reviewResult.comments.map(c => c.severity.toUpperCase());
+    const hasHigh = severities.includes('HIGH');
+    const hasMedium = severities.includes('MEDIUM');
+
+    // Select event based on severity
+    let event = 'COMMENT';
+    if (hasHigh) {
+      event = 'REQUEST_CHANGES';  // HIGH severity → request changes
+    } else if (hasMedium && reviewResult.comments.length > 0) {
+      event = 'COMMENT';  // MEDIUM → neutral comment
+    } else if (reviewResult.comments.length === 0) {
+      event = 'COMMENT';  // No comments → neutral
+    }
+
+    logger.info(`Review event: ${event} (HIGH: ${hasHigh}, MEDIUM: ${hasMedium}, Comments: ${reviewResult.comments.length})`);
+
+    // Build comments array for GitHub API
+    // Use 'line' + 'commit_id' for the newer API (instead of deprecated 'position')
+    const comments = reviewResult.comments.map(c => {
+      let commentBody = `[${c.severity.toUpperCase()}] ${c.message}`;
+
+      // Append suggested code if available
+      if (c.suggestedCode) {
+        commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${c.suggestedCode}\n\`\`\``;
+      }
+
+      return {
+        path: c.file,
+        line: c.line,
+        commit_id: pr.headSha,
+        body: commentBody
+      };
+    });
+
+    // Process comments in batches to avoid command line length issues
+    const BATCH_SIZE = 5; // 5 comments per batch
+    const commentBatches = [];
+
+    for (let i = 0; i < comments.length; i += BATCH_SIZE) {
+      commentBatches.push(comments.slice(i, i + BATCH_SIZE));
+    }
+
+    logger.info(`Processing ${comments.length} comments in ${commentBatches.length} batches (${BATCH_SIZE} comments per batch)`);
+
+    let firstReviewResult = null;
+    let batchNumber = 0;
+
+    // Process each batch
+    for (const batch of commentBatches) {
+      batchNumber++;
+
+      // Build review args for this batch
+      const reviewArgs = {
+        owner: this.owner,
+        repo: this.repo,
+        pull_number: pr.number,
+        body: batchNumber === 1 ? reviewResult.summary : `Additional comments (batch ${batchNumber}/${commentBatches.length})`,
+        event: batchNumber === 1 ? event : 'COMMENT', // First batch uses determined event, rest use COMMENT
+        commit_id: pr.headSha
+      };
+
+      // Add comments to this batch
+      if (batch.length > 0) {
+        reviewArgs.comments = batch;
+      }
+
+      logger.info(`Sending batch ${batchNumber}/${commentBatches.length} (${batch.length} comments)`);
+      logger.debug(`Batch ${batchNumber} payload: ${JSON.stringify(reviewArgs, null, 2)}`);
+
+      // Call MCP for this batch with fallback for "own PR" restriction
+      let result;
+      try {
+        result = await this.callMCP('create_pull_request_review', reviewArgs);
+      } catch (error) {
+        // Handle GitHub API restriction: Can not request changes on your own pull request
+        if (error.message.includes('Can not request changes on your own pull request')) {
+          logger.warn(`Cannot request changes on own PR #${pr.number}, falling back to COMMENT event`);
+          // Send warning notification to Telegram
+          try {
+            const telegramService = require('./telegramService');
+            await telegramService.sendWarning(pr.number, `Cannot request changes on your own PR (GitHub API restriction). Review posted as COMMENT instead.\n\nReview with ${batch.length} comments has been submitted.`);
+          } catch (telegramErr) {
+            logger.error(`Failed to send Telegram warning: ${telegramErr.message}`);
+          }
+          // Retry with COMMENT event instead of REQUEST_CHANGES
+          const fallbackArgs = { ...reviewArgs, event: 'COMMENT' };
+          // Use OpenClaw agent to format the body with proper GitHub markdown
+          if (fallbackArgs.body) {
+            try {
+              const openclawAgentService = require('./openclawAgentService');
+              fallbackArgs.body = await openclawAgentService.formatReviewBody({
+                originalBody: fallbackArgs.body,
+                prNumber: pr.number,
+                originalEvent: 'REQUEST_CHANGES',
+                newEvent: 'COMMENT',
+                reason: 'GitHub does not allow requesting changes on your own pull request'
+              });
+              logger.info(`Review body formatted by OpenClaw agent for PR #${pr.number}`);
+            } catch (formatErr) {
+              logger.error(`Failed to format review body with agent: ${formatErr.message}, using fallback format`);
+              // Fallback to simple formatting
+              fallbackArgs.body = `${fallbackArgs.body}\n\n---\n\n> **⚠️ AUTO-FIXED:** This review was posted as \`COMMENT\` instead of \`REQUEST_CHANGES\` because GitHub doesn't allow requesting changes on your own PR.`;
+            }
+          }
+          logger.info(`Retrying batch ${batchNumber} with COMMENT event`);
+          result = await this.callMCP('create_pull_request_review', fallbackArgs);
+          logger.info(`Successfully posted review as COMMENT for PR #${pr.number}`);
+        } else {
+          throw error; // Re-throw other errors
+        }
+      }
+
+      // Verify success
+      if (!result || !result.id) {
+        throw new Error(`Batch ${batchNumber} failed: ${JSON.stringify(result)}`);
+      }
+
+      logger.info(`Batch ${batchNumber}/${commentBatches.length} created: ID=${result.id}, URL=${result.html_url}, State=${result.state}`);
+
+      // Store first batch result for return
+      if (batchNumber === 1) {
+        firstReviewResult = result;
+      }
+
+      // Small delay between batches to avoid rate limiting (except for last batch)
+      if (batchNumber < commentBatches.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+      }
+    }
+
+    logger.info(`All ${commentBatches.length} batches completed successfully for PR #${pr.number}`);
+    return firstReviewResult;
   }
 }
 

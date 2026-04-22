@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Environment variables (keep secrets out of git)
 .env
@@ -25,3 +24,4 @@ Thumbs.db
 *.swp
 *.swo
 *~
+/CLAUDE.md
