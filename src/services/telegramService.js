@@ -13,6 +13,11 @@ class TelegramService {
     this.timeoutManager = new TimeoutManager();
     this.pollingRestartTimeout = null;
 
+    // Build compact instance/repo mapping for callback data
+    this.instanceMap = new Map();
+    this.repoMap = new Map();
+    this.buildMapping();
+
     this.pollingErrorHandler = this.handlePollingError.bind(this);
     this.callbackQueryHandler = this.handleCallbackQuery.bind(this);
 
@@ -21,6 +26,46 @@ class TelegramService {
     this.setupGracefulShutdown();
     this.cleanWebhook();
     logger.info('Telegram bot initialized with active polling');
+  }
+
+  /**
+   * Build mapping for compact callback data format
+   * Format: instanceIdx:repoIdx instead of owner:repo
+   */
+  buildMapping() {
+    let instanceIdx = 0;
+    for (const [instanceKey, instance] of Object.entries(config.instances)) {
+      this.instanceMap.set(instanceIdx, { instanceKey, instance });
+
+      let repoIdx = 0;
+      for (const repoName of Object.keys(instance.repos || {})) {
+        this.repoMap.set(`${instanceIdx}:${repoIdx}`, { owner: instance.owner, repo: repoName, instanceKey, instance });
+        repoIdx++;
+      }
+
+      instanceIdx++;
+    }
+    logger.info(`Built mapping for ${this.instanceMap.size} instances, ${this.repoMap.size} repos`);
+  }
+
+  /**
+   * Get repo info from compact indices
+   */
+  getRepoInfo(instanceIdx, repoIdx) {
+    return this.repoMap.get(`${instanceIdx}:${repoIdx}`);
+  }
+
+  /**
+   * Get instance and repo indices for a given owner/repo
+   */
+  getRepoIndices(owner, repo) {
+    for (const [key, value] of this.repoMap.entries()) {
+      if (value.owner === owner && value.repo === repo) {
+        const [instanceIdx, repoIdx] = key.split(':').map(Number);
+        return { instanceIdx, repoIdx };
+      }
+    }
+    return null;
   }
 
   /**
@@ -105,14 +150,14 @@ class TelegramService {
   async handleCallbackQuery(query) {
     const dataParts = query.data.split(':');
 
-    let action, owner, repo, prId, level;
+    let action, instanceIdx, repoIdx, prId, level;
 
     if (dataParts.length === 4) {
-      // Standard action: action:owner:repo:prId
-      [action, owner, repo, prId] = dataParts;
+      // Standard action: action:instanceIdx:repoIdx:prId
+      [action, instanceIdx, repoIdx, prId] = dataParts;
     } else if (dataParts.length === 5) {
-      // review_level action: review_level:owner:repo:prId:level
-      [action, owner, repo, prId, level] = dataParts;
+      // review_level action: review_level:instanceIdx:repoIdx:prId:level
+      [action, instanceIdx, repoIdx, prId, level] = dataParts;
     } else {
       await this.bot.answerCallbackQuery(query.id, { text: '❌ Invalid callback data format' });
       return;
@@ -121,8 +166,15 @@ class TelegramService {
     const prIdNum = parseInt(prId);
 
     try {
+      const repoInfo = this.getRepoInfo(parseInt(instanceIdx), parseInt(repoIdx));
+      if (!repoInfo) {
+        await this.bot.answerCallbackQuery(query.id, { text: '❌ Repository not found' });
+        return;
+      }
+
+      const { owner, repo, instance } = repoInfo;
       const repoConfig = config.getRepoConfig(owner, repo);
-      const mcpService = getMCPService(repoConfig.instance.key);
+      const mcpService = getMCPService(instance.key);
       const openPRs = await mcpService.getOpenPRs(repo);
       const pr = openPRs.find(p => p.id === prIdNum);
 
@@ -142,14 +194,14 @@ class TelegramService {
             reply_markup: {
               inline_keyboard: [
                 [
-                  { text: '🟢 Low (Basic)', callback_data: `review_level:${owner}:${repo}:${pr.id}:low` },
-                  { text: '🟡 Medium (Standard)', callback_data: `review_level:${owner}:${repo}:${pr.id}:medium` }
+                  { text: '🟢 Low (Basic)', callback_data: `review_level:${instanceIdx}:${repoIdx}:${pr.id}:low` },
+                  { text: '🟡 Medium (Standard)', callback_data: `review_level:${instanceIdx}:${repoIdx}:${pr.id}:medium` }
                 ],
                 [
-                  { text: '🔴 High (Comprehensive)', callback_data: `review_level:${owner}:${repo}:${pr.id}:high` }
+                  { text: '🔴 High (Comprehensive)', callback_data: `review_level:${instanceIdx}:${repoIdx}:${pr.id}:high` }
                 ],
                 [
-                  { text: '❌ Batal', callback_data: `review_cancel:${owner}:${repo}:${pr.id}` }
+                  { text: '❌ Batal', callback_data: `review_cancel:${instanceIdx}:${repoIdx}:${pr.id}` }
                 ]
               ]
             },
@@ -315,6 +367,13 @@ class TelegramService {
     return this.retryOperation(async () => {
       logger.info(`[${owner}/${repo}] Sending Telegram notification for PR #${pr.number}`);
 
+      const indices = this.getRepoIndices(owner, repo);
+      if (!indices) {
+        logger.error(`[${owner}/${repo}] Failed to find repo indices for callback data`);
+        return;
+      }
+      const { instanceIdx, repoIdx } = indices;
+
       const message = `🔔 <b>NEW PR DETECTED</b>
 <b>${owner}/${repo} PR #${pr.number}: ${pr.title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</b>
 👤 Author: ${pr.author.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
@@ -333,16 +392,16 @@ class TelegramService {
       const inlineKeyboard = {
         inline_keyboard: [
           [
-            { text: '🔍 Review Now', callback_data: `review_now:${owner}:${repo}:${pr.id}` },
-            { text: '🔗 Visit PR', callback_data: `visit:${owner}:${repo}:${pr.id}` }
+            { text: '🔍 Review Now', callback_data: `review_now:${instanceIdx}:${repoIdx}:${pr.id}` },
+            { text: '🔗 Visit PR', callback_data: `visit:${instanceIdx}:${repoIdx}:${pr.id}` }
           ],
           [
-            { text: '✅ Approve', callback_data: `approve:${owner}:${repo}:${pr.id}` },
-            { text: '❌ Reject', callback_data: `reject:${owner}:${repo}:${pr.id}` }
+            { text: '✅ Approve', callback_data: `approve:${instanceIdx}:${repoIdx}:${pr.id}` },
+            { text: '❌ Reject', callback_data: `reject:${instanceIdx}:${repoIdx}:${pr.id}` }
           ],
           [
-            { text: '🔒 Close PR', callback_data: `close:${owner}:${repo}:${pr.id}` },
-            { text: '⏸️ Skip (3h)', callback_data: `skip:${owner}:${repo}:${pr.id}` }
+            { text: '🔒 Close PR', callback_data: `close:${instanceIdx}:${repoIdx}:${pr.id}` },
+            { text: '⏸️ Skip (3h)', callback_data: `skip:${instanceIdx}:${repoIdx}:${pr.id}` }
           ]
         ]
       };
