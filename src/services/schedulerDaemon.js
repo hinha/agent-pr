@@ -130,24 +130,24 @@ class SchedulerDaemon {
 
       for (const pr of openPRs) {
         if (this.activeProcesses.has(pr.id.toString())) {
-          logger.debug(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: already processing`);
+          logger.info(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: already being processed`);
           continue;
         }
 
         if (await repositoryStateManager.isProcessed(instance.owner, repoName, pr.id)) {
-          logger.debug(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: already processed`);
+          logger.info(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: already marked as processed`);
           continue;
         }
 
         const repoKey = skipManager.getRepoKey(instance.owner, repoName);
         if (skipManager.isSkipped(instance.owner, repoName, pr.id)) {
-          logger.debug(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: skipped`);
+          logger.info(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: user skipped (3h cache active)`);
           continue;
         }
 
         const prAge = Date.now() - pr.createdAt.getTime();
         if (prAge > instance.maxAgeMs) {
-          logger.debug(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: older than ${instance.maxAgeMs / 3600000}h`);
+          logger.info(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: age ${Math.round(prAge / 3600000)}h exceeds max ${instance.maxAgeMs / 3600000}h (created: ${pr.createdAt.toISOString()})`);
           await repositoryStateManager.markProcessed(instance.owner, repoName, pr.id);
           continue;
         }
