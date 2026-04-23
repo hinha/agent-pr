@@ -139,9 +139,12 @@ class ReviewStateManager {
     const repoState = await this.getRepoState(owner, repo);
     const prIdStr = prId.toString();
 
+    logger.info(`[${key}] Processing PR #${prId}: ${reviews.length} total reviews, loaded=${repoState.loaded}, tracked reviews=${repoState.reviews.size}`);
+
     const requestedChangesReviews = reviews.filter(r => r.state === 'CHANGES_REQUESTED');
 
     if (requestedChangesReviews.length === 0) {
+      logger.info(`[${key}] PR #${prId}: No REQUEST_CHANGES reviews found (${reviews.length} total reviews)`);
       repoState.reviews.delete(prIdStr);
       await this.saveRepoState(owner, repo);
       return null;

@@ -189,10 +189,12 @@ class SchedulerDaemon {
   async checkOutdatedReviews(instance, repoName, repoConfig, mcpService) {
     try {
       const openPRs = await mcpService.getOpenPRs(repoName);
+      logger.info(`[${instance.owner}/${repoName}] Checking ${openPRs.length} open PRs for outdated reviews`);
 
       for (const pr of openPRs) {
         try {
           const reviews = await mcpService.getPRReviews(repoName, pr.number);
+          logger.info(`[${instance.owner}/${repoName}] PR #${pr.number}: ${reviews.length} reviews fetched`);
 
           const reviewState = await reviewStateManager.updateReviewState(
             instance.owner,
@@ -202,7 +204,12 @@ class SchedulerDaemon {
             pr.headSha
           );
 
-          if (!reviewState) continue;
+          if (!reviewState) {
+            logger.info(`[${instance.owner}/${repoName}] PR #${pr.number}: No review state to track`);
+            continue;
+          }
+
+          logger.info(`[${instance.owner}/${repoName}] PR #${pr.number}: Review state tracked, checking for new commits`);
 
           const hasNewCommits = reviewStateManager.hasNewCommits(
             instance.owner,
@@ -212,6 +219,7 @@ class SchedulerDaemon {
           );
 
           if (reviewState.has_outdated && hasNewCommits && !reviewState.dismissed) {
+            logger.info(`[${instance.owner}/${repoName}] PR #${pr.number}: Sending outdated review notification`);
             await telegramService.sendOutdatedReviewNotification(
               instance.owner,
               repoName,
@@ -219,6 +227,8 @@ class SchedulerDaemon {
               reviewState,
               repoConfig.thread_id
             );
+          } else {
+            logger.info(`[${instance.owner}/${repoName}] PR #${pr.number}: has_outdated=${reviewState.has_outdated}, hasNewCommits=${hasNewCommits}, dismissed=${reviewState.dismissed}`);
           }
         } catch (err) {
           logger.error(`[${instance.owner}/${repoName}] Error checking PR #${pr.number} for outdated reviews: ${err.message}`);
