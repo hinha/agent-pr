@@ -18,15 +18,53 @@ class ReviewStateManager {
     return `${owner}/${repo}`;
   }
 
-  getRepoState(owner, repo) {
+  /**
+   * Get or create state for a repository (async, waits for load)
+   */
+  async getRepoState(owner, repo) {
     const key = this.getRepoKey(owner, repo);
 
     if (!this.state.has(key)) {
       this.state.set(key, {
         reviews: new Map(),
-        loaded: false
+        loaded: false,
+        loadPromise: null
+      });
+    }
+
+    const repoState = this.state.get(key);
+
+    // Wait for state to load if not already loaded
+    if (!repoState.loaded) {
+      if (!repoState.loadPromise) {
+        repoState.loadPromise = this.loadRepoState(owner, repo).catch(err => {
+          logger.error(`Failed to load review state for ${key}: ${err.message}`);
+          throw err;
+        }).finally(() => {
+          repoState.loadPromise = null;
+        });
+      }
+      await repoState.loadPromise;
+    }
+
+    return repoState;
+  }
+
+  /**
+   * Get or create state for a repository (sync, doesn't wait for load)
+   * Use this only when you need immediate access and will handle loading separately
+   */
+  getRepoStateSync(owner, repo) {
+    const key = this.getRepoKey(owner, repo);
+
+    if (!this.state.has(key)) {
+      this.state.set(key, {
+        reviews: new Map(),
+        loaded: false,
+        loadPromise: null
       });
 
+      // Start loading in background
       this.loadRepoState(owner, repo).catch(err => {
         logger.error(`Failed to load review state for ${key}: ${err.message}`);
       });
@@ -98,7 +136,7 @@ class ReviewStateManager {
    */
   async updateReviewState(owner, repo, prId, reviews, currentHeadSha) {
     const key = this.getRepoKey(owner, repo);
-    const repoState = this.getRepoState(owner, repo);
+    const repoState = await this.getRepoState(owner, repo);
     const prIdStr = prId.toString();
 
     const requestedChangesReviews = reviews.filter(r => r.state === 'CHANGES_REQUESTED');
@@ -150,7 +188,7 @@ class ReviewStateManager {
    */
   hasNewCommits(owner, repo, prId, currentHeadSha) {
     const key = this.getRepoKey(owner, repo);
-    const repoState = this.getRepoState(owner, repo);
+    const repoState = this.getRepoStateSync(owner, repo);
     const prIdStr = prId.toString();
 
     const reviewState = repoState.reviews.get(prIdStr);
@@ -170,7 +208,7 @@ class ReviewStateManager {
    * Get review state for a specific PR
    */
   getReviewState(owner, repo, prId) {
-    const repoState = this.getRepoState(owner, repo);
+    const repoState = this.getRepoStateSync(owner, repo);
     return repoState.reviews.get(prId.toString());
   }
 
@@ -179,7 +217,7 @@ class ReviewStateManager {
    */
   async markDismissed(owner, repo, prId) {
     const key = this.getRepoKey(owner, repo);
-    const repoState = this.getRepoState(owner, repo);
+    const repoState = await this.getRepoState(owner, repo);
     const prIdStr = prId.toString();
 
     if (repoState.reviews.has(prIdStr)) {
@@ -196,7 +234,7 @@ class ReviewStateManager {
    */
   async clearReviewState(owner, repo, prId) {
     const key = this.getRepoKey(owner, repo);
-    const repoState = this.getRepoState(owner, repo);
+    const repoState = await this.getRepoState(owner, repo);
     const prIdStr = prId.toString();
 
     repoState.reviews.delete(prIdStr);
@@ -208,7 +246,7 @@ class ReviewStateManager {
    * Get PRs needing attention (not dismissed, has outdated, has new commits)
    */
   getPRsNeedingAttention(owner, repo) {
-    const repoState = this.getRepoState(owner, repo);
+    const repoState = this.getRepoStateSync(owner, repo);
     const results = [];
 
     for (const [prIdStr, state] of repoState.reviews.entries()) {
@@ -224,7 +262,7 @@ class ReviewStateManager {
    * Cleanup old entries to prevent unbounded growth
    */
   cleanupOldEntries(owner, repo, maxAgeMs = 30 * 24 * 60 * 60 * 1000) {
-    const repoState = this.getRepoState(owner, repo);
+    const repoState = this.getRepoStateSync(owner, repo);
     const now = Date.now();
     let cleaned = 0;
 
