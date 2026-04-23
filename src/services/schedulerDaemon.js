@@ -1,6 +1,7 @@
 const config = require('../config/yamlConfig');
 const logger = require('../utils/logger');
 const TimeoutManager = require('../utils/timeoutManager');
+const timeUtils = require('../utils/timeUtils');
 const { getMCPService } = require('./mcpGithubService');
 const telegramService = require('./telegramService');
 const skipManager = require('./skipManager');
@@ -233,6 +234,13 @@ class SchedulerDaemon {
    */
   async runOutdatedReviewCheckCycle() {
     try {
+      // Check if we should snooze (time or weekend)
+      if (timeUtils.shouldSnooze(config.app.snoozeTime)) {
+        const snoozeReason = timeUtils.getSnoozeReason(config.app.snoozeTime);
+        logger.info(`${snoozeReason}. Skipping outdated review check.`);
+        return;
+      }
+
       logger.info('Starting outdated review check cycle');
 
       for (const [instanceKey, instance] of Object.entries(config.instances)) {
