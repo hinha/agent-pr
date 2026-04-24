@@ -7,6 +7,7 @@ const telegramService = require('./telegramService');
 const skipManager = require('./skipManager');
 const repositoryStateManager = require('./repositoryStateManager');
 const reviewStateManager = require('./reviewStateManager');
+const { analyzePRRisk } = require('../utils/prAnalyzer');
 
 class SchedulerDaemon {
   constructor() {
@@ -40,16 +41,22 @@ class SchedulerDaemon {
     try {
       const prDetails = await mcpService.getPRDetails(repoName, pr.number);
 
+      // Analyze PR risk dynamically
+      const riskAnalysis = analyzePRRisk(pr, prDetails);
+
       const cleanDescription = (pr.description || 'No description').replace(/[*_`#[\]()]/g, '').substring(0, 120);
       const summary = {
         purpose: `${cleanDescription}...`,
         type: pr.title.includes('fix') ? 'bugfix' : pr.title.includes('feat') ? 'feature' : 'other',
-        riskLevel: 'low',
-        impactArea: 'core',
+        riskLevel: riskAnalysis.riskLevel,
+        impactArea: riskAnalysis.impactArea,
         diffSize: `${prDetails.totalChanges} changes`,
-        suspiciousPatterns: prDetails.files.some(f => f.filename.includes('migration')) ? ['database_migration'] : [],
-        recommendedReview: 'safe review'
+        suspiciousPatterns: riskAnalysis.suspiciousPatterns,
+        recommendedReview: riskAnalysis.recommendedReview,
+        filesChanged: prDetails.filesChanged
       };
+
+      logger.info(`[${instance.owner}/${repoName}] PR #${pr.number} analysis: risk=${riskAnalysis.riskLevel}, impact=${riskAnalysis.impactArea}, review=${riskAnalysis.recommendedReview}`);
 
       const currentCount = repositoryStateManager.getNotificationCount(instance.owner, repoName, pr.id);
       if (currentCount < 3) {
@@ -84,16 +91,22 @@ class SchedulerDaemon {
           logger.info(`[${instance.owner}/${repoName}] Retrying processing for PR #${pr.number}`);
           try {
             const prDetails = await mcpService.getPRDetails(repoName, pr.number);
+
+            // Analyze PR risk dynamically in retry as well
+            const riskAnalysis = analyzePRRisk(pr, prDetails);
+
             const cleanDescription = (pr.description || 'No description').replace(/[*_`#[\]()]/g, '').substring(0, 120);
             const summary = {
               purpose: `${cleanDescription}...`,
               type: pr.title.includes('fix') ? 'bugfix' : pr.title.includes('feat') ? 'feature' : 'other',
-              riskLevel: 'low',
-              impactArea: 'core',
+              riskLevel: riskAnalysis.riskLevel,
+              impactArea: riskAnalysis.impactArea,
               diffSize: `${prDetails.totalChanges} changes`,
-              suspiciousPatterns: prDetails.files.some(f => f.filename.includes('migration')) ? ['database_migration'] : [],
-              recommendedReview: 'safe review'
+              suspiciousPatterns: riskAnalysis.suspiciousPatterns,
+              recommendedReview: riskAnalysis.recommendedReview,
+              filesChanged: prDetails.filesChanged
             };
+
             await telegramService.sendPRNotification(
               instance.owner,
               repoName,
