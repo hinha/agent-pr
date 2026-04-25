@@ -234,21 +234,26 @@ function getDynamicConfig() {
   };
 }
 
-// Export functions
-module.exports = {
-  loadYamlConfig,
-  reloadConfig,
-  getInstanceByOwner,
-  getRepoConfig,
-  getRepoStoragePath,
-  ensureRepoStorageDir,
-  getConfig,
-  getDynamicConfig
-};
-
 // Create a Proxy for backward compatibility - accessing any property returns the current config value
 const configProxy = new Proxy({}, {
   get(target, prop) {
+    // First check if it's a function (module exports)
+    const functions = {
+      loadYamlConfig,
+      reloadConfig,
+      getInstanceByOwner,
+      getRepoConfig,
+      getRepoStoragePath,
+      ensureRepoStorageDir,
+      getConfig,
+      getDynamicConfig
+    };
+
+    if (prop in functions) {
+      return functions[prop];
+    }
+
+    // Otherwise, get from current config
     const currentConfig = getConfig();
     return currentConfig[prop];
   },
@@ -258,14 +263,61 @@ const configProxy = new Proxy({}, {
     return true;
   },
   has(target, prop) {
+    const functions = {
+      loadYamlConfig,
+      reloadConfig,
+      getInstanceByOwner,
+      getRepoConfig,
+      getRepoStoragePath,
+      ensureRepoStorageDir,
+      getConfig,
+      getDynamicConfig
+    };
+
+    if (prop in functions) {
+      return true;
+    }
+
     const currentConfig = getConfig();
     return prop in currentConfig;
   },
   ownKeys(target) {
-    const currentConfig = getConfig();
-    return Object.getOwnPropertyNames(currentConfig);
+    const functions = {
+      loadYamlConfig,
+      reloadConfig,
+      getInstanceByOwner,
+      getRepoConfig,
+      getRepoStoragePath,
+      ensureRepoStorageDir,
+      getConfig,
+      getDynamicConfig
+    };
+
+    const configKeys = Object.getOwnPropertyNames(getConfig());
+    const functionKeys = Object.keys(functions);
+    return [...new Set([...functionKeys, ...configKeys])];
   },
   getOwnPropertyDescriptor(target, prop) {
+    const functions = {
+      loadYamlConfig,
+      reloadConfig,
+      getInstanceByOwner,
+      getRepoConfig,
+      getRepoStoragePath,
+      ensureRepoStorageDir,
+      getConfig,
+      getDynamicConfig
+    };
+
+    if (prop in functions) {
+      return {
+        value: functions[prop],
+        writable: false,
+        enumerable: true,
+        configurable: true
+      };
+    }
+
     const currentConfig = getConfig();
     const descriptor = Object.getOwnPropertyDescriptor(currentConfig, prop);
     if (descriptor) {
@@ -274,9 +326,6 @@ const configProxy = new Proxy({}, {
     return descriptor;
   }
 });
-
-// Copy all functions to the proxy
-Object.assign(configProxy, module.exports);
 
 // Export the proxy as the main module
 module.exports = configProxy;
