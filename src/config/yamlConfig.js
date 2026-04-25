@@ -45,6 +45,12 @@ function buildInternalConfig(config) {
       telegram: {
         botToken: config.app.telegram.bot_token,
         chatId: parseInt(config.app.telegram.chat_id, 10)
+      },
+      flagsmith: {
+        enabled: config.app.flagsmith?.enabled || false,
+        environmentId: config.app.flagsmith?.environment_id || process.env.FLAGSMITH_ENVIRONMENT_ID,
+        identity: config.app.flagsmith?.identity || process.env.FLAGSMITH_IDENTITY || null,
+        syncIntervalMs: (config.app.flagsmith?.sync_interval_minutes || 5) * 60 * 1000
       }
     },
     instances: buildInstances(config),
@@ -175,10 +181,102 @@ function getConfig() {
   return cachedConfig;
 }
 
-module.exports = getConfig();
-module.exports.loadYamlConfig = loadYamlConfig;
-module.exports.getInstanceByOwner = getInstanceByOwner;
-module.exports.getRepoConfig = getRepoConfig;
-module.exports.getRepoStoragePath = getRepoStoragePath;
-module.exports.ensureRepoStorageDir = ensureRepoStorageDir;
-module.exports.getConfig = getConfig;
+/**
+ * Reload configuration from file (called after Flagsmith sync)
+ */
+function reloadConfig() {
+  cachedConfig = null;
+  const newConfig = getConfig();
+  logger.info('Configuration reloaded after Flagsmith sync');
+  return newConfig;
+}
+
+/**
+ * Get dynamic config value with Flagsmith override
+ * @param {string} path - Dot-notation path (e.g., 'app.checkIntervalMs')
+ * @param {*} localValue - Local config value to use as fallback
+ * @returns {*} Flagsmith value if available, otherwise local value
+ */
+function getDynamicConfigValue(path, localValue) {
+  try {
+    const flagsmithSyncService = require('../services/flagsmithSyncService');
+    if (flagsmithSyncService.isActive()) {
+      // Convert camelCase path to snake_case for Flagsmith lookup
+      // e.g., 'app.checkIntervalMs' -> 'app.check_interval_ms'
+      const flagsmithPath = path.replace(/([A-Z])/g, '_$1').toLowerCase();
+      const flagsmithValue = flagsmithSyncService.getValue(flagsmithPath);
+
+      if (flagsmithValue !== undefined) {
+        logger.debug(`Using Flagsmith value for ${path}: ${flagsmithValue}`);
+        return flagsmithValue;
+      }
+    }
+  } catch (err) {
+    logger.debug(`Error getting dynamic config for ${path}: ${err.message}`);
+  }
+  return localValue;
+}
+
+/**
+ * Get config with dynamic overrides from Flagsmith
+ * @returns {Object} Configuration object with Flagsmith overrides applied
+ */
+function getDynamicConfig() {
+  const baseConfig = getConfig();
+
+  return {
+    ...baseConfig,
+    app: {
+      ...baseConfig.app,
+      checkIntervalMs: getDynamicConfigValue('app.check_interval_ms', baseConfig.app.checkIntervalMs / 60000) * 60 * 1000,
+      outdatedReviewCheckIntervalMs: getDynamicConfigValue('app.outdated_review_check_ms', baseConfig.app.outdatedReviewCheckIntervalMs / 60000) * 60 * 1000
+    }
+  };
+}
+
+// Export functions
+module.exports = {
+  loadYamlConfig,
+  reloadConfig,
+  getInstanceByOwner,
+  getRepoConfig,
+  getRepoStoragePath,
+  ensureRepoStorageDir,
+  getConfig,
+  getDynamicConfig
+};
+
+// Create a Proxy for backward compatibility - accessing any property returns the current config value
+const configProxy = new Proxy({}, {
+  get(target, prop) {
+    const currentConfig = getConfig();
+    return currentConfig[prop];
+  },
+  set(target, prop, value) {
+    const currentConfig = getConfig();
+    currentConfig[prop] = value;
+    return true;
+  },
+  has(target, prop) {
+    const currentConfig = getConfig();
+    return prop in currentConfig;
+  },
+  ownKeys(target) {
+    const currentConfig = getConfig();
+    return Object.getOwnPropertyNames(currentConfig);
+  },
+  getOwnPropertyDescriptor(target, prop) {
+    const currentConfig = getConfig();
+    const descriptor = Object.getOwnPropertyDescriptor(currentConfig, prop);
+    if (descriptor) {
+      descriptor.enumerable = true;
+    }
+    return descriptor;
+  }
+});
+
+// Copy all functions to the proxy
+Object.assign(configProxy, module.exports);
+
+// Export the proxy as the main module
+module.exports = configProxy;

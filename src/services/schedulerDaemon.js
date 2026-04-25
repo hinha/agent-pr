@@ -7,6 +7,7 @@ const telegramService = require('./telegramService');
 const skipManager = require('./skipManager');
 const repositoryStateManager = require('./repositoryStateManager');
 const reviewStateManager = require('./reviewStateManager');
+const flagsmithSyncService = require('./flagsmithSyncService');
 const { analyzePRRisk } = require('../utils/prAnalyzer');
 
 class SchedulerDaemon {
@@ -287,7 +288,7 @@ class SchedulerDaemon {
   /**
    * Start the scheduler daemon
    */
-  start() {
+  async start() {
     const instanceCount = Object.keys(config.instances).length;
     let totalRepos = 0;
     for (const instance of Object.values(config.instances)) {
@@ -296,6 +297,12 @@ class SchedulerDaemon {
 
     logger.info(`✅ Multi-instance PR monitor daemon started`);
     logger.info(`📊 Monitoring ${instanceCount} instance(s), ${totalRepos} repository(ies)`);
+
+    // Initialize Flagsmith sync before starting PR checks
+    await flagsmithSyncService.init(config);
+    if (config.flagsmith && config.flagsmith.syncIntervalMs) {
+      flagsmithSyncService.start(config.flagsmith.syncIntervalMs);
+    }
 
     this.runPRCheckCycle();
     this.checkInterval = setInterval(() => this.runPRCheckCycle(), config.app.checkIntervalMs);
@@ -343,6 +350,8 @@ class SchedulerDaemon {
       }
     }
     this.mcpServices.clear();
+
+    flagsmithSyncService.stop();
 
     logger.info('Scheduler daemon stopped');
   }
