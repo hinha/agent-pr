@@ -420,6 +420,15 @@ class MCPGitHubService {
   }
 
   /**
+   * Extract review URL from agent output
+   */
+  extractReviewUrlFromOutput(output) {
+    if (!output) return null;
+    const urlMatch = output.match(/https:\/\/github\.com\/[^\/]+\/[^\/]+\/pull\/\d+#pullrequestreview-\d+/);
+    return urlMatch ? urlMatch[0] : null;
+  }
+
+  /**
    * Create a PR review with per-line comments
    */
   async createReviewWithComments(repo, pr, reviewResult) {
@@ -428,10 +437,19 @@ class MCPGitHubService {
     // Check if agent called create_pull_request_review directly
     if (reviewResult.agentCalledToolDirectly) {
       logger.warn(`[MCP:${this.instanceKey}/${repo}] Agent called create_pull_request_review directly, skipping duplicate submission`);
-      // Sanitize output before logging to prevent sensitive data exposure
-      const sanitizedOutput = (reviewResult.agentRawOutput || '').substring(0, 500);
-      logger.warn(`[MCP:${this.instanceKey}/${repo}] Agent output (truncated): ${sanitizedOutput}`);
-      throw new Error(`Agent called create_pull_request_review directly. Review already submitted to GitHub. Check GitHub for the review.`);
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Review was already submitted by the agent. Returning success without duplicate submission.`);
+      // Return a success response that mimics a GitHub review result
+      // The agent already submitted the review, so we don't need to do anything
+      const reviewUrl = this.extractReviewUrlFromOutput(reviewResult.agentRawOutput);
+      return {
+        id: 'agent-submitted',
+        html_url: reviewUrl || `https://github.com/${this.owner}/${repo}/pull/${pr.number}`,
+        submitted_at: new Date().toISOString(),
+        submitted_by: 'agent',
+        event: 'COMMENT',
+        body: reviewResult.summary || 'Review submitted by OpenClaw agent',
+        comments: reviewResult.comments || []
+      };
     }
 
     // Validate and sanitize comments

@@ -1,5 +1,12 @@
 Review pull request #{{PR_NUMBER}} dengan level **{{LEVEL}}**.
 
+**PERINGATAN PENTING:**
+1. **TUGAS ANDA HANYA MELAKUKAN REVIEW** - JANGAN panggil tool `create_pull_request_review` atau `write` atau `exec` untuk submit review
+2. **KEMBALIKAN HANYA JSON** - Sistem akan menangani submit review dengan event yang tepat
+3. **Jika severity HIGH** → sistem akan submit sebagai REQUEST_CHANGES
+4. **Jika tidak ada HIGH** → sistem akan submit sebagai COMMENT
+5. **JSON format harus valid** - bisa di-parse tanpa error
+
 INSTRUKSI:
 1. Analisis kode PR dengan fokus pada: {{FOCUS_AREAS}}
 2. Bandingkan dengan branch target dan branch saat ini untuk memahami perubahan yang dilakukan
