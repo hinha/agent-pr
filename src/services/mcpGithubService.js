@@ -337,28 +337,135 @@ class MCPGitHubService {
   }
 
   /**
+   * Normalize and validate severity value
+   * Handles undefined, null, whitespace, and case variations
+   */
+  normalizeSeverity(severity, commentIndex = 0) {
+    const rawSeverity = severity;
+    let normalized = 'LOW'; // Default
+
+    if (severity === undefined || severity === null) {
+      logger.warn(`[MCP:${this.instanceKey}] Comment #${commentIndex}: severity is undefined/null, defaulting to LOW`);
+      return normalized;
+    }
+
+    if (typeof severity !== 'string') {
+      logger.warn(`[MCP:${this.instanceKey}] Comment #${commentIndex}: severity is not a string (${typeof severity}), defaulting to LOW`);
+      return normalized;
+    }
+
+    // Trim whitespace and convert to uppercase
+    normalized = severity.trim().toUpperCase();
+
+    // Validate against allowed values
+    const allowedValues = ['LOW', 'MEDIUM', 'HIGH'];
+    if (!allowedValues.includes(normalized)) {
+      logger.warn(`[MCP:${this.instanceKey}] Comment #${commentIndex}: invalid severity "${rawSeverity}", defaulting to LOW`);
+      normalized = 'LOW';
+    }
+
+    return normalized;
+  }
+
+  /**
+   * Validate and sanitize comments array
+   * Returns object with valid comments and statistics
+   */
+  validateAndSanitizeComments(comments, repo, prNumber) {
+    const stats = {
+      total: 0,
+      valid: 0,
+      filtered: 0,
+      severityBreakdown: { LOW: 0, MEDIUM: 0, HIGH: 0 }
+    };
+
+    if (!Array.isArray(comments)) {
+      logger.error(`[MCP:${this.instanceKey}/${repo}] Comments is not an array: ${typeof comments}`);
+      return { validComments: [], stats };
+    }
+
+    stats.total = comments.length;
+
+    const validComments = comments.filter((comment, index) => {
+      // Validate required fields
+      if (!comment.file || typeof comment.file !== 'string') {
+        logger.warn(`[MCP:${this.instanceKey}/${repo}] Comment #${index}: missing or invalid 'file' field, filtering out`);
+        stats.filtered++;
+        return false;
+      }
+
+      if (!comment.line || typeof comment.line !== 'number') {
+        logger.warn(`[MCP:${this.instanceKey}/${repo}] Comment #${index}: missing or invalid 'line' field, filtering out`);
+        stats.filtered++;
+        return false;
+      }
+
+      if (!comment.message || typeof comment.message !== 'string') {
+        logger.warn(`[MCP:${this.instanceKey}/${repo}] Comment #${index}: missing or invalid 'message' field, filtering out`);
+        stats.filtered++;
+        return false;
+      }
+
+      // Normalize severity
+      comment.severity = this.normalizeSeverity(comment.severity, index);
+      stats.severityBreakdown[comment.severity]++;
+      stats.valid++;
+
+      return true;
+    });
+
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Comment validation: ${stats.valid}/${stats.total} valid, ${stats.filtered} filtered`);
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Severity breakdown: LOW=${stats.severityBreakdown.LOW}, MEDIUM=${stats.severityBreakdown.MEDIUM}, HIGH=${stats.severityBreakdown.HIGH}`);
+
+    return { validComments, stats };
+  }
+
+  /**
    * Create a PR review with per-line comments
    */
   async createReviewWithComments(repo, pr, reviewResult) {
-    logger.info(`[MCP:${this.instanceKey}/${repo}] Creating review for PR #${pr.number} with ${reviewResult.comments.length} comments`);
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Creating review for PR #${pr.number}`);
 
-    const severities = reviewResult.comments.map(c => c.severity.toUpperCase());
-    const hasHigh = severities.includes('HIGH');
-    const hasMedium = severities.includes('MEDIUM');
-
-    let event = 'COMMENT';
-    if (hasHigh) {
-      event = 'REQUEST_CHANGES';
-    } else if (hasMedium && reviewResult.comments.length > 0) {
-      event = 'COMMENT';
-    } else if (reviewResult.comments.length === 0) {
-      event = 'COMMENT';
+    // Check if agent called create_pull_request_review directly
+    if (reviewResult.agentCalledToolDirectly) {
+      logger.warn(`[MCP:${this.instanceKey}/${repo}] Agent called create_pull_request_review directly, skipping duplicate submission`);
+      logger.warn(`[MCP:${this.instanceKey}/${repo}] Agent output: ${reviewResult.agentRawOutput}`);
+      throw new Error(`Agent called create_pull_request_review directly. Review already submitted to GitHub. Check GitHub for the review.`);
     }
 
-    logger.info(`[MCP:${this.instanceKey}/${repo}] Review event: ${event}`);
+    // Validate and sanitize comments
+    const { validComments, stats } = this.validateAndSanitizeComments(reviewResult.comments, repo, pr.number);
+
+    if (validComments.length === 0 && stats.total > 0) {
+      logger.warn(`[MCP:${this.instanceKey}/${repo}] All comments were filtered out, posting review with summary only`);
+    }
+
+    // Determine event based on normalized severities
+    let event = 'COMMENT';
+    const hasHigh = stats.severityBreakdown.HIGH > 0;
+    const hasMedium = stats.severityBreakdown.MEDIUM > 0;
+    const hasLow = stats.severityBreakdown.LOW > 0;
+
+    if (hasHigh) {
+      event = 'REQUEST_CHANGES';
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Event set to REQUEST_CHANGES: ${stats.severityBreakdown.HIGH} HIGH severity comment(s) found`);
+    } else if (hasMedium) {
+      event = 'COMMENT';
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Event set to COMMENT: ${stats.severityBreakdown.MEDIUM} MEDIUM severity comment(s) found`);
+    } else if (hasLow) {
+      event = 'COMMENT';
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Event set to COMMENT: ${stats.severityBreakdown.LOW} LOW severity comment(s) found`);
+    } else {
+      event = 'COMMENT';
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Event set to COMMENT: no severity-specific comments found`);
+    }
+
+    // Update reviewResult with valid comments for further processing
+    reviewResult.comments = validComments;
 
     const comments = reviewResult.comments.map(c => {
-      let commentBody = `[${c.severity.toUpperCase()}] ${c.message}`;
+      // Severity is already normalized by validateAndSanitizeComments
+      let commentBody = `[${c.severity}] ${c.message}`;
 
       if (c.suggestedCode) {
         commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${c.suggestedCode}\n\`\`\``;
