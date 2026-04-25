@@ -19,7 +19,8 @@ OUTPUT FORMAT (JSON):
   "comments": [
     {
       "file": "src/file.js",
-      "line": 42,
+      "start_line": 42,
+      "end_line": 45,
       "severity": "HIGH",
       "message": "Penjelasan issue dan rekomendasi perbaikan",
       "suggestedCode": "const corrected = 'contoh kode yang benar';"
@@ -41,3 +42,5 @@ PENTING: Output HARUS KONSISTEN valid JSON saja, tanpa text tambahan:
 - Output harus dimulai langsung dengan { dan berakhir dengan }
 - Pastikan ada field "summary" dan "comments" dalam JSON
 - Lalu hasil json kirim menggunakan mcp {{MCP_NAME}} per object sebagai inline PR comments per file lewat create_pull_request_review (event COMMENT)
+- Setiap comment dikirim sebagai inline comment pada "Files changed" dengan line range (start_line sampai end_line)
+- Message untuk inline comment adalah kombinasi dari field "message" dan "suggestedCode" dari JSON

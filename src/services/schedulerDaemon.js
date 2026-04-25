@@ -1,11 +1,13 @@
 const config = require('../config/yamlConfig');
 const logger = require('../utils/logger');
 const TimeoutManager = require('../utils/timeoutManager');
+const timeUtils = require('../utils/timeUtils');
 const { getMCPService } = require('./mcpGithubService');
 const telegramService = require('./telegramService');
 const skipManager = require('./skipManager');
 const repositoryStateManager = require('./repositoryStateManager');
 const reviewStateManager = require('./reviewStateManager');
+const { analyzePRRisk } = require('../utils/prAnalyzer');
 
 class SchedulerDaemon {
   constructor() {
@@ -39,16 +41,22 @@ class SchedulerDaemon {
     try {
       const prDetails = await mcpService.getPRDetails(repoName, pr.number);
 
+      // Analyze PR risk dynamically
+      const riskAnalysis = analyzePRRisk(pr, prDetails);
+
       const cleanDescription = (pr.description || 'No description').replace(/[*_`#[\]()]/g, '').substring(0, 120);
       const summary = {
         purpose: `${cleanDescription}...`,
         type: pr.title.includes('fix') ? 'bugfix' : pr.title.includes('feat') ? 'feature' : 'other',
-        riskLevel: 'low',
-        impactArea: 'core',
+        riskLevel: riskAnalysis.riskLevel,
+        impactArea: riskAnalysis.impactArea,
         diffSize: `${prDetails.totalChanges} changes`,
-        suspiciousPatterns: prDetails.files.some(f => f.filename.includes('migration')) ? ['database_migration'] : [],
-        recommendedReview: 'safe review'
+        suspiciousPatterns: riskAnalysis.suspiciousPatterns,
+        recommendedReview: riskAnalysis.recommendedReview,
+        filesChanged: prDetails.filesChanged
       };
+
+      logger.info(`[${instance.owner}/${repoName}] PR #${pr.number} analysis: risk=${riskAnalysis.riskLevel}, impact=${riskAnalysis.impactArea}, review=${riskAnalysis.recommendedReview}`);
 
       const currentCount = repositoryStateManager.getNotificationCount(instance.owner, repoName, pr.id);
       if (currentCount < 3) {
@@ -83,16 +91,22 @@ class SchedulerDaemon {
           logger.info(`[${instance.owner}/${repoName}] Retrying processing for PR #${pr.number}`);
           try {
             const prDetails = await mcpService.getPRDetails(repoName, pr.number);
+
+            // Analyze PR risk dynamically in retry as well
+            const riskAnalysis = analyzePRRisk(pr, prDetails);
+
             const cleanDescription = (pr.description || 'No description').replace(/[*_`#[\]()]/g, '').substring(0, 120);
             const summary = {
               purpose: `${cleanDescription}...`,
               type: pr.title.includes('fix') ? 'bugfix' : pr.title.includes('feat') ? 'feature' : 'other',
-              riskLevel: 'low',
-              impactArea: 'core',
+              riskLevel: riskAnalysis.riskLevel,
+              impactArea: riskAnalysis.impactArea,
               diffSize: `${prDetails.totalChanges} changes`,
-              suspiciousPatterns: prDetails.files.some(f => f.filename.includes('migration')) ? ['database_migration'] : [],
-              recommendedReview: 'safe review'
+              suspiciousPatterns: riskAnalysis.suspiciousPatterns,
+              recommendedReview: riskAnalysis.recommendedReview,
+              filesChanged: prDetails.filesChanged
             };
+
             await telegramService.sendPRNotification(
               instance.owner,
               repoName,
@@ -129,24 +143,24 @@ class SchedulerDaemon {
 
       for (const pr of openPRs) {
         if (this.activeProcesses.has(pr.id.toString())) {
-          logger.debug(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: already processing`);
+          logger.info(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: already being processed`);
           continue;
         }
 
         if (await repositoryStateManager.isProcessed(instance.owner, repoName, pr.id)) {
-          logger.debug(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: already processed`);
+          logger.info(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: already marked as processed`);
           continue;
         }
 
         const repoKey = skipManager.getRepoKey(instance.owner, repoName);
         if (skipManager.isSkipped(instance.owner, repoName, pr.id)) {
-          logger.debug(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: skipped`);
+          logger.info(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: user skipped (3h cache active)`);
           continue;
         }
 
         const prAge = Date.now() - pr.createdAt.getTime();
         if (prAge > instance.maxAgeMs) {
-          logger.debug(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: older than ${instance.maxAgeMs / 3600000}h`);
+          logger.info(`[${instanceKey}/${repoName}] Skipping PR #${pr.number}: age ${Math.round(prAge / 3600000)}h exceeds max ${instance.maxAgeMs / 3600000}h (created: ${pr.createdAt.toISOString()})`);
           await repositoryStateManager.markProcessed(instance.owner, repoName, pr.id);
           continue;
         }
@@ -188,10 +202,12 @@ class SchedulerDaemon {
   async checkOutdatedReviews(instance, repoName, repoConfig, mcpService) {
     try {
       const openPRs = await mcpService.getOpenPRs(repoName);
+      logger.info(`[${instance.owner}/${repoName}] Checking ${openPRs.length} open PRs for outdated reviews`);
 
       for (const pr of openPRs) {
         try {
           const reviews = await mcpService.getPRReviews(repoName, pr.number);
+          logger.info(`[${instance.owner}/${repoName}] PR #${pr.number}: ${reviews.length} reviews fetched`);
 
           const reviewState = await reviewStateManager.updateReviewState(
             instance.owner,
@@ -201,7 +217,12 @@ class SchedulerDaemon {
             pr.headSha
           );
 
-          if (!reviewState) continue;
+          if (!reviewState) {
+            logger.info(`[${instance.owner}/${repoName}] PR #${pr.number}: No review state to track`);
+            continue;
+          }
+
+          logger.info(`[${instance.owner}/${repoName}] PR #${pr.number}: Review state tracked, checking for new commits`);
 
           const hasNewCommits = reviewStateManager.hasNewCommits(
             instance.owner,
@@ -211,6 +232,7 @@ class SchedulerDaemon {
           );
 
           if (reviewState.has_outdated && hasNewCommits && !reviewState.dismissed) {
+            logger.info(`[${instance.owner}/${repoName}] PR #${pr.number}: Sending outdated review notification`);
             await telegramService.sendOutdatedReviewNotification(
               instance.owner,
               repoName,
@@ -218,6 +240,8 @@ class SchedulerDaemon {
               reviewState,
               repoConfig.thread_id
             );
+          } else {
+            logger.info(`[${instance.owner}/${repoName}] PR #${pr.number}: has_outdated=${reviewState.has_outdated}, hasNewCommits=${hasNewCommits}, dismissed=${reviewState.dismissed}`);
           }
         } catch (err) {
           logger.error(`[${instance.owner}/${repoName}] Error checking PR #${pr.number} for outdated reviews: ${err.message}`);
@@ -233,6 +257,13 @@ class SchedulerDaemon {
    */
   async runOutdatedReviewCheckCycle() {
     try {
+      // Check if we should snooze (time or weekend)
+      if (timeUtils.shouldSnooze(config.app.snoozeTime)) {
+        const snoozeReason = timeUtils.getSnoozeReason(config.app.snoozeTime);
+        logger.info(`${snoozeReason}. Skipping outdated review check.`);
+        return;
+      }
+
       logger.info('Starting outdated review check cycle');
 
       for (const [instanceKey, instance] of Object.entries(config.instances)) {

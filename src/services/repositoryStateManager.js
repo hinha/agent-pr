@@ -17,9 +17,9 @@ class RepositoryStateManager {
   }
 
   /**
-   * Get or create state for a repository
+   * Get or create state for a repository (async, waits for load)
    */
-  getRepoState(owner, repo) {
+  async getRepoState(owner, repo) {
     const key = this.getRepoKey(owner, repo);
 
     if (!this.state.has(key)) {
@@ -27,9 +27,46 @@ class RepositoryStateManager {
         processedPRs: new Set(),
         notificationCount: new Map(),
         processedTimestamps: new Map(),
-        loaded: false
+        loaded: false,
+        loadPromise: null
+      });
+    }
+
+    const repoState = this.state.get(key);
+
+    // Wait for state to load if not already loaded
+    if (!repoState.loaded) {
+      if (!repoState.loadPromise) {
+        repoState.loadPromise = this.loadRepoState(owner, repo).catch(err => {
+          logger.error(`Failed to load state for ${key}: ${err.message}`);
+          throw err;
+        }).finally(() => {
+          repoState.loadPromise = null;
+        });
+      }
+      await repoState.loadPromise;
+    }
+
+    return repoState;
+  }
+
+  /**
+   * Get or create state for a repository (sync, doesn't wait for load)
+   * Use this only when you need immediate access and will handle loading separately
+   */
+  getRepoStateSync(owner, repo) {
+    const key = this.getRepoKey(owner, repo);
+
+    if (!this.state.has(key)) {
+      this.state.set(key, {
+        processedPRs: new Set(),
+        notificationCount: new Map(),
+        processedTimestamps: new Map(),
+        loaded: false,
+        loadPromise: null
       });
 
+      // Start loading in background
       this.loadRepoState(owner, repo).catch(err => {
         logger.error(`Failed to load state for ${key}: ${err.message}`);
       });
@@ -132,7 +169,7 @@ class RepositoryStateManager {
    * Check if PR has been fully processed
    */
   async isProcessed(owner, repo, prId) {
-    const repoState = this.getRepoState(owner, repo);
+    const repoState = await this.getRepoState(owner, repo);
     return repoState.processedPRs.has(prId.toString());
   }
 
@@ -140,7 +177,7 @@ class RepositoryStateManager {
    * Get current notification count for a PR
    */
   getNotificationCount(owner, repo, prId) {
-    const repoState = this.getRepoState(owner, repo);
+    const repoState = this.getRepoStateSync(owner, repo);
     return repoState.notificationCount.get(prId.toString()) || 0;
   }
 
@@ -148,7 +185,7 @@ class RepositoryStateManager {
    * Increment notification counter for a PR
    */
   async incrementNotificationCount(owner, repo, prId) {
-    const repoState = this.getRepoState(owner, repo);
+    const repoState = await this.getRepoState(owner, repo);
     const prIdStr = prId.toString();
     const current = this.getNotificationCount(owner, repo, prId);
     const newCount = current + 1;
@@ -161,7 +198,7 @@ class RepositoryStateManager {
    * Mark PR as processed
    */
   async markProcessed(owner, repo, prId) {
-    const repoState = this.getRepoState(owner, repo);
+    const repoState = await this.getRepoState(owner, repo);
     const prIdStr = prId.toString();
 
     if (!repoState.processedPRs.has(prIdStr)) {
@@ -179,7 +216,7 @@ class RepositoryStateManager {
    * Cleanup old entries from state to prevent unbounded growth
    */
   cleanupOldEntries(owner, repo, maxAgeMs = 7 * 24 * 60 * 60 * 1000) {
-    const repoState = this.getRepoState(owner, repo);
+    const repoState = this.getRepoStateSync(owner, repo);
     const now = Date.now();
     let cleaned = 0;
 

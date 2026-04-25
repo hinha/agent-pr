@@ -199,9 +199,9 @@ class TelegramService {
         await this.bot.answerCallbackQuery(query.id);
         const prDetails = await mcpService.getPRDetails(repo, pr.number);
         await this.bot.sendMessage(this.chatId,
-          `🔍 <b>Pilih Level Review untuk ${owner}/${repo} PR #${pr.number}</b>\n\n` +
-          `📁 Files changed: ${prDetails?.filesChanged || 'N/A'}\n` +
-          `📊 Total changes: ${prDetails?.totalChanges || 'N/A'}`,
+          `🔍 <b>Pilih Level Review untuk ${this.escapeHtml(`${owner}/${repo}`)} PR #${pr.number}</b>\n\n` +
+          `📁 Files changed: ${this.escapeHtml(String(prDetails?.filesChanged || 'N/A'))}\n` +
+          `📊 Total changes: ${this.escapeHtml(String(prDetails?.totalChanges || 'N/A'))}`,
           {
             reply_markup: {
               inline_keyboard: [
@@ -286,8 +286,8 @@ class TelegramService {
 
         const instance = repoConfig.instance;
         await this.bot.sendMessage(this.chatId,
-          `🔄 <b>Reviewing ${owner}/${repo} PR #${prId} at ${level.toUpperCase()} level</b>\n` +
-          `⏳ This may take ${instance.agent.reviewTimeoutMessage}...`,
+          `🔄 <b>Reviewing ${this.escapeHtml(`${owner}/${repo}`)} PR #${prId} at ${this.escapeHtml(level.toUpperCase())} level</b>\n` +
+          `⏳ This may take ${this.escapeHtml(instance.agent.reviewTimeoutMessage)}...`,
           {
             message_thread_id: repoConfig.threadId,
             parse_mode: 'HTML'
@@ -303,10 +303,10 @@ class TelegramService {
           const reviewUrl = ghResult?.html_url || pr.url;
           await this.bot.sendMessage(this.chatId,
             `✅ <b>Review Complete!</b>\n\n` +
-            `📁 <b>Repo:</b> ${owner}/${repo}\n` +
-            `📝 <b>Level:</b> ${level.toUpperCase()}\n` +
+            `📁 <b>Repo:</b> ${this.escapeHtml(`${owner}/${repo}`)}\n` +
+            `📝 <b>Level:</b> ${this.escapeHtml(level.toUpperCase())}\n` +
             `💬 <b>Comments:</b> ${reviewResult.comments.length}\n` +
-            `🔗 ${reviewUrl}`,
+            `🔗 ${this.escapeHtml(reviewUrl)}`,
             { message_thread_id: repoConfig.threadId, parse_mode: 'HTML' }
           );
         } catch (msgErr) {
@@ -424,8 +424,8 @@ class TelegramService {
       await this.bot.answerCallbackQuery(query.id, { text: `🚀 Starting ${level} re-review...` });
 
       await this.bot.sendMessage(this.chatId,
-        `🔄 <b>Re-reviewing ${owner}/${repo} PR #${pr.number} at ${level.toUpperCase()} level</b>\n` +
-        `⏳ This may take ${repoConfig.instance.agent.reviewTimeoutMessage}...`,
+        `🔄 <b>Re-reviewing ${this.escapeHtml(`${owner}/${repo}`)} PR #${pr.number} at ${this.escapeHtml(level.toUpperCase())} level</b>\n` +
+        `⏳ This may take ${this.escapeHtml(repoConfig.instance.agent.reviewTimeoutMessage)}...`,
         {
           message_thread_id: repoConfig.threadId,
           parse_mode: 'HTML'
@@ -441,10 +441,10 @@ class TelegramService {
         const reviewUrl = ghResult?.html_url || pr.url;
         await this.bot.sendMessage(this.chatId,
           `✅ <b>Re-review Complete!</b>\n\n` +
-          `📁 <b>Repo:</b> ${owner}/${repo}\n` +
-          `📝 <b>Level:</b> ${level.toUpperCase()}\n` +
+          `📁 <b>Repo:</b> ${this.escapeHtml(`${owner}/${repo}`)}\n` +
+          `📝 <b>Level:</b> ${this.escapeHtml(level.toUpperCase())}\n` +
           `💬 <b>Comments:</b> ${reviewResult.comments.length}\n` +
-          `🔗 ${reviewUrl}`,
+          `🔗 ${this.escapeHtml(reviewUrl)}`,
           { message_thread_id: repoConfig.threadId, parse_mode: 'HTML' }
         );
       } catch (msgErr) {
@@ -484,6 +484,14 @@ class TelegramService {
   }
 
   /**
+   * Helper function to safely escape HTML special characters
+   */
+  escapeHtml(text) {
+    if (text === null || text === undefined) return 'N/A';
+    return String(text).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  /**
    * Send PR notification with repo-specific thread routing
    */
   async sendPRNotification(owner, repo, pr, summary, threadId) {
@@ -497,20 +505,24 @@ class TelegramService {
       }
       const { instanceIdx, repoIdx } = indices;
 
+      const suspiciousPatternsStr = summary.suspiciousPatterns?.length
+        ? summary.suspiciousPatterns.join(', ')
+        : 'None';
+
       const message = `🔔 <b>NEW PR DETECTED</b>
-<b>${owner}/${repo} PR #${pr.number}: ${pr.title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</b>
-👤 Author: ${pr.author.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
-🔗 URL: ${pr.url}
+<b>${owner}/${repo} PR #${pr.number}: ${this.escapeHtml(pr.title)}</b>
+👤 Author: ${this.escapeHtml(pr.author)}
+🔗 URL: ${this.escapeHtml(pr.url)}
 
 ---
 <b>AI PR Summary</b>
-📝 Purpose: ${summary.purpose.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
-🏷️ Type: ${summary.type.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
-⚠️ Risk Level: ${summary.riskLevel.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
-🎯 Impact Area: ${summary.impactArea.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
-📊 Diff Size: ${summary.diffSize.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
-🚨 Suspicious Patterns: ${(summary.suspiciousPatterns?.length ? summary.suspiciousPatterns.join(', ') : 'None').replace(/</g, '&lt;').replace(/>/g, '&gt;')}
-✅ Recommended Review: ${summary.recommendedReview.replace(/</g, '&lt;').replace(/>/g, '&gt;')}`;
+📝 Purpose: ${this.escapeHtml(summary.purpose)}
+🏷️ Type: ${this.escapeHtml(summary.type)}
+⚠️ Risk Level: ${this.escapeHtml(summary.riskLevel)}
+🎯 Impact Area: ${this.escapeHtml(summary.impactArea)}
+📊 Diff Size: ${this.escapeHtml(summary.diffSize)}
+🚨 Suspicious Patterns: ${this.escapeHtml(suspiciousPatternsStr)}
+✅ Recommended Review: ${this.escapeHtml(summary.recommendedReview)}`;
 
       const inlineKeyboard = {
         inline_keyboard: [
@@ -545,7 +557,7 @@ class TelegramService {
   async sendWarning(owner, repo, prNumber, message) {
     return this.retryOperation(async () => {
       const repoConfig = config.getRepoConfig(owner, repo);
-      const warningMessage = `⚠️ <b>WARNING</b>\n\n${owner}/${repo} PR #${prNumber}: ${message}`;
+      const warningMessage = `⚠️ <b>WARNING</b>\n\n${owner}/${repo} PR #${prNumber}: ${this.escapeHtml(message)}`;
       await this.bot.sendMessage(this.chatId, warningMessage, {
         message_thread_id: repoConfig.threadId,
         parse_mode: 'HTML'
@@ -572,9 +584,9 @@ class TelegramService {
       });
 
       const message = `🔄 <b>OUTDATED REVIEW DETECTED</b>
-<b>${owner}/${repo} PR #${pr.number}: ${pr.title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</b>
-👤 Author: ${pr.author.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
-🔗 ${pr.url}
+<b>${owner}/${repo} PR #${pr.number}: ${this.escapeHtml(pr.title)}</b>
+👤 Author: ${this.escapeHtml(pr.author)}
+🔗 ${this.escapeHtml(pr.url)}
 
 ---
 📋 <b>Review Status:</b>

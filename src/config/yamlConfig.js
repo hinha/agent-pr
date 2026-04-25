@@ -35,6 +35,13 @@ function buildInternalConfig(config) {
     app: {
       checkIntervalMs: config.app.check_interval_minutes * 60 * 1000,
       outdatedReviewCheckIntervalMs: (config.app.outdated_review_check_minutes || 10) * 60 * 1000,
+      snoozeTime: {
+        enabled: config.app.snooze_time?.enabled || false,
+        startHour: config.app.snooze_time?.start_hour || 20,
+        endHour: config.app.snooze_time?.end_hour || 6,
+        skipWeekends: config.app.snooze_time?.skip_weekends || false,
+        dayNames: config.app.snooze_time?.day_names || ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat']
+      },
       telegram: {
         botToken: config.app.telegram.bot_token,
         chatId: parseInt(config.app.telegram.chat_id, 10)
