@@ -300,8 +300,8 @@ class SchedulerDaemon {
 
     // Initialize Flagsmith sync before starting PR checks
     await flagsmithSyncService.init(config);
-    if (config.flagsmith && config.flagsmith.syncIntervalMs) {
-      flagsmithSyncService.start(config.flagsmith.syncIntervalMs);
+    if (config.app?.flagsmith?.syncIntervalMs) {
+      flagsmithSyncService.start(config.app.flagsmith.syncIntervalMs);
     }
 
     this.runPRCheckCycle();

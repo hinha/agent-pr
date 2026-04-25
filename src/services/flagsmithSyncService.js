@@ -30,9 +30,9 @@ class FlagsmithSyncService {
    * Initialize Flagsmith sync service
    */
   async init(config) {
-    this.isEnabled = config.flagsmith?.enabled || false;
-    this.environmentId = config.flagsmith?.environmentId;
-    this.identity = config.flagsmith?.identity;
+    this.isEnabled = config.app?.flagsmith?.enabled || false;
+    this.environmentId = config.app?.flagsmith?.environmentId;
+    this.identity = config.app?.flagsmith?.identity;
 
     if (!this.isEnabled || !this.environmentId) {
       logger.info('Flagsmith sync disabled');
