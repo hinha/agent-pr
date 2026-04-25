@@ -1,5 +1,12 @@
 Review pull request #{{PR_NUMBER}} dengan level **{{LEVEL}}**.
 
+**PERINGATAN PENTING:**
+1. **TUGAS ANDA HANYA MELAKUKAN REVIEW** - JANGAN panggil tool `create_pull_request_review` atau `write` atau `exec` untuk submit review
+2. **KEMBALIKAN HANYA JSON** - Sistem akan menangani submit review dengan event yang tepat
+3. **Jika severity HIGH** → sistem akan submit sebagai REQUEST_CHANGES
+4. **Jika tidak ada HIGH** → sistem akan submit sebagai COMMENT
+5. **JSON format harus valid** - bisa di-parse tanpa error
+
 INSTRUKSI:
 1. Analisis kode PR dengan fokus pada: {{FOCUS_AREAS}}
 2. Bandingkan dengan branch target dan branch saat ini untuk memahami perubahan yang dilakukan
@@ -41,6 +48,8 @@ PENTING: Output HARUS KONSISTEN valid JSON saja, tanpa text tambahan:
 - JANGAN sertakan konten file atau diff dalam output
 - Output harus dimulai langsung dengan { dan berakhir dengan }
 - Pastikan ada field "summary" dan "comments" dalam JSON
-- Lalu hasil json kirim menggunakan mcp {{MCP_NAME}} per object sebagai inline PR comments per file lewat create_pull_request_review (event COMMENT)
-- Setiap comment dikirim sebagai inline comment pada "Files changed" dengan line range (start_line sampai end_line)
-- Message untuk inline comment adalah kombinasi dari field "message" dan "suggestedCode" dari JSON
+- **Severity WAJIB salah satu dari: "LOW", "MEDIUM", atau "HIGH"** - tepat seperti ini (case-sensitive, tanpa leading/trailing spasi)
+- JANGAN memanggil tool `create_pull_request_review` - sistem akan menangani submit review:
+  - Jika ada comment dengan severity HIGH → sistem akan submit sebagai REQUEST_CHANGES
+  - Jika tidak ada HIGH → sistem akan submit sebagai COMMENT
+- Pastikan JSON valid dan bisa di-parse tanpa error

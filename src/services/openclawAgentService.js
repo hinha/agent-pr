@@ -379,12 +379,36 @@ class OpenClawAgentService {
         }
       }
 
+      // Check if agent called create_pull_request_review directly
+      const agentOutput = stdout || stderr || '';
+      // Limit output to prevent ReDoS
+      const relevantOutput = agentOutput.substring(0, 2000);
+      const directToolCallPatterns = [
+        /\breview\s+(?:created|submitted|approved)\b/i,
+        /\bpull\s+request\s+review\s+#?\d+\b/i,
+        /\bsuccessfully\s+created\s+(?:a\s+)?review\b/i
+      ];
+
+      const hasDirectCall = directToolCallPatterns.some(pattern => pattern.test(relevantOutput));
+
+      if (hasDirectCall) {
+        logger.warn(`[${owner}/${repo}] Agent may have called create_pull_request_review directly. Output contains tool call confirmation.`);
+        logger.warn(`[${owner}/${repo}] This means comments were created on GitHub but reviewResult.comments may be empty.`);
+        logger.warn(`[${owner}/${repo}] First 500 chars of output: ${agentOutput.substring(0, 500)}`);
+
+        // Set a flag to indicate direct call was made
+        result.agentCalledToolDirectly = true;
+        result.agentRawOutput = agentOutput.substring(0, 1000);
+      }
+
       // Ensure result has expected structure
       return {
         summary: result.summary || `Review ${level} untuk PR #${pr.number}`,
         comments: result.comments || [],
         level: level,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        agentCalledToolDirectly: result.agentCalledToolDirectly || false,
+        agentRawOutput: result.agentRawOutput || ''
       };
     }, config.retries.agentRetries, 1000, config.retries.backoffFactor);
   }
