@@ -381,13 +381,15 @@ class OpenClawAgentService {
 
       // Check if agent called create_pull_request_review directly
       const agentOutput = stdout || stderr || '';
+      // Limit output to prevent ReDoS
+      const relevantOutput = agentOutput.substring(0, 2000);
       const directToolCallPatterns = [
-        /review.*created|review.*submitted|requested.*changes/i,
-        /pull request review.*\d+/i,
-        /successfully.*created.*review/i
+        /\breview\s+(?:created|submitted|approved)\b/i,
+        /\bpull\s+request\s+review\s+#?\d+\b/i,
+        /\bsuccessfully\s+created\s+(?:a\s+)?review\b/i
       ];
 
-      const hasDirectCall = directToolCallPatterns.some(pattern => pattern.test(agentOutput));
+      const hasDirectCall = directToolCallPatterns.some(pattern => pattern.test(relevantOutput));
 
       if (hasDirectCall) {
         logger.warn(`[${owner}/${repo}] Agent may have called create_pull_request_review directly. Output contains tool call confirmation.`);

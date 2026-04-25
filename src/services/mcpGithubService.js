@@ -385,38 +385,64 @@ class MCPGitHubService {
 
     stats.total = comments.length;
 
-    const validComments = comments.filter((comment, index) => {
-      // Validate required fields
-      if (!comment.file || typeof comment.file !== 'string') {
-        logger.warn(`[MCP:${this.instanceKey}/${repo}] Comment #${index}: missing or invalid 'file' field, filtering out`);
-        stats.filtered++;
-        return false;
-      }
+    const validComments = comments
+      .map((comment, index) => {
+        // Create a copy to avoid in-place mutation
+        const commentCopy = { ...comment };
+        // Normalize severity on the copy
+        commentCopy.severity = this.normalizeSeverity(comment.severity, index);
+        return commentCopy;
+      })
+      .filter((comment, index) => {
+        // Validate required fields (using index from original array would be lost, but we use current index)
+        if (!comment.file || typeof comment.file !== 'string') {
+          logger.warn(`[MCP:${this.instanceKey}/${repo}] Comment: missing or invalid 'file' field, filtering out`);
+          stats.filtered++;
+          return false;
+        }
 
-      if (!comment.line || typeof comment.line !== 'number') {
-        logger.warn(`[MCP:${this.instanceKey}/${repo}] Comment #${index}: missing or invalid 'line' field, filtering out`);
-        stats.filtered++;
-        return false;
-      }
+        if (!comment.line || typeof comment.line !== 'number') {
+          logger.warn(`[MCP:${this.instanceKey}/${repo}] Comment: missing or invalid 'line' field, filtering out`);
+          stats.filtered++;
+          return false;
+        }
 
-      if (!comment.message || typeof comment.message !== 'string') {
-        logger.warn(`[MCP:${this.instanceKey}/${repo}] Comment #${index}: missing or invalid 'message' field, filtering out`);
-        stats.filtered++;
-        return false;
-      }
+        if (!comment.message || typeof comment.message !== 'string') {
+          logger.warn(`[MCP:${this.instanceKey}/${repo}] Comment: missing or invalid 'message' field, filtering out`);
+          stats.filtered++;
+          return false;
+        }
 
-      // Normalize severity
-      comment.severity = this.normalizeSeverity(comment.severity, index);
-      stats.severityBreakdown[comment.severity]++;
-      stats.valid++;
+        // Update stats for valid comments
+        stats.severityBreakdown[comment.severity]++;
+        stats.valid++;
 
-      return true;
-    });
+        return true;
+      });
 
     logger.info(`[MCP:${this.instanceKey}/${repo}] Comment validation: ${stats.valid}/${stats.total} valid, ${stats.filtered} filtered`);
     logger.info(`[MCP:${this.instanceKey}/${repo}] Severity breakdown: LOW=${stats.severityBreakdown.LOW}, MEDIUM=${stats.severityBreakdown.MEDIUM}, HIGH=${stats.severityBreakdown.HIGH}`);
 
     return { validComments, stats };
+  }
+
+  /**
+   * Sanitize output for logging to prevent sensitive data exposure
+   */
+  sanitizeForLogging(output) {
+    if (!output) return '[empty]';
+    const sanitized = output
+      .replace(/(sk-[a-zA-Z0-9]{20,})/g, 'sk-***REDACTED***')
+      .replace(/(ghp_[a-zA-Z0-9]{36})/g, 'ghp_***REDACTED***')
+      .replace(/(gho_[a-zA-Z0-9]{36})/g, 'gho_***REDACTED***')
+      .replace(/(ghu_[a-zA-Z0-9]{36})/g, 'ghu_***REDACTED***')
+      .replace(/(ghs_[a-zA-Z0-9]{40})/g, 'ghs_***REDACTED***')
+      .replace(/(ghr_[a-zA-Z0-9]{40})/g, 'ghr_***REDACTED***')
+      .replace(/(Bearer\s+[a-zA-Z0-9\-._~+/]+=*)/gi, 'Bearer ***REDACTED***')
+      .replace(/("password":\s*")[^"]*"/gi, '$1***REDACTED***"')
+      .replace(/("token":\s*")[^"]*"/gi, '$1***REDACTED***"')
+      .replace(/("api_?key":\s*")[^"]*"/gi, '$1***REDACTED***"');
+    return sanitized.substring(0, 500);
   }
 
   /**
@@ -437,6 +463,7 @@ class MCPGitHubService {
     // Check if agent called create_pull_request_review directly
     if (reviewResult.agentCalledToolDirectly) {
       logger.warn(`[MCP:${this.instanceKey}/${repo}] Agent called create_pull_request_review directly, skipping duplicate submission`);
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Agent output (sanitized): ${this.sanitizeForLogging(reviewResult.agentRawOutput)}`);
       logger.info(`[MCP:${this.instanceKey}/${repo}] Review was already submitted by the agent. Returning success without duplicate submission.`);
       // Return a success response that mimics a GitHub review result
       // The agent already submitted the review, so we don't need to do anything
