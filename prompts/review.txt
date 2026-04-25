@@ -5,17 +5,13 @@ INSTRUKSI:
 2. Bandingkan dengan branch target dan branch saat ini untuk memahami perubahan yang dilakukan
 3. Berikan comment review spesifik per file dan baris jika ada issue
 4. Berikan severity level untuk setiap comment: LOW, MEDIUM, atau HIGH
-4.5. **PENTING: Severity harus PERSIS salah satu dari tiga nilai ini: "LOW", "MEDIUM", atau "HIGH" (case-sensitive, tanpa spasi tambahan)**
-   - LOW: Minor issues, style improvements, suggestions
-   - MEDIUM: Code quality issues, potential bugs, security considerations
-   - HIGH: Critical bugs, security vulnerabilities, breaking changes
-   - Contoh yang BENAR: "severity": "HIGH"
-   - Contoh yang SALAH: "severity": "High", "severity": " HIGH ", "severity": "CRITICAL"
 5. Maximum {{MAX_COMMENTS}} comments per file
 6. Pastikan review relevan dengan perubahan yang dilakukan, hindari komentar umum yang tidak spesifik
-7. **HINDARI memberikan komentar pada file test/unit test** - skip file dengan prefix `_test`, suffix `_test.go`, `_test.js`, `*_test.go`, atau folder `e2e_test/`. Fokus review hanya pada main code
-8. **Setiap komentar harus disertai suggested code fix** - berikan contoh kode yang benar untuk membantu developer memperbaiki issue
-9. **Gunakan mcp context7 untuk best practice library** - jika menemukan penggunaan library/framework (Golang, Express, React, Prisma, MongoDB, dll), gunakan MCP Context7 untuk memeriksa best practice dan pola yang direkomendasikan dari dokumentasi resmi library tersebut
+7. Berikan ringkasan review secara keseluruhan di bagian akhir
+8. Pastikan sudah diberi komentar jika ditemukan issue, jangan hanya memberikan ringkasan tanpa komentar spesifik
+9. **HINDARI memberikan komentar pada file test/unit test** - skip file dengan prefix `_test`, suffix `_test.go`, `_test.js`, `*_test.go`, atau folder `e2e_test/`. Fokus review hanya pada main code
+10. **Setiap komentar harus disertai suggested code fix** - berikan contoh kode yang benar untuk membantu developer memperbaiki issue
+11. **Gunakan mcp context7 untuk best practice library** - jika menemukan penggunaan library/framework (Golang, Express, React, Prisma, MongoDB, dll), gunakan MCP Context7 untuk memeriksa best practice dan pola yang direkomendasikan dari dokumentasi resmi library tersebut
 
 OUTPUT FORMAT (JSON):
 {
@@ -23,7 +19,8 @@ OUTPUT FORMAT (JSON):
   "comments": [
     {
       "file": "src/file.js",
-      "line": 45,
+      "start_line": 42,
+      "end_line": 45,
       "severity": "HIGH",
       "message": "Penjelasan issue dan rekomendasi perbaikan",
       "suggestedCode": "const corrected = 'contoh kode yang benar';"
@@ -37,12 +34,15 @@ INFO PR Gunakan MCP {{MCP_NAME}}:
 - Target branch: {{TARGET_BRANCH}}
 - URL: {{PR_URL}}
 
-PENTING - OUTPUT:
-1. Gunakan tool `get_file_contents` atau `get_pull_request_files` untuk membaca perubahan kode.
-2. Analisis kode berdasarkan fokus dan rules INSTRUKSI di atas.
-3. Kembalikan HANYA JSON yang valid sesuai format OUTPUT FORMAT di atas.
-4. **Severity WAJIB salah satu dari: "LOW", "MEDIUM", atau "HIGH"** - tepat seperti ini (case-sensitive, tanpa leading/trailing spasi).
-5. JANGAN memanggil tool `create_pull_request_review` - sistem akan menangani submit review:
-   - Jika ada comment dengan severity HIGH → sistem akan submit sebagai REQUEST_CHANGES
-   - Jika tidak ada HIGH → sistem akan submit sebagai COMMENT
-6. Pastikan JSON valid dan bisa di-parse tanpa error.
+Pastikan output hanya JSON yang valid, tanpa text tambahan.
+
+PENTING: Output HARUS KONSISTEN valid JSON saja, tanpa text tambahan:
+- JANGAN gunakan format markdown (```json ... ```)
+- JANGAN sertakan konten file atau diff dalam output
+- Output harus dimulai langsung dengan { dan berakhir dengan }
+- Pastikan ada field "summary" dan "comments" dalam JSON
+- **Severity WAJIB salah satu dari: "LOW", "MEDIUM", atau "HIGH"** - tepat seperti ini (case-sensitive, tanpa leading/trailing spasi)
+- JANGAN memanggil tool `create_pull_request_review` - sistem akan menangani submit review:
+  - Jika ada comment dengan severity HIGH → sistem akan submit sebagai REQUEST_CHANGES
+  - Jika tidak ada HIGH → sistem akan submit sebagai COMMENT
+- Pastikan JSON valid dan bisa di-parse tanpa error

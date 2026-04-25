@@ -152,6 +152,7 @@ class TelegramService {
     const dataParts = query.data.split(':');
 
     let action, instanceIdx, repoIdx, prId, level, reviewId;
+    let owner, repo, repoConfig, mcpService, instance;
 
     if (dataParts.length === 4) {
       // Standard action: action:instanceIdx:repoIdx:prId
@@ -184,9 +185,9 @@ class TelegramService {
         return;
       }
 
-      const { owner, repo, instance } = repoInfo;
-      const repoConfig = config.getRepoConfig(owner, repo);
-      const mcpService = getMCPService(instance.key);
+      ({ owner, repo, instance } = repoInfo);
+      repoConfig = config.getRepoConfig(owner, repo);
+      mcpService = getMCPService(instance.key);
       const openPRs = await mcpService.getOpenPRs(repo);
       const pr = openPRs.find(p => p.id === prIdNum);
 

@@ -341,7 +341,6 @@ class MCPGitHubService {
    * Handles undefined, null, whitespace, and case variations
    */
   normalizeSeverity(severity, commentIndex = 0) {
-    const rawSeverity = severity;
     let normalized = 'LOW'; // Default
 
     if (severity === undefined || severity === null) {
@@ -360,7 +359,7 @@ class MCPGitHubService {
     // Validate against allowed values
     const allowedValues = ['LOW', 'MEDIUM', 'HIGH'];
     if (!allowedValues.includes(normalized)) {
-      logger.warn(`[MCP:${this.instanceKey}] Comment #${commentIndex}: invalid severity "${rawSeverity}", defaulting to LOW`);
+      logger.warn(`[MCP:${this.instanceKey}] Comment #${commentIndex}: invalid severity "${severity}", defaulting to LOW`);
       normalized = 'LOW';
     }
 
@@ -429,7 +428,9 @@ class MCPGitHubService {
     // Check if agent called create_pull_request_review directly
     if (reviewResult.agentCalledToolDirectly) {
       logger.warn(`[MCP:${this.instanceKey}/${repo}] Agent called create_pull_request_review directly, skipping duplicate submission`);
-      logger.warn(`[MCP:${this.instanceKey}/${repo}] Agent output: ${reviewResult.agentRawOutput}`);
+      // Sanitize output before logging to prevent sensitive data exposure
+      const sanitizedOutput = (reviewResult.agentRawOutput || '').substring(0, 500);
+      logger.warn(`[MCP:${this.instanceKey}/${repo}] Agent output (truncated): ${sanitizedOutput}`);
       throw new Error(`Agent called create_pull_request_review directly. Review already submitted to GitHub. Check GitHub for the review.`);
     }
 
