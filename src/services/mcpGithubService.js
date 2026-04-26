@@ -240,7 +240,8 @@ class MCPGitHubService {
     const tmpFile = `/tmp/comments-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.json`;
     fs.writeFileSync(tmpFile, JSON.stringify(comments), 'utf8');
     logger.debug(`[MCP:${this.instanceKey}] Wrote comments to temp file: ${tmpFile}`);
-    return `$(cat ${tmpFile})`;
+    // Use double quotes around command substitution to keep JSON as single argument
+    return `"$(cat ${tmpFile})"`;
   }
 
   /**
