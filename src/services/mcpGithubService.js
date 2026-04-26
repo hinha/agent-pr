@@ -61,7 +61,12 @@ class MCPGitHubService {
             spawnArgs.push(`'${key}:${JSON.stringify(value)}'`);
           }
         } else if (typeof value === 'string') {
-          spawnArgs.push(`${key}='${value}'`);
+          // Only quote if value contains spaces or special chars
+          if (value.includes(' ') || value.includes('"') || value.includes("'")) {
+            spawnArgs.push(`${key}='${value}'`);
+          } else {
+            spawnArgs.push(`${key}=${value}`);
+          }
         } else {
           spawnArgs.push(`${key}=${value}`);
         }
