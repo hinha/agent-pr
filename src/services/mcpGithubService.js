@@ -611,13 +611,17 @@ class MCPGitHubService {
 
     const comments = reviewResult.comments.map(c => {
       // Severity is already normalized by validateAndSanitizeComments
-      // Use simple body without newlines or special chars to test
       let commentBody = `[${c.severity}] ${c.message}`;
 
-      // Temporarily disable suggested code to test
-      // if (c.suggestedCode) {
-      //   commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${c.suggestedCode}\n\`\`\``;
-      // }
+      if (c.suggestedCode) {
+        // Replace newlines with literal \n and escape backticks
+        // This preserves formatting in GitHub UI while avoiding shell parsing issues
+        const escapedCode = c.suggestedCode
+          .replace(/\\/g, '\\\\')  // Escape backslashes
+          .replace(/"/g, '\\"')    // Escape quotes
+          .replace(/\n/g, '\\n');  // Escape newlines
+        commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${escapedCode}\n\`\`\``;
+      }
 
       // Get position from the diff
       // For /reviews endpoint, GitHub requires 'position' (not line+side)
