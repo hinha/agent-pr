@@ -252,6 +252,8 @@ class MCPGitHubService {
       const newStart = parseInt(match[3], 10);
       const newCount = match[4] ? parseInt(match[4], 10) : 1;
 
+      logger.debug(`[buildPositionMap] Processing hunk: @@ -${oldStart},${match[2] || 0} +${newStart},${newCount} @@, current position: ${currentPosition}`);
+
       const hunkEnd = match.index + match[0].length;
       const nextHunkStart = patch.indexOf('@@', hunkEnd);
 
@@ -265,21 +267,30 @@ class MCPGitHubService {
       for (const line of lines) {
         if (line.startsWith('+') && !line.startsWith('++')) {
           positionMap.set(currentLine, currentPosition);
-          logger.debug(`[buildPositionMap] Mapping new line ${currentLine} -> position ${currentPosition} (added)`);
+          if (currentLine <= 5 || currentLine === 91) {
+            logger.info(`[buildPositionMap] Mapping line ${currentLine} -> position ${currentPosition} (added): ${line.substring(0, 30)}`);
+          }
           currentLine++;
           currentPosition++;
         } else if (line.startsWith('-') && !line.startsWith('--')) {
           currentPosition++;
         } else if (line.startsWith(' ')) {
           positionMap.set(currentLine, currentPosition);
-          logger.debug(`[buildPositionMap] Mapping new line ${currentLine} -> position ${currentPosition} (context)`);
+          if (currentLine <= 5) {
+            logger.info(`[buildPositionMap] Mapping line ${currentLine} -> position ${currentPosition} (context)`);
+          }
           currentLine++;
           currentPosition++;
         }
       }
+
+      logger.debug(`[buildPositionMap] Finished hunk, advanced to line ${currentLine}, position ${currentPosition}`);
     }
 
-    logger.debug(`[buildPositionMap] Built map with ${positionMap.size} entries`);
+    // Log some sample mappings for debugging
+    logger.info(`[buildPositionMap] Built map with ${positionMap.size} entries`);
+    logger.info(`[buildPositionMap] Sample mappings: line 1 -> ${positionMap.get(1)}, line 91 -> ${positionMap.get(91)}, line 215 -> ${positionMap.get(215)}, line 385 -> ${positionMap.get(385)}`);
+
     return positionMap;
   }
 
@@ -623,23 +634,13 @@ class MCPGitHubService {
 
       const fileStatus = fileStatuses.get(c.file);
 
-      // For new files (added), we can still use position since the entire file is in the diff
-      // For modified files, we must use position (not line)
-      const positionMap = positionMaps.get(c.file);
-      const position = positionMap ? positionMap.get(c.line) : null;
-
-      logger.info(`[MCP:${this.instanceKey}/${repo}] Comment for ${c.file}:${c.line} (status: ${fileStatus}) -> position: ${position}, hasMap: ${!!positionMap}, mapSize: ${positionMap?.size || 0}`);
-
-      if (position === null) {
-        logger.warn(`[MCP:${this.instanceKey}/${repo}] Could not calculate position for ${c.file}:${c.line}, comment will be omitted`);
-        return null; // Filter out comments without valid position
-      }
-
-      logger.debug(`[MCP:${this.instanceKey}/${repo}] Mapped line ${c.line} to position ${position} for ${c.file}`);
+      // Try using 'line' instead of 'position' for simplicity
+      // GitHub API supports 'line' for review comments (references line in the new version of the file)
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Comment for ${c.file}:${c.line} (status: ${fileStatus})`);
 
       return {
         path: c.file,
-        position: position, // Always use position (works for both new and modified files)
+        line: c.line, // Use line number directly (references line in the new file version)
         commit_id: pr.headSha,
         body: commentBody
       };
