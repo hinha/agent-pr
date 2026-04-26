@@ -245,6 +245,46 @@ class MCPGitHubService {
   }
 
   /**
+   * Detect programming language from file extension for syntax highlighting
+   */
+  detectLanguage(filename) {
+    const extMap = {
+      '.js': 'javascript',
+      '.ts': 'typescript',
+      '.jsx': 'javascript',
+      '.tsx': 'typescript',
+      '.go': 'go',
+      '.py': 'python',
+      '.rb': 'ruby',
+      '.php': 'php',
+      '.java': 'java',
+      '.kt': 'kotlin',
+      '.swift': 'swift',
+      '.cpp': 'cpp',
+      '.c': 'c',
+      '.cs': 'csharp',
+      '.scala': 'scala',
+      '.rs': 'rust',
+      '.sh': 'bash',
+      '.yaml': 'yaml',
+      '.yml': 'yaml',
+      '.json': 'json',
+      '.xml': 'xml',
+      '.html': 'html',
+      '.css': 'css',
+      '.scss': 'scss',
+      '.sass': 'sass',
+      '.less': 'less',
+      '.md': 'markdown',
+      '.sql': 'sql',
+      '.dockerfile': 'dockerfile'
+    };
+
+    const ext = filename.toLowerCase().substring(filename.lastIndexOf('.'));
+    return extMap[ext] || '';
+  }
+
+  /**
    * Check if a file is a test file
    */
   isTestFile(filename) {
@@ -697,9 +737,9 @@ class MCPGitHubService {
 
       // If there's suggested code, create additional comments for each chunk
       if (c.suggestedCode) {
-        // Compress code first: remove newlines and extra spaces
-        const compressedCode = c.suggestedCode.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-        const chunks = this.splitCodeIntoChunks(compressedCode, 200);
+        const chunks = this.splitCodeIntoChunks(c.suggestedCode, 200);
+        // Detect language for syntax highlighting
+        const language = this.detectLanguage(c.file);
 
         for (let i = 0; i < chunks.length; i++) {
           // Use offset position for each chunk to avoid conflicts
@@ -707,7 +747,7 @@ class MCPGitHubService {
           const chunkComment = {
             path: c.file,
             position: chunkPosition,
-            body: `Fix: ${chunks[i]}`
+            body: `Fix:\n\`\`\`${language}\n${chunks[i]}\n\`\`\``
           };
           comments.push(chunkComment);
           logger.debug(`[MCP:${this.instanceKey}/${repo}] Added code chunk ${i + 1}/${chunks.length} at position ${chunkPosition}`);
