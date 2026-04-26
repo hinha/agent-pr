@@ -727,32 +727,22 @@ class MCPGitHubService {
 
       logger.debug(`[MCP:${this.instanceKey}/${repo}] Comment ${c.file}:${c.line} -> position: ${position}`);
 
-      // Create main comment with just severity + message (keep it short)
-      const mainComment = {
+      // Build comment body
+      let commentBody = `[${c.severity}] ${c.message}`;
+
+      // If there's suggested code, append it with markdown code block
+      if (c.suggestedCode) {
+        const language = this.detectLanguage(c.file);
+        commentBody += `\n\nFix:\n\`\`\`${language}\n${c.suggestedCode}\n\`\`\``;
+      }
+
+      const comment = {
         path: c.file,
         position: position,
-        body: `[${c.severity}] ${c.message}`
+        body: commentBody
       };
-      comments.push(mainComment);
-
-      // If there's suggested code, create additional comments for each chunk
-      if (c.suggestedCode) {
-        const chunks = this.splitCodeIntoChunks(c.suggestedCode, 200);
-        // Detect language for syntax highlighting
-        const language = this.detectLanguage(c.file);
-
-        for (let i = 0; i < chunks.length; i++) {
-          // Use offset position for each chunk to avoid conflicts
-          const chunkPosition = position + i + 1;
-          const chunkComment = {
-            path: c.file,
-            position: chunkPosition,
-            body: `Fix:\n\`\`\`${language}\n${chunks[i]}\n\`\`\``
-          };
-          comments.push(chunkComment);
-          logger.debug(`[MCP:${this.instanceKey}/${repo}] Added code chunk ${i + 1}/${chunks.length} at position ${chunkPosition}`);
-        }
-      }
+      comments.push(comment);
+      logger.debug(`[MCP:${this.instanceKey}/${repo}] Added comment for ${c.file}:${c.line}`);
     }
 
     if (skippedCount > 0) {
