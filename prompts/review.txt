@@ -30,7 +30,7 @@ OUTPUT FORMAT (JSON):
       "end_line": 45,
       "severity": "HIGH",
       "message": "Penjelasan issue dan rekomendasi perbaikan",
-      "suggestedCode": "const corrected = 'contoh kode yang benar';"
+      "suggestedCode": "const corrected = 'contoh kode yang benar'; penjelasan tambahan detail jika perlu, gunakan markdown jika perlu sesuai bahasa pemrograman yang digunakan"
     }
   ]
 }
@@ -47,7 +47,8 @@ PENTING: Output HARUS KONSISTEN valid JSON saja, tanpa text tambahan:
 - JANGAN gunakan format markdown (```json ... ```)
 - JANGAN sertakan konten file atau diff dalam output
 - Output harus dimulai langsung dengan { dan berakhir dengan }
-- Pastikan ada field "summary" dan "comments" dalam JSON
+- Pastikan ada field "summary" dan "comments" dalam
+- Pastikan suggestedCode memberikan contoh kode yang benar untuk memperbaiki issue yang ditemukan dengan support markdown jika perlu sesuai bahasa pemrograman yang digunakan
 - **Severity WAJIB salah satu dari: "LOW", "MEDIUM", atau "HIGH"** - tepat seperti ini (case-sensitive, tanpa leading/trailing spasi)
 - JANGAN memanggil tool `create_pull_request_review` - sistem akan menangani submit review:
   - Jika ada comment dengan severity HIGH → sistem akan submit sebagai REQUEST_CHANGES
