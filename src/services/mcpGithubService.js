@@ -611,11 +611,13 @@ class MCPGitHubService {
 
     const comments = reviewResult.comments.map(c => {
       // Severity is already normalized by validateAndSanitizeComments
+      // Use simple body without newlines or special chars to test
       let commentBody = `[${c.severity}] ${c.message}`;
 
-      if (c.suggestedCode) {
-        commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${c.suggestedCode}\n\`\`\``;
-      }
+      // Temporarily disable suggested code to test
+      // if (c.suggestedCode) {
+      //   commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${c.suggestedCode}\n\`\`\``;
+      // }
 
       // Get position from the diff
       // For /reviews endpoint, GitHub requires 'position' (not line+side)
