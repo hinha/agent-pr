@@ -52,9 +52,9 @@ class MCPGitHubService {
         if (value === null || value === undefined) {
           spawnArgs.push(`${key}=null`);
         } else if (typeof value === 'object') {
-          // Wrap JSON string in double quotes to prevent shell parsing issues
-          const jsonString = JSON.stringify(value);
-          spawnArgs.push(`${key}="${jsonString}"`);
+          // Pass object/array as-is - mcporter will parse it
+          // Use format without quotes to match manual shell test
+          spawnArgs.push(`${key}:${JSON.stringify(value)}`);
         } else if (typeof value === 'string') {
           spawnArgs.push(`${key}=${value}`);
         } else {
@@ -62,7 +62,7 @@ class MCPGitHubService {
         }
       }
 
-      // Log the exact command being sent (with sensitive data redacted)
+      logger.info(`\n\nSPAWN ${spawnArgs} \n\n`);
       logger.debug(`[MCP:${this.instanceKey}] mcporter command: ${this.mcpBaseCmd} ${spawnArgs.slice(0, 5).join(' ')}... (${spawnArgs.length} args total)`);
 
       const result = await this.spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
