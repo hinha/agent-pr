@@ -651,93 +651,63 @@ class MCPGitHubService {
     // Count comments
     logger.info(`[MCP:${this.instanceKey}/${repo}] PR headSha: ${pr.headSha}, total comments to submit: ${comments.length}`);
 
-    const BATCH_SIZE = 5;
-    const commentBatches = [];
+    // NEW APPROACH: Create review first, then add comments separately
+    // Step 1: Create the review without comments
+    const reviewArgs = {
+      owner: this.owner,
+      repo: repo,
+      pull_number: pr.number,
+      body: reviewResult.summary,
+      event: event,
+      commit_id: pr.headSha
+    };
 
-    for (let i = 0; i < comments.length; i += BATCH_SIZE) {
-      commentBatches.push(comments.slice(i, i + BATCH_SIZE));
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Step 1: Creating review (without comments)`);
+    let createdReview;
+    try {
+      createdReview = await this.callMCP('create_pull_request_review', reviewArgs);
+      logger.info(`[MCP:${this.instanceKey}/${repo}] ✓ Review created: ID=${createdReview.id}`);
+    } catch (error) {
+      if (error.message.includes('Can not request changes on your own pull request')) {
+        logger.warn(`[MCP:${this.instanceKey}/${repo}] Cannot request changes on own PR, falling back to COMMENT`);
+        const fallbackArgs = { ...reviewArgs, event: 'COMMENT' };
+        createdReview = await this.callMCP('create_pull_request_review', fallbackArgs);
+      } else {
+        throw error;
+      }
     }
 
-    logger.info(`[MCP:${this.instanceKey}/${repo}] Processing ${comments.length} comments in ${commentBatches.length} batches`);
+    // Step 2: Add comments as individual PR review comments
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Step 2: Adding ${comments.length} comments as individual review comments`);
 
-    let firstReviewResult = null;
+    let commentsAdded = 0;
+    let commentsFailed = 0;
 
-    for (const batch of commentBatches) {
-      const batchNumber = commentBatches.indexOf(batch) + 1;
-
-      const reviewArgs = {
-        owner: this.owner,
-        repo: repo,
-        pull_number: pr.number,
-        body: batchNumber === 1 ? reviewResult.summary : `Additional comments (batch ${batchNumber}/${commentBatches.length})`,
-        event: batchNumber === 1 ? event : 'COMMENT',
-        commit_id: pr.headSha
-      };
-
-      if (batch.length > 0) {
-        reviewArgs.comments = batch;
-        logger.info(`[MCP:${this.instanceKey}/${repo}] Adding ${batch.length} comments to review: ${JSON.stringify(batch).substring(0, 500)}...`);
-      }
-
-      logger.info(`[MCP:${this.instanceKey}/${repo}] Sending batch ${batchNumber}/${commentBatches.length}`);
-      logger.info(`[MCP:${this.instanceKey}/${repo}] Review args: owner=${this.owner}, repo=${repo}, pr=${pr.number}, event=${reviewArgs.event}, comments=${reviewArgs.comments?.length || 0}`);
-
-      let result;
+    for (const commentData of comments) {
       try {
-        result = await this.callMCP('create_pull_request_review', reviewArgs);
-      } catch (error) {
-        if (error.message.includes('Can not request changes on your own pull request')) {
-          logger.warn(`[MCP:${this.instanceKey}/${repo}] Cannot request changes on own PR, falling back to COMMENT`);
-          try {
-            const telegramService = require('./telegramService');
-            await telegramService.sendWarning(this.owner, repo, pr.number, `Cannot request changes on your own PR. Review posted as COMMENT instead.`);
-          } catch (telegramErr) {
-            logger.error(`Failed to send Telegram warning: ${telegramErr.message}`);
-          }
+        const commentArgs = {
+          owner: this.owner,
+          repo: repo,
+          pull_number: pr.number,
+          commit_id: pr.headSha,
+          path: commentData.path,
+          position: commentData.position,
+          body: commentData.body
+        };
 
-          const fallbackArgs = { ...reviewArgs, event: 'COMMENT' };
-          if (fallbackArgs.body) {
-            try {
-              const openclawAgentService = require('./openclawAgentService');
-              fallbackArgs.body = await openclawAgentService.formatReviewBody({
-                originalBody: fallbackArgs.body,
-                prNumber: pr.number,
-                originalEvent: 'REQUEST_CHANGES',
-                newEvent: 'COMMENT',
-                reason: 'GitHub does not allow requesting changes on your own pull request',
-                owner: this.owner,
-                repo: repo
-              });
-            } catch (formatErr) {
-              logger.error(`Failed to format review body: ${formatErr.message}`);
-              fallbackArgs.body = `${fallbackArgs.body}\n\n---\n\n> **⚠️ AUTO-FIXED:** This review was posted as \`COMMENT\` instead of \`REQUEST_CHANGES\`.`;
-            }
-          }
-          result = await this.callMCP('create_pull_request_review', fallbackArgs);
-        } else {
-          throw error;
-        }
-      }
-
-      if (!result || !result.id) {
-        throw new Error(`Batch ${batchNumber} failed: ${JSON.stringify(result)}`);
-      }
-
-      logger.info(`[MCP:${this.instanceKey}/${repo}] Batch ${batchNumber} created: ID=${result.id}`);
-      logger.info(`[MCP:${this.instanceKey}/${repo}] MCP response: ${JSON.stringify(result).substring(0, 500)}...`);
-      logger.info(`[MCP:${this.instanceKey}/${repo}] Response has ${result.body?.length || 0} char body, ${result.comments?.length || 0} comments in initial response`);
-      logger.info(`[MCP:${this.instanceKey}/${repo}] ⚠️  Check GitHub PR to verify line comments: https://github.com/${this.owner}/${repo}/pull/${pr.number}/files`);
-
-      if (batchNumber === 1) {
-        firstReviewResult = result;
-      }
-
-      if (batchNumber < commentBatches.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await this.callMCP('create_pull_request_comment', commentArgs);
+        commentsAdded++;
+        logger.info(`[MCP:${this.instanceKey}/${repo}] ✓ Comment added to ${commentData.path}:${commentData.position}`);
+      } catch (commentError) {
+        logger.error(`[MCP:${this.instanceKey}/${repo}] ✗ Failed to add comment to ${commentData.path}:${commentData.position}: ${commentError.message}`);
+        commentsFailed++;
       }
     }
 
-    return firstReviewResult;
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Comments summary: ${commentsAdded} added, ${commentsFailed} failed`);
+    logger.info(`[MCP:${this.instanceKey}/${repo}] ⚠️  Check GitHub PR: https://github.com/${this.owner}/${repo}/pull/${pr.number}/files`);
+
+    return createdReview;
   }
 
   /**
