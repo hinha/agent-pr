@@ -107,7 +107,7 @@ class MCPGitHubService {
 
       const spawnProcess = spawn(command, args, {
         maxBuffer: 10 * 1024 * 1024,
-        shell: false
+        shell: true  // Enable shell parsing to handle multi-line strings with newlines
       });
 
       let stdout = '';
@@ -614,10 +614,8 @@ class MCPGitHubService {
       let commentBody = `[${c.severity}] ${c.message}`;
 
       if (c.suggestedCode) {
-        // Remove newlines from suggested code and use inline code instead of code block
-        // This avoids shell parsing issues with newlines and backticks
-        const singleLineCode = c.suggestedCode.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-        commentBody += ` Fix: ${singleLineCode}`;
+        // Use markdown code blocks - shell:true will handle the newlines correctly
+        commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${c.suggestedCode}\n\`\`\``;
       }
 
       // Get position from the diff
