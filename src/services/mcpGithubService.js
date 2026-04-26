@@ -1,4 +1,5 @@
 const { spawn } = require('child_process');
+const fs = require('fs');
 const logger = require('../utils/logger');
 const TimeoutManager = require('../utils/timeoutManager');
 const config = require('../config/yamlConfig');
@@ -52,11 +53,15 @@ class MCPGitHubService {
         if (value === null || value === undefined) {
           spawnArgs.push(`${key}=null`);
         } else if (typeof value === 'object') {
-          // Pass object/array as-is - mcporter will parse it
-          // Use format without quotes to match manual shell test
-          spawnArgs.push(`${key}:${JSON.stringify(value)}`);
+          if (key === 'comments' && Array.isArray(value)) {
+            // Use temporary file for comments to avoid shell parsing issues
+            const substitution = this.writeCommentsToTempFile(value);
+            spawnArgs.push(`${key}=${substitution}`);
+          } else {
+            spawnArgs.push(`'${key}:${JSON.stringify(value)}'`);
+          }
         } else if (typeof value === 'string') {
-          spawnArgs.push(`${key}=${value}`);
+          spawnArgs.push(`${key}='${value}'`);
         } else {
           spawnArgs.push(`${key}=${value}`);
         }
@@ -74,6 +79,16 @@ class MCPGitHubService {
 
       try {
         const parsed = JSON.parse(result.stdout);
+
+        // Clean up temp comments file if exists
+        const tempFileMatch = spawnArgs.find(arg => arg.includes('$(cat /tmp/comments-'));
+        if (tempFileMatch) {
+          const tempFile = tempFileMatch.match(/\$\(cat\s+(\/tmp\/comments-[^\)]+)\)/)?.[1];
+          if (tempFile && fs.existsSync(tempFile)) {
+            fs.unlinkSync(tempFile);
+            logger.debug(`[MCP:${this.instanceKey}] Cleaned up temp file: ${tempFile}`);
+          }
+        }
 
         if (parsed.error) {
           const errorMsg = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
@@ -107,7 +122,7 @@ class MCPGitHubService {
 
       const spawnProcess = spawn(command, args, {
         maxBuffer: 10 * 1024 * 1024,
-        shell: false
+        shell: true
       });
 
       let stdout = '';
@@ -211,6 +226,16 @@ class MCPGitHubService {
     }
 
     return chunks;
+  }
+
+  /**
+   * Write comments to temporary file and return the command substitution string
+   */
+  writeCommentsToTempFile(comments) {
+    const tmpFile = `/tmp/comments-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.json`;
+    fs.writeFileSync(tmpFile, JSON.stringify(comments), 'utf8');
+    logger.debug(`[MCP:${this.instanceKey}] Wrote comments to temp file: ${tmpFile}`);
+    return `$(cat ${tmpFile})`;
   }
 
   /**
@@ -666,7 +691,9 @@ class MCPGitHubService {
 
       // If there's suggested code, create additional comments for each chunk
       if (c.suggestedCode) {
-        const chunks = this.splitCodeIntoChunks(c.suggestedCode, 200);
+        // Compress code first: remove newlines and extra spaces
+        const compressedCode = c.suggestedCode.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+        const chunks = this.splitCodeIntoChunks(compressedCode, 200);
 
         for (let i = 0; i < chunks.length; i++) {
           // Use offset position for each chunk to avoid conflicts
