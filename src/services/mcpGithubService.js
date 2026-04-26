@@ -184,6 +184,36 @@ class MCPGitHubService {
   }
 
   /**
+   * Split code into chunks to avoid command line length issues
+   */
+  splitCodeIntoChunks(code, maxLength) {
+    if (!code) return [];
+
+    const words = code.split(' ');
+    const chunks = [];
+    let currentChunk = '';
+
+    for (const word of words) {
+      const testChunk = currentChunk ? `${currentChunk} ${word}` : word;
+
+      if (testChunk.length <= maxLength) {
+        currentChunk = testChunk;
+      } else {
+        if (currentChunk) {
+          chunks.push(currentChunk);
+        }
+        currentChunk = word;
+      }
+    }
+
+    if (currentChunk) {
+      chunks.push(currentChunk);
+    }
+
+    return chunks;
+  }
+
+  /**
    * Check if a file is a test file
    */
   isTestFile(filename) {
@@ -609,22 +639,10 @@ class MCPGitHubService {
       logger.warn(`[MCP:${this.instanceKey}/${repo}] Comments will be omitted without position mapping`);
     }
 
-    const comments = reviewResult.comments.map(c => {
-      // Severity is already normalized by validateAndSanitizeComments
-      let commentBody = `[${c.severity}] ${c.message}`;
+    const comments = [];
+    let skippedCount = 0;
 
-      if (c.suggestedCode) {
-        // Use inline code format (no newlines, no code blocks) - keeps it simple
-        // Remove newlines and compress suggested code to single line
-        const compressedCode = c.suggestedCode.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-        // Truncate if too long (GitHub has limits)
-        const maxLength = 500;
-        const truncatedCode = compressedCode.length > maxLength
-          ? compressedCode.substring(0, maxLength) + '...'
-          : compressedCode;
-        commentBody += `\n\nFix: \`${truncatedCode}\``;
-      }
-
+    for (const c of reviewResult.comments) {
       // Get position from the diff
       // For /reviews endpoint, GitHub requires 'position' (not line+side)
       const positionMap = positionMaps.get(c.file);
@@ -632,20 +650,40 @@ class MCPGitHubService {
 
       if (position === null || position === undefined) {
         logger.warn(`[MCP:${this.instanceKey}/${repo}] No position found for ${c.file}:${c.line}, skipping comment`);
-        return null;
+        skippedCount++;
+        continue;
       }
 
       logger.debug(`[MCP:${this.instanceKey}/${repo}] Comment ${c.file}:${c.line} -> position: ${position}`);
 
-      return {
+      // Create main comment with just severity + message (keep it short)
+      const mainComment = {
         path: c.file,
         position: position,
-        body: commentBody
+        body: `[${c.severity}] ${c.message}`
       };
-    }).filter(c => c !== null); // Filter out null comments (missing position)
+      comments.push(mainComment);
 
-    if (validComments.length > comments.length) {
-      logger.warn(`[MCP:${this.instanceKey}/${repo}] Filtered out ${validComments.length - comments.length} comment(s) due to missing position`);
+      // If there's suggested code, create additional comments for each chunk
+      if (c.suggestedCode) {
+        const chunks = this.splitCodeIntoChunks(c.suggestedCode, 200);
+
+        for (let i = 0; i < chunks.length; i++) {
+          // Use offset position for each chunk to avoid conflicts
+          const chunkPosition = position + i + 1;
+          const chunkComment = {
+            path: c.file,
+            position: chunkPosition,
+            body: `💡 Suggested fix (${i + 1}/${chunks.length}):\n\`\`\`\n${chunks[i]}\n\`\`\``
+          };
+          comments.push(chunkComment);
+          logger.debug(`[MCP:${this.instanceKey}/${repo}] Added code chunk ${i + 1}/${chunks.length} at position ${chunkPosition}`);
+        }
+      }
+    }
+
+    if (skippedCount > 0) {
+      logger.warn(`[MCP:${this.instanceKey}/${repo}] Skipped ${skippedCount} comment(s) due to missing position`);
     }
 
     // Count comments and log summary
