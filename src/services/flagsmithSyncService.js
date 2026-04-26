@@ -256,6 +256,30 @@ class FlagsmithSyncService {
       }
     }
 
+    // Remove _parentPath tracking fields before returning
+    return this._removeParentPaths(result);
+  }
+
+  /**
+   * Remove all _parentPath properties from an object recursively
+   * This prevents internal tracking fields from being written to config file
+   */
+  _removeParentPaths(obj) {
+    if (!obj || typeof obj !== 'object') {
+      return obj;
+    }
+
+    if (Array.isArray(obj)) {
+      return obj.map(item => this._removeParentPaths(item));
+    }
+
+    const result = {};
+    for (const [key, value] of Object.entries(obj)) {
+      // Skip _parentPath keys entirely
+      if (key !== '_parentPath') {
+        result[key] = this._removeParentPaths(value);
+      }
+    }
     return result;
   }
 
