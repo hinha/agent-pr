@@ -235,7 +235,10 @@ class MCPGitHubService {
 
   /**
    * Build position map for a file's diff
-   * Maps line numbers to positions for efficient lookup
+   * Maps line numbers to diff positions for validation
+   * Used to verify that a line number exists in the diff before commenting
+   * Note: GitHub API now uses 'line' + 'side' instead of 'position', but we still
+   * need to validate that the line exists in the diff
    */
   buildPositionMap(patch) {
     const positionMap = new Map();
@@ -592,11 +595,11 @@ class MCPGitHubService {
     // Update reviewResult with valid comments for further processing
     reviewResult.comments = validComments;
 
-    // Fetch PR files with patches to calculate positions
-    // GitHub API requires position (diff hunk position) not line (file line number)
+    // Fetch PR files with patches to verify line numbers exist in diff
+    // GitHub API now requires 'line' + 'side' instead of deprecated 'position'
     let positionMaps = new Map();
     try {
-      logger.info(`[MCP:${this.instanceKey}/${repo}] Fetching PR files with patches for position calculation`);
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Fetching PR files with patches for line validation`);
       const rawFiles = await this.callMCP('get_pull_request_files', {
         owner: this.owner,
         repo: repo,
@@ -613,8 +616,8 @@ class MCPGitHubService {
       }
       logger.info(`[MCP:${this.instanceKey}/${repo}] Built position maps for ${positionMaps.size} file(s)`);
     } catch (error) {
-      logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch PR files for position calculation: ${error.message}`);
-      logger.warn(`[MCP:${this.instanceKey}/${repo}] Comments will be omitted without position mapping`);
+      logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch PR files for line validation: ${error.message}`);
+      logger.warn(`[MCP:${this.instanceKey}/${repo}] Comments will be omitted without line validation`);
     }
 
     const comments = reviewResult.comments.map(c => {
@@ -625,7 +628,8 @@ class MCPGitHubService {
         commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${c.suggestedCode}\n\`\`\``;
       }
 
-      // Use position from the diff (required for PR review comments)
+      // Determine if this is an addition or context line (RIGHT side)
+      // by checking the position map
       const positionMap = positionMaps.get(c.file);
       const position = positionMap ? positionMap.get(c.line) : null;
 
@@ -634,80 +638,66 @@ class MCPGitHubService {
         return null;
       }
 
-      logger.debug(`[MCP:${this.instanceKey}/${repo}] Comment ${c.file}:${c.line} -> position ${position}`);
+      // Use 'line' + 'side' instead of deprecated 'position' field
+      // RIGHT = additions (green) or context lines (white)
+      // LEFT = deletions (red)
+      // Most review comments are on added or context lines, so use RIGHT
+      logger.debug(`[MCP:${this.instanceKey}/${repo}] Comment ${c.file}:${c.line} -> line ${c.line}, side: RIGHT`);
 
       return {
         path: c.file,
-        position: position,
+        line: c.line,
+        side: 'RIGHT', // For additions and context lines
         commit_id: pr.headSha,
         body: commentBody
       };
     }).filter(c => c !== null); // Filter out null comments (missing position)
 
     if (validComments.length > comments.length) {
-      logger.warn(`[MCP:${this.instanceKey}/${repo}] Filtered out ${validComments.length - comments.length} comment(s) due to missing position mapping`);
+      logger.warn(`[MCP:${this.instanceKey}/${repo}] Filtered out ${validComments.length - comments.length} comment(s) due to missing line in diff`);
     }
 
     // Count comments
     logger.info(`[MCP:${this.instanceKey}/${repo}] PR headSha: ${pr.headSha}, total comments to submit: ${comments.length}`);
 
-    // NEW APPROACH: Create review first, then add comments separately
-    // Step 1: Create the review without comments
+    // Create review with all comments in one batch (no batching)
     const reviewArgs = {
       owner: this.owner,
       repo: repo,
       pull_number: pr.number,
       body: reviewResult.summary,
       event: event,
-      commit_id: pr.headSha
+      commit_id: pr.headSha,
+      comments: comments // Send all comments at once, no batching
     };
 
-    logger.info(`[MCP:${this.instanceKey}/${repo}] Step 1: Creating review (without comments)`);
-    let createdReview;
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Creating review with ${comments.length} comments (no batching)`);
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Review args: owner=${this.owner}, repo=${repo}, pr=${pr.number}, event=${event}, comments=${comments.length}`);
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Sample comment: ${JSON.stringify(comments[0]).substring(0, 200)}...`);
+
+    let result;
     try {
-      createdReview = await this.callMCP('create_pull_request_review', reviewArgs);
-      logger.info(`[MCP:${this.instanceKey}/${repo}] ✓ Review created: ID=${createdReview.id}`);
+      result = await this.callMCP('create_pull_request_review', reviewArgs);
     } catch (error) {
       if (error.message.includes('Can not request changes on your own pull request')) {
         logger.warn(`[MCP:${this.instanceKey}/${repo}] Cannot request changes on own PR, falling back to COMMENT`);
         const fallbackArgs = { ...reviewArgs, event: 'COMMENT' };
-        createdReview = await this.callMCP('create_pull_request_review', fallbackArgs);
+        result = await this.callMCP('create_pull_request_review', fallbackArgs);
       } else {
         throw error;
       }
     }
 
-    // Step 2: Add comments as individual PR review comments
-    logger.info(`[MCP:${this.instanceKey}/${repo}] Step 2: Adding ${comments.length} comments as individual review comments`);
-
-    let commentsAdded = 0;
-    let commentsFailed = 0;
-
-    for (const commentData of comments) {
-      try {
-        const commentArgs = {
-          owner: this.owner,
-          repo: repo,
-          pull_number: pr.number,
-          commit_id: pr.headSha,
-          path: commentData.path,
-          position: commentData.position,
-          body: commentData.body
-        };
-
-        await this.callMCP('create_pull_request_comment', commentArgs);
-        commentsAdded++;
-        logger.info(`[MCP:${this.instanceKey}/${repo}] ✓ Comment added to ${commentData.path}:${commentData.position}`);
-      } catch (commentError) {
-        logger.error(`[MCP:${this.instanceKey}/${repo}] ✗ Failed to add comment to ${commentData.path}:${commentData.position}: ${commentError.message}`);
-        commentsFailed++;
-      }
+    if (!result || !result.id) {
+      throw new Error(`Review creation failed: ${JSON.stringify(result)}`);
     }
 
-    logger.info(`[MCP:${this.instanceKey}/${repo}] Comments summary: ${commentsAdded} added, ${commentsFailed} failed`);
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Review created: ID=${result.id}`);
+    logger.info(`[MCP:${this.instanceKey}/${repo}] MCP response: ${JSON.stringify(result).substring(0, 500)}...`);
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Response has ${result.body?.length || 0} char body, ${result.comments?.length || 0} comments in initial response`);
     logger.info(`[MCP:${this.instanceKey}/${repo}] ⚠️  Check GitHub PR: https://github.com/${this.owner}/${repo}/pull/${pr.number}/files`);
 
-    return createdReview;
+    return result;
   }
 
   /**
