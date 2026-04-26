@@ -107,7 +107,7 @@ class MCPGitHubService {
 
       const spawnProcess = spawn(command, args, {
         maxBuffer: 10 * 1024 * 1024,
-        shell: true  // Enable shell parsing to handle multi-line strings with newlines
+        shell: false
       });
 
       let stdout = '';
@@ -614,8 +614,15 @@ class MCPGitHubService {
       let commentBody = `[${c.severity}] ${c.message}`;
 
       if (c.suggestedCode) {
-        // Use markdown code blocks - shell:true will handle the newlines correctly
-        commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${c.suggestedCode}\n\`\`\``;
+        // Use inline code format (no newlines, no code blocks) - keeps it simple
+        // Remove newlines and compress suggested code to single line
+        const compressedCode = c.suggestedCode.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+        // Truncate if too long (GitHub has limits)
+        const maxLength = 500;
+        const truncatedCode = compressedCode.length > maxLength
+          ? compressedCode.substring(0, maxLength) + '...'
+          : compressedCode;
+        commentBody += `\n\nFix: \`${truncatedCode}\``;
       }
 
       // Get position from the diff
