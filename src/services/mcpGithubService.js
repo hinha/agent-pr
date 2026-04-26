@@ -623,51 +623,34 @@ class MCPGitHubService {
 
       const fileStatus = fileStatuses.get(c.file);
 
-      // For new files, use 'line' directly (GitHub API supports this for added files)
-      // For modified files, calculate 'position' from line number
-      let commentData;
-      if (fileStatus === 'added') {
-        // New file - use line directly
-        commentData = {
-          path: c.file,
-          line: c.line,
-          commit_id: pr.headSha,
-          body: commentBody
-        };
-        logger.info(`[MCP:${this.instanceKey}/${repo}] Comment for NEW file ${c.file}:${c.line} using 'line' field`);
-      } else {
-        // Modified file - calculate position
-        const positionMap = positionMaps.get(c.file);
-        const position = positionMap ? positionMap.get(c.line) : null;
+      // For new files (added), we can still use position since the entire file is in the diff
+      // For modified files, we must use position (not line)
+      const positionMap = positionMaps.get(c.file);
+      const position = positionMap ? positionMap.get(c.line) : null;
 
-        logger.info(`[MCP:${this.instanceKey}/${repo}] Comment for ${c.file}:${c.line} (status: ${fileStatus}) -> position: ${position}, hasMap: ${!!positionMap}, mapSize: ${positionMap?.size || 0}`);
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Comment for ${c.file}:${c.line} (status: ${fileStatus}) -> position: ${position}, hasMap: ${!!positionMap}, mapSize: ${positionMap?.size || 0}`);
 
-        if (position === null) {
-          logger.warn(`[MCP:${this.instanceKey}/${repo}] Could not calculate position for ${c.file}:${c.line}, comment will be omitted`);
-          return null; // Filter out comments without valid position
-        }
-
-        logger.debug(`[MCP:${this.instanceKey}/${repo}] Mapped line ${c.line} to position ${position} for ${c.file}`);
-
-        commentData = {
-          path: c.file,
-          position: position,
-          commit_id: pr.headSha,
-          body: commentBody
-        };
+      if (position === null) {
+        logger.warn(`[MCP:${this.instanceKey}/${repo}] Could not calculate position for ${c.file}:${c.line}, comment will be omitted`);
+        return null; // Filter out comments without valid position
       }
 
-      return commentData;
+      logger.debug(`[MCP:${this.instanceKey}/${repo}] Mapped line ${c.line} to position ${position} for ${c.file}`);
+
+      return {
+        path: c.file,
+        position: position, // Always use position (works for both new and modified files)
+        commit_id: pr.headSha,
+        body: commentBody
+      };
     }).filter(c => c !== null); // Filter out null comments (missing position)
 
     if (validComments.length > comments.length) {
       logger.warn(`[MCP:${this.instanceKey}/${repo}] Filtered out ${validComments.length - comments.length} comment(s) due to missing position mapping`);
     }
 
-    // Count comments using line vs position
-    const lineCount = comments.filter(c => 'line' in c).length;
-    const positionCount = comments.filter(c => 'position' in c).length;
-    logger.info(`[MCP:${this.instanceKey}/${repo}] PR headSha: ${pr.headSha}, comments: ${lineCount} using 'line' (new files), ${positionCount} using 'position' (modified files)`);
+    // Count comments
+    logger.info(`[MCP:${this.instanceKey}/${repo}] PR headSha: ${pr.headSha}, total comments to submit: ${comments.length}`);
 
     const BATCH_SIZE = 5;
     const commentBatches = [];
