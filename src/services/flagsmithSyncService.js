@@ -87,8 +87,11 @@ class FlagsmithSyncService {
           return;
         }
 
-        // Parse YAML from Flagsmith
-        const remoteConfig = yaml.load(configValue);
+        // Parse YAML from Flagsmith (using FAILSAFE_SCHEMA for security)
+        const remoteConfig = yaml.load(configValue, {
+          schema: yaml.FAILSAFE_SCHEMA,
+          filename: 'flagsmith-remote-config'
+        });
         if (!remoteConfig || typeof remoteConfig !== 'object') {
           throw new Error('Invalid YAML format received from Flagsmith');
         }
@@ -210,9 +213,12 @@ class FlagsmithSyncService {
    */
   async _mergeWithLocalConfig(remoteConfig) {
     try {
-      // Read current local config
+      // Read current local config (using FAILSAFE_SCHEMA for security)
       const localConfigRaw = fs.readFileSync(this.configPath, 'utf8');
-      const localConfig = yaml.load(localConfigRaw);
+      const localConfig = yaml.load(localConfigRaw, {
+        schema: yaml.FAILSAFE_SCHEMA,
+        filename: this.configPath
+      });
 
       // Deep merge, but preserve sensitive fields
       const merged = this._deepMerge(localConfig, remoteConfig, {
@@ -254,25 +260,40 @@ class FlagsmithSyncService {
   }
 
   /**
-   * Write config to file with backup
+   * Write config to file with atomic operation and backup
    */
   async _writeConfigToFile(config) {
-    try {
-      // Create backup of current config
-      if (fs.existsSync(this.configPath)) {
+    // Create backup of current config before making changes
+    if (fs.existsSync(this.configPath)) {
+      try {
         fs.copyFileSync(this.configPath, this.backupConfigPath);
+      } catch (backupErr) {
+        logger.warn(`Failed to create backup: ${backupErr.message}`);
       }
+    }
 
-      // Write new config
-      const yamlString = yaml.dump(config, {
-        indent: 2,
-        lineWidth: -1,
-        noRefs: true
-      });
-      fs.writeFileSync(this.configPath, yamlString, 'utf8');
+    // Use atomic write pattern (temp file + rename)
+    const yamlString = yaml.dump(config, {
+      indent: 2,
+      lineWidth: -1,
+      noRefs: true
+    });
+    const tempPath = this.configPath + '.tmp';
 
+    try {
+      fs.writeFileSync(tempPath, yamlString, 'utf8');
+      fs.renameSync(tempPath, this.configPath);
       logger.debug(`Config written to ${this.configPath}`);
     } catch (err) {
+      // Clean up temp file if it exists
+      if (fs.existsSync(tempPath)) {
+        try {
+          fs.unlinkSync(tempPath);
+        } catch (unlinkErr) {
+          logger.warn(`Failed to clean up temp file: ${unlinkErr.message}`);
+        }
+      }
+
       // Restore from backup if write failed
       if (fs.existsSync(this.backupConfigPath)) {
         try {
