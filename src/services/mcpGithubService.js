@@ -52,7 +52,9 @@ class MCPGitHubService {
         if (value === null || value === undefined) {
           spawnArgs.push(`${key}=null`);
         } else if (typeof value === 'object') {
-          spawnArgs.push(`${key}:${JSON.stringify(value)}`);
+          // Wrap JSON string in double quotes to prevent shell parsing issues
+          const jsonString = JSON.stringify(value);
+          spawnArgs.push(`${key}="${jsonString}"`);
         } else if (typeof value === 'string') {
           spawnArgs.push(`${key}=${value}`);
         } else {
