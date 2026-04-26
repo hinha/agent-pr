@@ -594,9 +594,7 @@ class MCPGitHubService {
 
     // Fetch PR files with patches to calculate positions
     // GitHub API requires position (diff hunk position) not line (file line number)
-    // However, for NEW files (status='added'), we can use 'line' directly
     let positionMaps = new Map();
-    let fileStatuses = new Map();
     try {
       logger.info(`[MCP:${this.instanceKey}/${repo}] Fetching PR files with patches for position calculation`);
       const rawFiles = await this.callMCP('get_pull_request_files', {
@@ -605,23 +603,18 @@ class MCPGitHubService {
         pull_number: pr.number
       });
 
-      // Build position maps for each file and track file statuses
+      // Build position maps for each file
       for (const file of rawFiles || []) {
-        if (file.filename) {
-          fileStatuses.set(file.filename, file.status);
-          if (file.patch) {
-            const positionMap = this.buildPositionMap(file.patch);
-            positionMaps.set(file.filename, positionMap);
-            logger.debug(`[MCP:${this.instanceKey}/${repo}] Built position map for ${file.filename} (${positionMap.size} lines), status: ${file.status}`);
-          } else {
-            logger.debug(`[MCP:${this.instanceKey}/${repo}] File ${file.filename} has no patch (status: ${file.status})`);
-          }
+        if (file.filename && file.patch) {
+          const positionMap = this.buildPositionMap(file.patch);
+          positionMaps.set(file.filename, positionMap);
+          logger.debug(`[MCP:${this.instanceKey}/${repo}] Built position map for ${file.filename} (${positionMap.size} lines)`);
         }
       }
-      logger.info(`[MCP:${this.instanceKey}/${repo}] Built position maps for ${positionMaps.size} file(s), tracked ${fileStatuses.size} file statuses`);
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Built position maps for ${positionMaps.size} file(s)`);
     } catch (error) {
       logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch PR files for position calculation: ${error.message}`);
-      logger.warn(`[MCP:${this.instanceKey}/${repo}] Will attempt to use line numbers as fallback (may not work for all cases)`);
+      logger.warn(`[MCP:${this.instanceKey}/${repo}] Comments will be omitted without position mapping`);
     }
 
     const comments = reviewResult.comments.map(c => {
@@ -632,15 +625,20 @@ class MCPGitHubService {
         commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${c.suggestedCode}\n\`\`\``;
       }
 
-      const fileStatus = fileStatuses.get(c.file);
+      // Use position from the diff (required for PR review comments)
+      const positionMap = positionMaps.get(c.file);
+      const position = positionMap ? positionMap.get(c.line) : null;
 
-      // Try using 'line' instead of 'position' for simplicity
-      // GitHub API supports 'line' for review comments (references line in the new version of the file)
-      logger.info(`[MCP:${this.instanceKey}/${repo}] Comment for ${c.file}:${c.line} (status: ${fileStatus})`);
+      if (position === null) {
+        logger.warn(`[MCP:${this.instanceKey}/${repo}] No position found for ${c.file}:${c.line}, skipping comment`);
+        return null;
+      }
+
+      logger.debug(`[MCP:${this.instanceKey}/${repo}] Comment ${c.file}:${c.line} -> position ${position}`);
 
       return {
         path: c.file,
-        line: c.line, // Use line number directly (references line in the new file version)
+        position: position,
         commit_id: pr.headSha,
         body: commentBody
       };
@@ -727,7 +725,29 @@ class MCPGitHubService {
 
       logger.info(`[MCP:${this.instanceKey}/${repo}] Batch ${batchNumber} created: ID=${result.id}`);
       logger.info(`[MCP:${this.instanceKey}/${repo}] MCP response: ${JSON.stringify(result).substring(0, 500)}...`);
-      logger.info(`[MCP:${this.instanceKey}/${repo}] Response has ${result.body?.length || 0} char body, ${result.comments?.length || 0} comments`);
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Response has ${result.body?.length || 0} char body, ${result.comments?.length || 0} comments in initial response`);
+
+      // Verify if comments were actually created by fetching the review details
+      try {
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for comments to be created
+        const reviewDetails = await this.callMCP('get_pull_request_review', {
+          owner: this.owner,
+          repo: repo,
+          pull_number: pr.number,
+          review_id: result.id
+        });
+        logger.info(`[MCP:${this.instanceKey}/${repo}] Fetched review details: ${reviewDetails.comments?.length || 0} comments found`);
+        if (reviewDetails.comments && reviewDetails.comments.length > 0) {
+          logger.info(`[MCP:${this.instanceKey}/${repo}] Comments successfully created!`);
+          reviewDetails.comments.forEach((comment, idx) => {
+            logger.info(`[MCP:${this.instanceKey}/${repo}] Comment ${idx + 1}: path=${comment.path}, position=${comment.position}, line=${comment.line}, body_length=${comment.body?.length || 0}`);
+          });
+        } else {
+          logger.warn(`[MCP:${this.instanceKey}/${repo}] No comments found in review after creation. This may indicate an API issue.`);
+        }
+      } catch (verifyError) {
+        logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to verify review comments: ${verifyError.message}`);
+      }
 
       if (batchNumber === 1) {
         firstReviewResult = result;
