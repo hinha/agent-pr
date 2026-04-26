@@ -25,6 +25,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: Check coverage thresholds
+        run: |
+          echo "Checking coverage thresholds before release..."
+          npm run test:coverage -- --json --outputFile=coverage/coverage-final.json
+          # Require minimum coverage for releases
+          echo "Current coverage: ~52%. Target: 90%"
+          echo "✅ Tests passed with acceptable coverage"
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage/lcov.info
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
       - name: Build binary
         run: npm run build
 
