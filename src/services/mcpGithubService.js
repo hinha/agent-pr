@@ -265,18 +265,21 @@ class MCPGitHubService {
       for (const line of lines) {
         if (line.startsWith('+') && !line.startsWith('++')) {
           positionMap.set(currentLine, currentPosition);
+          logger.debug(`[buildPositionMap] Mapping new line ${currentLine} -> position ${currentPosition} (added)`);
           currentLine++;
           currentPosition++;
         } else if (line.startsWith('-') && !line.startsWith('--')) {
           currentPosition++;
         } else if (line.startsWith(' ')) {
           positionMap.set(currentLine, currentPosition);
+          logger.debug(`[buildPositionMap] Mapping new line ${currentLine} -> position ${currentPosition} (context)`);
           currentLine++;
           currentPosition++;
         }
       }
     }
 
+    logger.debug(`[buildPositionMap] Built map with ${positionMap.size} entries`);
     return positionMap;
   }
 
@@ -580,7 +583,9 @@ class MCPGitHubService {
 
     // Fetch PR files with patches to calculate positions
     // GitHub API requires position (diff hunk position) not line (file line number)
+    // However, for NEW files (status='added'), we can use 'line' directly
     let positionMaps = new Map();
+    let fileStatuses = new Map();
     try {
       logger.info(`[MCP:${this.instanceKey}/${repo}] Fetching PR files with patches for position calculation`);
       const rawFiles = await this.callMCP('get_pull_request_files', {
@@ -589,15 +594,20 @@ class MCPGitHubService {
         pull_number: pr.number
       });
 
-      // Build position maps for each file
+      // Build position maps for each file and track file statuses
       for (const file of rawFiles || []) {
-        if (file.filename && file.patch) {
-          const positionMap = this.buildPositionMap(file.patch);
-          positionMaps.set(file.filename, positionMap);
-          logger.debug(`[MCP:${this.instanceKey}/${repo}] Built position map for ${file.filename} (${positionMap.size} lines)`);
+        if (file.filename) {
+          fileStatuses.set(file.filename, file.status);
+          if (file.patch) {
+            const positionMap = this.buildPositionMap(file.patch);
+            positionMaps.set(file.filename, positionMap);
+            logger.debug(`[MCP:${this.instanceKey}/${repo}] Built position map for ${file.filename} (${positionMap.size} lines), status: ${file.status}`);
+          } else {
+            logger.debug(`[MCP:${this.instanceKey}/${repo}] File ${file.filename} has no patch (status: ${file.status})`);
+          }
         }
       }
-      logger.info(`[MCP:${this.instanceKey}/${repo}] Built position maps for ${positionMaps.size} file(s)`);
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Built position maps for ${positionMaps.size} file(s), tracked ${fileStatuses.size} file statuses`);
     } catch (error) {
       logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch PR files for position calculation: ${error.message}`);
       logger.warn(`[MCP:${this.instanceKey}/${repo}] Will attempt to use line numbers as fallback (may not work for all cases)`);
@@ -611,30 +621,53 @@ class MCPGitHubService {
         commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${c.suggestedCode}\n\`\`\``;
       }
 
-      // Calculate position from line number using the file's position map
-      const positionMap = positionMaps.get(c.file);
-      const position = positionMap ? positionMap.get(c.line) : null;
+      const fileStatus = fileStatuses.get(c.file);
 
-      if (position === null) {
-        logger.warn(`[MCP:${this.instanceKey}/${repo}] Could not calculate position for ${c.file}:${c.line}, comment will be omitted`);
-        return null; // Filter out comments without valid position
+      // For new files, use 'line' directly (GitHub API supports this for added files)
+      // For modified files, calculate 'position' from line number
+      let commentData;
+      if (fileStatus === 'added') {
+        // New file - use line directly
+        commentData = {
+          path: c.file,
+          line: c.line,
+          commit_id: pr.headSha,
+          body: commentBody
+        };
+        logger.info(`[MCP:${this.instanceKey}/${repo}] Comment for NEW file ${c.file}:${c.line} using 'line' field`);
+      } else {
+        // Modified file - calculate position
+        const positionMap = positionMaps.get(c.file);
+        const position = positionMap ? positionMap.get(c.line) : null;
+
+        logger.info(`[MCP:${this.instanceKey}/${repo}] Comment for ${c.file}:${c.line} (status: ${fileStatus}) -> position: ${position}, hasMap: ${!!positionMap}, mapSize: ${positionMap?.size || 0}`);
+
+        if (position === null) {
+          logger.warn(`[MCP:${this.instanceKey}/${repo}] Could not calculate position for ${c.file}:${c.line}, comment will be omitted`);
+          return null; // Filter out comments without valid position
+        }
+
+        logger.debug(`[MCP:${this.instanceKey}/${repo}] Mapped line ${c.line} to position ${position} for ${c.file}`);
+
+        commentData = {
+          path: c.file,
+          position: position,
+          commit_id: pr.headSha,
+          body: commentBody
+        };
       }
 
-      logger.debug(`[MCP:${this.instanceKey}/${repo}] Mapped line ${c.line} to position ${position} for ${c.file}`);
-
-      return {
-        path: c.file,
-        position: position, // Use position instead of line
-        commit_id: pr.headSha,
-        body: commentBody
-      };
+      return commentData;
     }).filter(c => c !== null); // Filter out null comments (missing position)
 
     if (validComments.length > comments.length) {
       logger.warn(`[MCP:${this.instanceKey}/${repo}] Filtered out ${validComments.length - comments.length} comment(s) due to missing position mapping`);
     }
 
-    logger.info(`[MCP:${this.instanceKey}/${repo}] PR headSha: ${pr.headSha}, comments use position instead of line`);
+    // Count comments using line vs position
+    const lineCount = comments.filter(c => 'line' in c).length;
+    const positionCount = comments.filter(c => 'position' in c).length;
+    logger.info(`[MCP:${this.instanceKey}/${repo}] PR headSha: ${pr.headSha}, comments: ${lineCount} using 'line' (new files), ${positionCount} using 'position' (modified files)`);
 
     const BATCH_SIZE = 5;
     const commentBatches = [];
