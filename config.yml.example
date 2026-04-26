@@ -9,6 +9,13 @@ app:
   # Set to 0 to disable this feature
   outdated_review_check_minutes: 10
 
+  # Flagsmith remote configuration
+  flagsmith:
+    enabled: true
+    environment_id: your-flagsmith-environment-id
+    identity: your-unique-identity-for-flagsmith
+    sync_interval_minutes: 5  # Sync every 5 minutes
+
   # Optional: Snooze outdated review notifications during quiet hours
   snooze_time:
     enabled: true        # Set to false to disable snooze

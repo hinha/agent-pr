@@ -10,9 +10,14 @@
   "scripts": {
     "start": "node --expose-gc --max-old-space-size=128 index.js",
     "dev": "nodemon --exec 'node --expose-gc --max-old-space-size=128' index.js",
-    "build": "pkg . --targets latest-linux-x64 --output dist/agent-pr-monitor --no-bytecode --public-packages \"*\" --public"
+    "build": "pkg . --targets latest-linux-x64 --output dist/agent-pr-monitor --no-bytecode --public-packages \"*\" --public",
+    "example:flagsmith-basic": "node examples/flagsmith-remote-config/basic-init.js",
+    "example:flagsmith-flags": "node examples/flagsmith-remote-config/feature-flags.js",
+    "example:flagsmith-config": "node examples/flagsmith-remote-config/remote-config.js",
+    "example:flagsmith-traits": "node examples/flagsmith-remote-config/with-traits.js"
   },
   "dependencies": {
+    "@flagsmith/flagsmith": "^12.0.1",
     "dotenv": "^16.4.5",
     "js-yaml": "^4.1.0",
     "lodash": "^4.17.21",

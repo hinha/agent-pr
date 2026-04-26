@@ -1,4 +1,5 @@
 const { spawn } = require('child_process');
+const fs = require('fs');
 const logger = require('../utils/logger');
 const TimeoutManager = require('../utils/timeoutManager');
 const config = require('../config/yamlConfig');
@@ -52,18 +53,47 @@ class MCPGitHubService {
         if (value === null || value === undefined) {
           spawnArgs.push(`${key}=null`);
         } else if (typeof value === 'object') {
-          spawnArgs.push(`${key}:${JSON.stringify(value)}`);
+          if (key === 'comments' && Array.isArray(value)) {
+            // Use temporary file for comments to avoid shell parsing issues
+            const substitution = this.writeCommentsToTempFile(value);
+            spawnArgs.push(`${key}=${substitution}`);
+          } else {
+            spawnArgs.push(`'${key}:${JSON.stringify(value)}'`);
+          }
         } else if (typeof value === 'string') {
-          spawnArgs.push(`${key}=${value}`);
+          // Only quote if value contains spaces or special chars
+          if (value.includes(' ') || value.includes('"') || value.includes("'")) {
+            spawnArgs.push(`${key}='${value}'`);
+          } else {
+            spawnArgs.push(`${key}=${value}`);
+          }
         } else {
           spawnArgs.push(`${key}=${value}`);
         }
       }
 
+      logger.info(`\n\nSPAWN ${spawnArgs} \n\n`);
+      logger.debug(`[MCP:${this.instanceKey}] mcporter command: ${this.mcpBaseCmd} ${spawnArgs.slice(0, 5).join(' ')}... (${spawnArgs.length} args total)`);
+
       const result = await this.spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
+
+      // Log stderr for debugging
+      if (result.stderr && result.stderr.length > 0) {
+        logger.info(`[MCP:${this.instanceKey}] stderr: ${result.stderr.substring(0, 500)}`);
+      }
 
       try {
         const parsed = JSON.parse(result.stdout);
+
+        // Clean up temp comments file if exists
+        const tempFileMatch = spawnArgs.find(arg => arg.includes('$(cat /tmp/comments-'));
+        if (tempFileMatch) {
+          const tempFile = tempFileMatch.match(/\$\(cat\s+(\/tmp\/comments-[^\)]+)\)/)?.[1];
+          if (tempFile && fs.existsSync(tempFile)) {
+            fs.unlinkSync(tempFile);
+            logger.debug(`[MCP:${this.instanceKey}] Cleaned up temp file: ${tempFile}`);
+          }
+        }
 
         if (parsed.error) {
           const errorMsg = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
@@ -97,7 +127,7 @@ class MCPGitHubService {
 
       const spawnProcess = spawn(command, args, {
         maxBuffer: 10 * 1024 * 1024,
-        shell: false
+        shell: true
       });
 
       let stdout = '';
@@ -174,6 +204,87 @@ class MCPGitHubService {
   }
 
   /**
+   * Split code into chunks to avoid command line length issues
+   */
+  splitCodeIntoChunks(code, maxLength) {
+    if (!code) return [];
+
+    const words = code.split(' ');
+    const chunks = [];
+    let currentChunk = '';
+
+    for (const word of words) {
+      const testChunk = currentChunk ? `${currentChunk} ${word}` : word;
+
+      if (testChunk.length <= maxLength) {
+        currentChunk = testChunk;
+      } else {
+        if (currentChunk) {
+          chunks.push(currentChunk);
+        }
+        currentChunk = word;
+      }
+    }
+
+    if (currentChunk) {
+      chunks.push(currentChunk);
+    }
+
+    return chunks;
+  }
+
+  /**
+   * Write comments to temporary file and return the command substitution string
+   */
+  writeCommentsToTempFile(comments) {
+    const tmpFile = `/tmp/comments-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.json`;
+    fs.writeFileSync(tmpFile, JSON.stringify(comments), 'utf8');
+    logger.debug(`[MCP:${this.instanceKey}] Wrote comments to temp file: ${tmpFile}`);
+    // Use double quotes around command substitution to keep JSON as single argument
+    return `"$(cat ${tmpFile})"`;
+  }
+
+  /**
+   * Detect programming language from file extension for syntax highlighting
+   */
+  detectLanguage(filename) {
+    const extMap = {
+      '.js': 'javascript',
+      '.ts': 'typescript',
+      '.jsx': 'javascript',
+      '.tsx': 'typescript',
+      '.go': 'go',
+      '.py': 'python',
+      '.rb': 'ruby',
+      '.php': 'php',
+      '.java': 'java',
+      '.kt': 'kotlin',
+      '.swift': 'swift',
+      '.cpp': 'cpp',
+      '.c': 'c',
+      '.cs': 'csharp',
+      '.scala': 'scala',
+      '.rs': 'rust',
+      '.sh': 'bash',
+      '.yaml': 'yaml',
+      '.yml': 'yaml',
+      '.json': 'json',
+      '.xml': 'xml',
+      '.html': 'html',
+      '.css': 'css',
+      '.scss': 'scss',
+      '.sass': 'sass',
+      '.less': 'less',
+      '.md': 'markdown',
+      '.sql': 'sql',
+      '.dockerfile': 'dockerfile'
+    };
+
+    const ext = filename.toLowerCase().substring(filename.lastIndexOf('.'));
+    return extMap[ext] || '';
+  }
+
+  /**
    * Check if a file is a test file
    */
   isTestFile(filename) {
@@ -207,8 +318,73 @@ class MCPGitHubService {
       additions: f.additions || 0,
       deletions: f.deletions || 0,
       changes: f.changes || 0,
-      status: f.status || 'modified'
+      status: f.status || 'modified',
+      patch: f.patch || '' // Preserve diff patch for position calculation
     }));
+  }
+
+  /**
+   * Build position map for a file's diff
+   * Maps line numbers to diff positions for validation
+   * Used to verify that a line number exists in the diff before commenting
+   * Note: GitHub API now uses 'line' + 'side' instead of 'position', but we still
+   * need to validate that the line exists in the diff
+   */
+  buildPositionMap(patch) {
+    const positionMap = new Map();
+
+    if (!patch) return positionMap;
+
+    // Parse diff hunks
+    const hunkRegex = /@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/g;
+    let match;
+    let currentPosition = 1;
+
+    while ((match = hunkRegex.exec(patch)) !== null) {
+      const oldStart = parseInt(match[1], 10);
+      const newStart = parseInt(match[3], 10);
+      const newCount = match[4] ? parseInt(match[4], 10) : 1;
+
+      logger.debug(`[buildPositionMap] Processing hunk: @@ -${oldStart},${match[2] || 0} +${newStart},${newCount} @@, current position: ${currentPosition}`);
+
+      const hunkEnd = match.index + match[0].length;
+      const nextHunkStart = patch.indexOf('@@', hunkEnd);
+
+      const hunkContent = nextHunkStart === -1
+        ? patch.substring(hunkEnd)
+        : patch.substring(hunkEnd, nextHunkStart);
+
+      const lines = hunkContent.split('\n').slice(1);
+      let currentLine = newStart;
+
+      for (const line of lines) {
+        if (line.startsWith('+') && !line.startsWith('++')) {
+          positionMap.set(currentLine, currentPosition);
+          if (currentLine <= 5 || currentLine === 91) {
+            logger.info(`[buildPositionMap] Mapping line ${currentLine} -> position ${currentPosition} (added): ${line.substring(0, 30)}`);
+          }
+          currentLine++;
+          currentPosition++;
+        } else if (line.startsWith('-') && !line.startsWith('--')) {
+          currentPosition++;
+        } else if (line.startsWith(' ')) {
+          positionMap.set(currentLine, currentPosition);
+          if (currentLine <= 5) {
+            logger.info(`[buildPositionMap] Mapping line ${currentLine} -> position ${currentPosition} (context)`);
+          }
+          currentLine++;
+          currentPosition++;
+        }
+      }
+
+      logger.debug(`[buildPositionMap] Finished hunk, advanced to line ${currentLine}, position ${currentPosition}`);
+    }
+
+    // Log some sample mappings for debugging
+    logger.info(`[buildPositionMap] Built map with ${positionMap.size} entries`);
+    logger.info(`[buildPositionMap] Sample mappings: line 1 -> ${positionMap.get(1)}, line 91 -> ${positionMap.get(91)}, line 215 -> ${positionMap.get(215)}, line 385 -> ${positionMap.get(385)}`);
+
+    return positionMap;
   }
 
   /**
@@ -509,104 +685,115 @@ class MCPGitHubService {
     // Update reviewResult with valid comments for further processing
     reviewResult.comments = validComments;
 
-    const comments = reviewResult.comments.map(c => {
-      // Severity is already normalized by validateAndSanitizeComments
-      let commentBody = `[${c.severity}] ${c.message}`;
-
-      if (c.suggestedCode) {
-        commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${c.suggestedCode}\n\`\`\``;
-      }
-
-      return {
-        path: c.file,
-        line: c.line,
-        commit_id: pr.headSha,
-        body: commentBody
-      };
-    });
-
-    const BATCH_SIZE = 5;
-    const commentBatches = [];
-
-    for (let i = 0; i < comments.length; i += BATCH_SIZE) {
-      commentBatches.push(comments.slice(i, i + BATCH_SIZE));
-    }
-
-    logger.info(`[MCP:${this.instanceKey}/${repo}] Processing ${comments.length} comments in ${commentBatches.length} batches`);
-
-    let firstReviewResult = null;
-
-    for (const batch of commentBatches) {
-      const batchNumber = commentBatches.indexOf(batch) + 1;
-
-      const reviewArgs = {
+    // Fetch PR files with patches to calculate positions
+    // GitHub API requires position for review comments in /reviews endpoint
+    let positionMaps = new Map();
+    try {
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Fetching PR files with patches for position calculation`);
+      const rawFiles = await this.callMCP('get_pull_request_files', {
         owner: this.owner,
         repo: repo,
-        pull_number: pr.number,
-        body: batchNumber === 1 ? reviewResult.summary : `Additional comments (batch ${batchNumber}/${commentBatches.length})`,
-        event: batchNumber === 1 ? event : 'COMMENT',
-        commit_id: pr.headSha
-      };
+        pull_number: pr.number
+      });
 
-      if (batch.length > 0) {
-        reviewArgs.comments = batch;
-      }
-
-      logger.info(`[MCP:${this.instanceKey}/${repo}] Sending batch ${batchNumber}/${commentBatches.length}`);
-
-      let result;
-      try {
-        result = await this.callMCP('create_pull_request_review', reviewArgs);
-      } catch (error) {
-        if (error.message.includes('Can not request changes on your own pull request')) {
-          logger.warn(`[MCP:${this.instanceKey}/${repo}] Cannot request changes on own PR, falling back to COMMENT`);
-          try {
-            const telegramService = require('./telegramService');
-            await telegramService.sendWarning(this.owner, repo, pr.number, `Cannot request changes on your own PR. Review posted as COMMENT instead.`);
-          } catch (telegramErr) {
-            logger.error(`Failed to send Telegram warning: ${telegramErr.message}`);
-          }
-
-          const fallbackArgs = { ...reviewArgs, event: 'COMMENT' };
-          if (fallbackArgs.body) {
-            try {
-              const openclawAgentService = require('./openclawAgentService');
-              fallbackArgs.body = await openclawAgentService.formatReviewBody({
-                originalBody: fallbackArgs.body,
-                prNumber: pr.number,
-                originalEvent: 'REQUEST_CHANGES',
-                newEvent: 'COMMENT',
-                reason: 'GitHub does not allow requesting changes on your own pull request',
-                owner: this.owner,
-                repo: repo
-              });
-            } catch (formatErr) {
-              logger.error(`Failed to format review body: ${formatErr.message}`);
-              fallbackArgs.body = `${fallbackArgs.body}\n\n---\n\n> **⚠️ AUTO-FIXED:** This review was posted as \`COMMENT\` instead of \`REQUEST_CHANGES\`.`;
-            }
-          }
-          result = await this.callMCP('create_pull_request_review', fallbackArgs);
-        } else {
-          throw error;
+      // Build position maps for each file
+      for (const file of rawFiles || []) {
+        if (file.filename && file.patch) {
+          const positionMap = this.buildPositionMap(file.patch);
+          positionMaps.set(file.filename, positionMap);
+          logger.debug(`[MCP:${this.instanceKey}/${repo}] Built position map for ${file.filename} (${positionMap.size} lines)`);
         }
       }
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Built position maps for ${positionMaps.size} file(s)`);
+    } catch (error) {
+      logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch PR files for position calculation: ${error.message}`);
+      logger.warn(`[MCP:${this.instanceKey}/${repo}] Comments will be omitted without position mapping`);
+    }
 
-      if (!result || !result.id) {
-        throw new Error(`Batch ${batchNumber} failed: ${JSON.stringify(result)}`);
+    const comments = [];
+    let skippedCount = 0;
+
+    for (const c of reviewResult.comments) {
+      // Get position from the diff
+      // For /reviews endpoint, GitHub requires 'position' (not line+side)
+      const positionMap = positionMaps.get(c.file);
+      const position = positionMap ? positionMap.get(c.line) : null;
+
+      if (position === null || position === undefined) {
+        logger.warn(`[MCP:${this.instanceKey}/${repo}] No position found for ${c.file}:${c.line}, skipping comment`);
+        skippedCount++;
+        continue;
       }
 
-      logger.info(`[MCP:${this.instanceKey}/${repo}] Batch ${batchNumber} created: ID=${result.id}`);
+      logger.debug(`[MCP:${this.instanceKey}/${repo}] Comment ${c.file}:${c.line} -> position: ${position}`);
 
-      if (batchNumber === 1) {
-        firstReviewResult = result;
+      // Build comment body
+      let commentBody = `[${c.severity}] ${c.message}`;
+
+      // If there's suggested code, append it with markdown code block
+      if (c.suggestedCode) {
+        const language = this.detectLanguage(c.file);
+        commentBody += `\n\nFix:\n\`\`\`${language}\n${c.suggestedCode}\n\`\`\``;
       }
 
-      if (batchNumber < commentBatches.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      const comment = {
+        path: c.file,
+        position: position,
+        body: commentBody
+      };
+      comments.push(comment);
+      logger.debug(`[MCP:${this.instanceKey}/${repo}] Added comment for ${c.file}:${c.line}`);
+    }
+
+    if (skippedCount > 0) {
+      logger.warn(`[MCP:${this.instanceKey}/${repo}] Skipped ${skippedCount} comment(s) due to missing position`);
+    }
+
+    // Count comments and log summary
+    logger.info(`[MCP:${this.instanceKey}/${repo}] PR headSha: ${pr.headSha}, total comments to submit: ${comments.length}`);
+    if (comments.length > 0) {
+      const commentSummary = comments.map(c => `${c.path}:${c.position}`).join(', ');
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Comments: ${commentSummary}`);
+    }
+
+    // Create review with all comments in one batch (no batching)
+    const reviewArgs = {
+      owner: this.owner,
+      repo: repo,
+      pull_number: pr.number,
+      body: reviewResult.summary,
+      event: event,
+      commit_id: pr.headSha,
+      comments: comments // Send all comments at once, no batching
+    };
+
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Creating review with ${comments.length} comment(s)`);
+    if (comments.length > 0) {
+      logger.info(`[MCP:${this.instanceKey}/${repo}] First comment JSON: ${JSON.stringify(comments[0])}`);
+    }
+
+    let result;
+    try {
+      result = await this.callMCP('create_pull_request_review', reviewArgs);
+    } catch (error) {
+      if (error.message.includes('Can not request changes on your own pull request')) {
+        logger.warn(`[MCP:${this.instanceKey}/${repo}] Cannot request changes on own PR, falling back to COMMENT`);
+        const fallbackArgs = { ...reviewArgs, event: 'COMMENT' };
+        result = await this.callMCP('create_pull_request_review', fallbackArgs);
+      } else {
+        throw error;
       }
     }
 
-    return firstReviewResult;
+    if (!result || !result.id) {
+      throw new Error(`Review creation failed: ${JSON.stringify(result)}`);
+    }
+
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Review created: ID=${result.id}`);
+    logger.info(`[MCP:${this.instanceKey}/${repo}] ✅ Created ${comments.length} line comment(s) - check GitHub PR Files tab`);
+    logger.info(`[MCP:${this.instanceKey}/${repo}] ⚠️  Check GitHub PR: https://github.com/${this.owner}/${repo}/pull/${pr.number}/files`);
+
+    return result;
   }
 
   /**

@@ -401,10 +401,17 @@ class OpenClawAgentService {
         result.agentRawOutput = agentOutput.substring(0, 1000);
       }
 
+      // Transform comments to match MCP GitHub service expectations
+      // MCP expects 'line' field, but agent returns 'start_line' and 'end_line'
+      const transformedComments = (result.comments || []).map(comment => ({
+        ...comment,
+        line: comment.start_line || comment.line
+      }));
+
       // Ensure result has expected structure
       return {
         summary: result.summary || `Review ${level} untuk PR #${pr.number}`,
-        comments: result.comments || [],
+        comments: transformedComments,
         level: level,
         timestamp: new Date().toISOString(),
         agentCalledToolDirectly: result.agentCalledToolDirectly || false,

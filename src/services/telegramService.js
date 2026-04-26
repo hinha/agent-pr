@@ -302,7 +302,8 @@ class TelegramService {
 
         try {
           const reviewUrl = ghResult?.html_url || pr.url;
-          await this.bot.sendMessage(this.chatId,
+          logger.info(`[${owner}/${repo}] Sending review complete notification to Telegram: chatId=${this.chatId}, threadId=${repoConfig.threadId}`);
+          const sentMsg = await this.bot.sendMessage(this.chatId,
             `✅ <b>Review Complete!</b>\n\n` +
             `📁 <b>Repo:</b> ${this.escapeHtml(`${owner}/${repo}`)}\n` +
             `📝 <b>Level:</b> ${this.escapeHtml(level.toUpperCase())}\n` +
@@ -310,8 +311,10 @@ class TelegramService {
             `🔗 ${this.escapeHtml(reviewUrl)}`,
             { message_thread_id: repoConfig.threadId, parse_mode: 'HTML' }
           );
+          logger.info(`[${owner}/${repo}] Review complete notification sent: messageId=${sentMsg.message_id}`);
         } catch (msgErr) {
-          logger.error(`Failed to send confirmation: ${msgErr.message}`);
+          logger.error(`[${owner}/${repo}] Failed to send confirmation: ${msgErr.message}`);
+          logger.error(`[${owner}/${repo}] Error stack: ${msgErr.stack}`);
         }
       } else if (action === 'review_cancel') {
         await this.bot.answerCallbackQuery(query.id, { text: '❌ Review cancelled' });
