@@ -630,7 +630,6 @@ class MCPGitHubService {
       return {
         path: c.file,
         position: position,
-        commit_id: pr.headSha,
         body: commentBody
       };
     }).filter(c => c !== null); // Filter out null comments (missing position)
@@ -658,7 +657,9 @@ class MCPGitHubService {
     };
 
     logger.info(`[MCP:${this.instanceKey}/${repo}] Creating review with ${comments.length} comment(s)`);
-    logger.info(`[MCP:${this.instanceKey}/${repo}] Review args: owner=${this.owner}, repo=${repo}, pr=${pr.number}, event=${event}, comments=${comments.length}`);
+    if (comments.length > 0) {
+      logger.info(`[MCP:${this.instanceKey}/${repo}] First comment JSON: ${JSON.stringify(comments[0])}`);
+    }
 
     let result;
     try {
