@@ -726,28 +726,7 @@ class MCPGitHubService {
       logger.info(`[MCP:${this.instanceKey}/${repo}] Batch ${batchNumber} created: ID=${result.id}`);
       logger.info(`[MCP:${this.instanceKey}/${repo}] MCP response: ${JSON.stringify(result).substring(0, 500)}...`);
       logger.info(`[MCP:${this.instanceKey}/${repo}] Response has ${result.body?.length || 0} char body, ${result.comments?.length || 0} comments in initial response`);
-
-      // Verify if comments were actually created by fetching the review details
-      try {
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for comments to be created
-        const reviewDetails = await this.callMCP('get_pull_request_review', {
-          owner: this.owner,
-          repo: repo,
-          pull_number: pr.number,
-          review_id: result.id
-        });
-        logger.info(`[MCP:${this.instanceKey}/${repo}] Fetched review details: ${reviewDetails.comments?.length || 0} comments found`);
-        if (reviewDetails.comments && reviewDetails.comments.length > 0) {
-          logger.info(`[MCP:${this.instanceKey}/${repo}] Comments successfully created!`);
-          reviewDetails.comments.forEach((comment, idx) => {
-            logger.info(`[MCP:${this.instanceKey}/${repo}] Comment ${idx + 1}: path=${comment.path}, position=${comment.position}, line=${comment.line}, body_length=${comment.body?.length || 0}`);
-          });
-        } else {
-          logger.warn(`[MCP:${this.instanceKey}/${repo}] No comments found in review after creation. This may indicate an API issue.`);
-        }
-      } catch (verifyError) {
-        logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to verify review comments: ${verifyError.message}`);
-      }
+      logger.info(`[MCP:${this.instanceKey}/${repo}] ⚠️  Check GitHub PR to verify line comments: https://github.com/${this.owner}/${repo}/pull/${pr.number}/files`);
 
       if (batchNumber === 1) {
         firstReviewResult = result;
