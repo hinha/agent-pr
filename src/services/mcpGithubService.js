@@ -614,13 +614,10 @@ class MCPGitHubService {
       let commentBody = `[${c.severity}] ${c.message}`;
 
       if (c.suggestedCode) {
-        // Replace newlines with literal \n and escape backticks
-        // This preserves formatting in GitHub UI while avoiding shell parsing issues
-        const escapedCode = c.suggestedCode
-          .replace(/\\/g, '\\\\')  // Escape backslashes
-          .replace(/"/g, '\\"')    // Escape quotes
-          .replace(/\n/g, '\\n');  // Escape newlines
-        commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${escapedCode}\n\`\`\``;
+        // Remove newlines from suggested code and use inline code instead of code block
+        // This avoids shell parsing issues with newlines and backticks
+        const singleLineCode = c.suggestedCode.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+        commentBody += ` Fix: ${singleLineCode}`;
       }
 
       // Get position from the diff
