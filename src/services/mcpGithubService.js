@@ -60,6 +60,9 @@ class MCPGitHubService {
         }
       }
 
+      // Log the exact command being sent (with sensitive data redacted)
+      logger.info(`[MCP:${this.instanceKey}] mcporter command: ${this.mcpBaseCmd} ${spawnArgs.slice(0, 5).join(' ')}... (${spawnArgs.length} args total)`);
+
       const result = await this.spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
 
       try {
@@ -525,6 +528,8 @@ class MCPGitHubService {
       };
     });
 
+    logger.info(`[MCP:${this.instanceKey}/${repo}] PR headSha: ${pr.headSha}, comments use commit_id: ${pr.headSha}`);
+
     const BATCH_SIZE = 5;
     const commentBatches = [];
 
@@ -550,9 +555,11 @@ class MCPGitHubService {
 
       if (batch.length > 0) {
         reviewArgs.comments = batch;
+        logger.info(`[MCP:${this.instanceKey}/${repo}] Adding ${batch.length} comments to review: ${JSON.stringify(batch).substring(0, 500)}...`);
       }
 
       logger.info(`[MCP:${this.instanceKey}/${repo}] Sending batch ${batchNumber}/${commentBatches.length}`);
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Review args: owner=${this.owner}, repo=${repo}, pr=${pr.number}, event=${reviewArgs.event}, comments=${reviewArgs.comments?.length || 0}`);
 
       let result;
       try {
@@ -596,6 +603,8 @@ class MCPGitHubService {
       }
 
       logger.info(`[MCP:${this.instanceKey}/${repo}] Batch ${batchNumber} created: ID=${result.id}`);
+      logger.info(`[MCP:${this.instanceKey}/${repo}] MCP response: ${JSON.stringify(result).substring(0, 500)}...`);
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Response has ${result.body?.length || 0} char body, ${result.comments?.length || 0} comments`);
 
       if (batchNumber === 1) {
         firstReviewResult = result;
