@@ -63,7 +63,25 @@ class MCPGitHubService {
       // Log the exact command being sent (with sensitive data redacted)
       logger.info(`[MCP:${this.instanceKey}] mcporter command: ${this.mcpBaseCmd} ${spawnArgs.slice(0, 5).join(' ')}... (${spawnArgs.length} args total)`);
 
+      // Log full args for debugging (without sensitive data)
+      for (const arg of spawnArgs) {
+        if (arg.startsWith('comments=')) {
+          logger.info(`[MCP:${this.instanceKey}] Arg: ${arg.substring(0, 200)}...`);
+        } else if (arg.startsWith('commit_id=')) {
+          logger.info(`[MCP:${this.instanceKey}] Arg: ${arg}`);
+        } else if (arg.startsWith('body=')) {
+          logger.info(`[MCP:${this.instanceKey}] Arg: body=${arg.substring(0, 100)}...`);
+        } else {
+          logger.info(`[MCP:${this.instanceKey}] Arg: ${arg}`);
+        }
+      }
+
       const result = await this.spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
+
+      // Log stderr for debugging
+      if (result.stderr && result.stderr.length > 0) {
+        logger.info(`[MCP:${this.instanceKey}] stderr: ${result.stderr.substring(0, 500)}`);
+      }
 
       try {
         const parsed = JSON.parse(result.stdout);
@@ -210,8 +228,56 @@ class MCPGitHubService {
       additions: f.additions || 0,
       deletions: f.deletions || 0,
       changes: f.changes || 0,
-      status: f.status || 'modified'
+      status: f.status || 'modified',
+      patch: f.patch || '' // Preserve diff patch for position calculation
     }));
+  }
+
+  /**
+   * Build position map for a file's diff
+   * Maps line numbers to positions for efficient lookup
+   */
+  buildPositionMap(patch) {
+    const positionMap = new Map();
+
+    if (!patch) return positionMap;
+
+    // Parse diff hunks
+    const hunkRegex = /@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/g;
+    let match;
+    let currentPosition = 1;
+
+    while ((match = hunkRegex.exec(patch)) !== null) {
+      const oldStart = parseInt(match[1], 10);
+      const newStart = parseInt(match[3], 10);
+      const newCount = match[4] ? parseInt(match[4], 10) : 1;
+
+      const hunkEnd = match.index + match[0].length;
+      const nextHunkStart = patch.indexOf('@@', hunkEnd);
+
+      const hunkContent = nextHunkStart === -1
+        ? patch.substring(hunkEnd)
+        : patch.substring(hunkEnd, nextHunkStart);
+
+      const lines = hunkContent.split('\n').slice(1);
+      let currentLine = newStart;
+
+      for (const line of lines) {
+        if (line.startsWith('+') && !line.startsWith('++')) {
+          positionMap.set(currentLine, currentPosition);
+          currentLine++;
+          currentPosition++;
+        } else if (line.startsWith('-') && !line.startsWith('--')) {
+          currentPosition++;
+        } else if (line.startsWith(' ')) {
+          positionMap.set(currentLine, currentPosition);
+          currentLine++;
+          currentPosition++;
+        }
+      }
+    }
+
+    return positionMap;
   }
 
   /**
@@ -512,6 +578,31 @@ class MCPGitHubService {
     // Update reviewResult with valid comments for further processing
     reviewResult.comments = validComments;
 
+    // Fetch PR files with patches to calculate positions
+    // GitHub API requires position (diff hunk position) not line (file line number)
+    let positionMaps = new Map();
+    try {
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Fetching PR files with patches for position calculation`);
+      const rawFiles = await this.callMCP('get_pull_request_files', {
+        owner: this.owner,
+        repo: repo,
+        pull_number: pr.number
+      });
+
+      // Build position maps for each file
+      for (const file of rawFiles || []) {
+        if (file.filename && file.patch) {
+          const positionMap = this.buildPositionMap(file.patch);
+          positionMaps.set(file.filename, positionMap);
+          logger.debug(`[MCP:${this.instanceKey}/${repo}] Built position map for ${file.filename} (${positionMap.size} lines)`);
+        }
+      }
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Built position maps for ${positionMaps.size} file(s)`);
+    } catch (error) {
+      logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch PR files for position calculation: ${error.message}`);
+      logger.warn(`[MCP:${this.instanceKey}/${repo}] Will attempt to use line numbers as fallback (may not work for all cases)`);
+    }
+
     const comments = reviewResult.comments.map(c => {
       // Severity is already normalized by validateAndSanitizeComments
       let commentBody = `[${c.severity}] ${c.message}`;
@@ -520,15 +611,30 @@ class MCPGitHubService {
         commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${c.suggestedCode}\n\`\`\``;
       }
 
+      // Calculate position from line number using the file's position map
+      const positionMap = positionMaps.get(c.file);
+      const position = positionMap ? positionMap.get(c.line) : null;
+
+      if (position === null) {
+        logger.warn(`[MCP:${this.instanceKey}/${repo}] Could not calculate position for ${c.file}:${c.line}, comment will be omitted`);
+        return null; // Filter out comments without valid position
+      }
+
+      logger.debug(`[MCP:${this.instanceKey}/${repo}] Mapped line ${c.line} to position ${position} for ${c.file}`);
+
       return {
         path: c.file,
-        line: c.line,
+        position: position, // Use position instead of line
         commit_id: pr.headSha,
         body: commentBody
       };
-    });
+    }).filter(c => c !== null); // Filter out null comments (missing position)
 
-    logger.info(`[MCP:${this.instanceKey}/${repo}] PR headSha: ${pr.headSha}, comments use commit_id: ${pr.headSha}`);
+    if (validComments.length > comments.length) {
+      logger.warn(`[MCP:${this.instanceKey}/${repo}] Filtered out ${validComments.length - comments.length} comment(s) due to missing position mapping`);
+    }
+
+    logger.info(`[MCP:${this.instanceKey}/${repo}] PR headSha: ${pr.headSha}, comments use position instead of line`);
 
     const BATCH_SIZE = 5;
     const commentBatches = [];
