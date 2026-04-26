@@ -61,20 +61,7 @@ class MCPGitHubService {
       }
 
       // Log the exact command being sent (with sensitive data redacted)
-      logger.info(`[MCP:${this.instanceKey}] mcporter command: ${this.mcpBaseCmd} ${spawnArgs.slice(0, 5).join(' ')}... (${spawnArgs.length} args total)`);
-
-      // Log full args for debugging (without sensitive data)
-      for (const arg of spawnArgs) {
-        if (arg.startsWith('comments=')) {
-          logger.info(`[MCP:${this.instanceKey}] Arg: ${arg.substring(0, 200)}...`);
-        } else if (arg.startsWith('commit_id=')) {
-          logger.info(`[MCP:${this.instanceKey}] Arg: ${arg}`);
-        } else if (arg.startsWith('body=')) {
-          logger.info(`[MCP:${this.instanceKey}] Arg: body=${arg.substring(0, 100)}...`);
-        } else {
-          logger.info(`[MCP:${this.instanceKey}] Arg: ${arg}`);
-        }
-      }
+      logger.debug(`[MCP:${this.instanceKey}] mcporter command: ${this.mcpBaseCmd} ${spawnArgs.slice(0, 5).join(' ')}... (${spawnArgs.length} args total)`);
 
       const result = await this.spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
 
@@ -595,11 +582,11 @@ class MCPGitHubService {
     // Update reviewResult with valid comments for further processing
     reviewResult.comments = validComments;
 
-    // Fetch PR files with patches to verify lines exist in diff
-    // GitHub API accepts line + side for review comments
+    // Fetch PR files with patches to calculate positions
+    // GitHub API requires position for review comments in /reviews endpoint
     let positionMaps = new Map();
     try {
-      logger.info(`[MCP:${this.instanceKey}/${repo}] Fetching PR files with patches for diff validation`);
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Fetching PR files with patches for position calculation`);
       const rawFiles = await this.callMCP('get_pull_request_files', {
         owner: this.owner,
         repo: repo,
@@ -616,8 +603,8 @@ class MCPGitHubService {
       }
       logger.info(`[MCP:${this.instanceKey}/${repo}] Built position maps for ${positionMaps.size} file(s)`);
     } catch (error) {
-      logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch PR files for diff validation: ${error.message}`);
-      logger.warn(`[MCP:${this.instanceKey}/${repo}] Cannot verify lines exist in diff, proceeding anyway`);
+      logger.error(`[MCP:${this.instanceKey}/${repo}] Failed to fetch PR files for position calculation: ${error.message}`);
+      logger.warn(`[MCP:${this.instanceKey}/${repo}] Comments will be omitted without position mapping`);
     }
 
     const comments = reviewResult.comments.map(c => {
@@ -628,33 +615,36 @@ class MCPGitHubService {
         commentBody += `\n\n**Suggested fix:**\n\`\`\`\n${c.suggestedCode}\n\`\`\``;
       }
 
-      // Use line + side instead of position (GitHub accepts both, but line+side is preferred)
-      // Just verify the line exists in the diff using positionMap
+      // Get position from the diff
+      // For /reviews endpoint, GitHub requires 'position' (not line+side)
       const positionMap = positionMaps.get(c.file);
-      const lineExists = positionMap ? positionMap.has(c.line) : false;
+      const position = positionMap ? positionMap.get(c.line) : null;
 
-      if (!lineExists) {
-        logger.warn(`[MCP:${this.instanceKey}/${repo}] Line ${c.line} not found in diff for ${c.file}, skipping comment`);
+      if (position === null || position === undefined) {
+        logger.warn(`[MCP:${this.instanceKey}/${repo}] No position found for ${c.file}:${c.line}, skipping comment`);
         return null;
       }
 
-      logger.debug(`[MCP:${this.instanceKey}/${repo}] Comment ${c.file}:${c.line} -> line: ${c.line}, side: RIGHT`);
+      logger.debug(`[MCP:${this.instanceKey}/${repo}] Comment ${c.file}:${c.line} -> position: ${position}`);
 
       return {
         path: c.file,
-        line: c.line,
-        side: 'RIGHT',
+        position: position,
         commit_id: pr.headSha,
         body: commentBody
       };
-    }).filter(c => c !== null); // Filter out null comments (missing line in diff)
+    }).filter(c => c !== null); // Filter out null comments (missing position)
 
     if (validComments.length > comments.length) {
-      logger.warn(`[MCP:${this.instanceKey}/${repo}] Filtered out ${validComments.length - comments.length} comment(s) due to missing line in diff`);
+      logger.warn(`[MCP:${this.instanceKey}/${repo}] Filtered out ${validComments.length - comments.length} comment(s) due to missing position`);
     }
 
-    // Count comments
+    // Count comments and log summary
     logger.info(`[MCP:${this.instanceKey}/${repo}] PR headSha: ${pr.headSha}, total comments to submit: ${comments.length}`);
+    if (comments.length > 0) {
+      const commentSummary = comments.map(c => `${c.path}:${c.position}`).join(', ');
+      logger.info(`[MCP:${this.instanceKey}/${repo}] Comments: ${commentSummary}`);
+    }
 
     // Create review with all comments in one batch (no batching)
     const reviewArgs = {
@@ -667,10 +657,8 @@ class MCPGitHubService {
       comments: comments // Send all comments at once, no batching
     };
 
-    logger.info(`[MCP:${this.instanceKey}/${repo}] Creating review with ${comments.length} comments (no batching)`);
+    logger.info(`[MCP:${this.instanceKey}/${repo}] Creating review with ${comments.length} comment(s)`);
     logger.info(`[MCP:${this.instanceKey}/${repo}] Review args: owner=${this.owner}, repo=${repo}, pr=${pr.number}, event=${event}, comments=${comments.length}`);
-    logger.info(`[MCP:${this.instanceKey}/${repo}] Sample comment: ${JSON.stringify(comments[0])}`);
-    logger.info(`[MCP:${this.instanceKey}/${repo}] All comments: ${JSON.stringify(comments)}`);
 
     let result;
     try {
@@ -690,16 +678,7 @@ class MCPGitHubService {
     }
 
     logger.info(`[MCP:${this.instanceKey}/${repo}] Review created: ID=${result.id}`);
-    logger.info(`[MCP:${this.instanceKey}/${repo}] MCP response: ${JSON.stringify(result)}`);
-    logger.info(`[MCP:${this.instanceKey}/${repo}] Response has ${result.body?.length || 0} char body, ${result.comments?.length || 0} comments in initial response`);
-
-    // Check if comments were returned in the response
-    if (result.comments && result.comments.length > 0) {
-      logger.info(`[MCP:${this.instanceKey}/${repo}] ✅ Comments returned: ${result.comments.map(c => `${c.path}:${c.position || c.line}`).join(', ')}`);
-    } else {
-      logger.warn(`[MCP:${this.instanceKey}/${repo}] ⚠️  No comments returned in response - this might indicate comments were filtered out by GitHub`);
-    }
-
+    logger.info(`[MCP:${this.instanceKey}/${repo}] ✅ Created ${comments.length} line comment(s) - check GitHub PR Files tab`);
     logger.info(`[MCP:${this.instanceKey}/${repo}] ⚠️  Check GitHub PR: https://github.com/${this.owner}/${repo}/pull/${pr.number}/files`);
 
     return result;
