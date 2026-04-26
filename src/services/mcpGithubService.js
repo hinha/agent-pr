@@ -674,7 +674,7 @@ class MCPGitHubService {
           const chunkComment = {
             path: c.file,
             position: chunkPosition,
-            body: `💡 Suggested fix (${i + 1}/${chunks.length}):\n\`\`\`\n${chunks[i]}\n\`\`\``
+            body: `Fix: ${chunks[i]}`
           };
           comments.push(chunkComment);
           logger.debug(`[MCP:${this.instanceKey}/${repo}] Added code chunk ${i + 1}/${chunks.length} at position ${chunkPosition}`);
