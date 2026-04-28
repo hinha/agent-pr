@@ -6,9 +6,16 @@ const EventBus = require('../../../../src/shared/events/EventBus');
 
 describe('EventBus', () => {
   let bus;
+  let mockLogger;
 
   beforeEach(() => {
-    bus = new EventBus();
+    mockLogger = {
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn()
+    };
+    bus = new EventBus({ logger: mockLogger });
   });
 
   afterEach(() => {
@@ -63,17 +70,14 @@ describe('EventBus', () => {
     });
 
     it('should warn when max listeners exceeded', () => {
-      const warnSpy = jest.spyOn(bus.logger, 'warn').mockImplementation(() => {});
       const handler = jest.fn();
-
-      const smallBus = new EventBus({ maxListeners: 2 });
+      const smallBus = new EventBus({ logger: mockLogger, maxListeners: 2 });
 
       smallBus.on('test', handler);
       smallBus.on('test', handler);
       smallBus.on('test', handler); // Should warn
 
-      expect(warnSpy).toHaveBeenCalled();
-      warnSpy.mockRestore();
+      expect(mockLogger.warn).toHaveBeenCalled();
     });
   });
 
