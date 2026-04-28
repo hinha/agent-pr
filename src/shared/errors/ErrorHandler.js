@@ -197,7 +197,7 @@ class ErrorHandler {
       try {
         return await fn(...args);
       } catch (error) {
-        const result = this.handle(error, context, { args });
+        const result = await this.handle(error, context, { args });
         if (result.fatal) {
           throw error;
         }
@@ -211,8 +211,8 @@ class ErrorHandler {
    * @returns {Function} Middleware function
    */
   middleware() {
-    return (err, req, res, next) => {
-      const result = this.handle(err, 'HTTP_REQUEST', {
+    return async (err, req, res, next) => {
+      const result = await this.handle(err, 'HTTP_REQUEST', {
         method: req.method,
         path: req.path,
         ip: req.ip

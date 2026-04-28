@@ -393,15 +393,15 @@ describe('EventBus', () => {
 
   describe('predefined events', () => {
     it('should have all predefined event constants', () => {
-      expect('pr.processed').toBe(''pr.processed'');
-      expect('pr.approved').toBe('pr.approved');
-      expect('pr.rejected').toBe('pr.rejected');
-      expect('pr.closed').toBe('pr.closed');
-      expect('review.created').toBe('review.created');
-      expect('review.outdated').toBe('review.outdated');
-      expect('state.changed').toBe('state.changed');
-      expect('notification.sent').toBe('notification.sent');
-      expect('error.occurred').toBe('error.occurred');
+      expect(EventBus.Events.PR_PROCESSED).toBe('pr.processed');
+      expect(EventBus.Events.PR_APPROVED).toBe('pr.approved');
+      expect(EventBus.Events.PR_REJECTED).toBe('pr.rejected');
+      expect(EventBus.Events.PR_CLOSED).toBe('pr.closed');
+      expect(EventBus.Events.REVIEW_CREATED).toBe('review.created');
+      expect(EventBus.Events.REVIEW_OUTDATED).toBe('review.outdated');
+      expect(EventBus.Events.STATE_CHANGED).toBe('state.changed');
+      expect(EventBus.Events.NOTIFICATION_SENT).toBe('notification.sent');
+      expect(EventBus.Events.ERROR_OCCURRED).toBe('error.occurred');
     });
 
     it('should have all priority levels', () => {

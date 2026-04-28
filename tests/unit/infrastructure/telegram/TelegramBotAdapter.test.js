@@ -8,14 +8,13 @@ const TelegramBotAdapter = require('../../../../src/infrastructure/telegram/Tele
 
 // Mock node-telegram-bot-api module
 jest.mock('node-telegram-bot-api', () => {
-  const mockBot = {
+  return jest.fn(() => ({
     sendMessage: jest.fn().mockResolvedValue({ message_id: 789 }),
     answerCallbackQuery: jest.fn().mockResolvedValue(true),
     on: jest.fn(),
     stopPolling: jest.fn(),
     deleteWebhook: jest.fn().mockResolvedValue(true)
-  };
-  return jest.fn(() => mockBot);
+  }));
 });
 
 describe('TelegramBotAdapter', () => {
@@ -314,9 +313,10 @@ describe('TelegramBotAdapter', () => {
   describe('EventEmitter functionality', () => {
     test('should allow subscribing to events', () => {
       const handler = jest.fn();
-      const unsubscribe = adapter.on('test_event', handler);
+      const result = adapter.on('test_event', handler);
 
-      expect(typeof unsubscribe).toBe('function');
+      // EventEmitter.on returns the emitter instance
+      expect(result).toBe(adapter);
     });
 
     test('should emit events', () => {
@@ -329,9 +329,8 @@ describe('TelegramBotAdapter', () => {
 
     test('should unsubscribe from events', () => {
       const handler = jest.fn();
-      const unsubscribe = adapter.on('test_event', handler);
-
-      unsubscribe();
+      adapter.on('test_event', handler);
+      adapter.off('test_event', handler);
       adapter.emit('test_event', { data: 'test' });
 
       expect(handler).not.toHaveBeenCalled();

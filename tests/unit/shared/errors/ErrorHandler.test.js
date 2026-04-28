@@ -240,7 +240,7 @@ describe('ErrorHandler', () => {
       expect(middleware.length).toBe(4); // err, req, res, next
     });
 
-    test('should handle errors in middleware', () => {
+    test('should handle errors in middleware', async () => {
       const middleware = errorHandler.middleware();
       const err = new Error('Middleware error');
       const req = { method: 'GET', path: '/test', ip: '127.0.0.1' };
@@ -250,14 +250,14 @@ describe('ErrorHandler', () => {
       };
       const next = jest.fn();
 
-      middleware(err, req, res, next);
+      await middleware(err, req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(500);
       expect(res.json).toHaveBeenCalled();
       expect(mockLogger.error).toHaveBeenCalled();
     });
 
-    test('should handle fatal errors in middleware', () => {
+    test('should handle fatal errors in middleware', async () => {
       const middleware = errorHandler.middleware();
       const err = new ConfigurationError('Fatal error', 'app.key');
       const req = { method: 'POST', path: '/api/test', ip: '127.0.0.1' };
@@ -267,7 +267,7 @@ describe('ErrorHandler', () => {
       };
       const next = jest.fn();
 
-      middleware(err, req, res, next);
+      await middleware(err, req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(500);
       expect(res.json).toHaveBeenCalledWith({

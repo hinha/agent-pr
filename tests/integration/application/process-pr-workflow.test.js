@@ -5,9 +5,10 @@
  * the entire PR processing workflow from analysis to notification.
  */
 
-const PRStateMachine = require('../../../../src/core/services/PRStateMachine'); const { PRState } = PRStateMachine;;
-const ProcessPRUseCase = require('application/use-cases/ProcessPRUseCase');
-const PullRequest = require('../../../../src/core/entities/PullRequest');
+const PRStateMachine = require('../../../src/core/services/PRStateMachine');
+const { PRState } = PRStateMachine;
+const ProcessPRUseCase = require('../../../src/application/use-cases/ProcessPRUseCase');
+const PullRequest = require('../../../src/core/entities/PullRequest');
 
 // Mock implementations
 class MockStateMachine {
