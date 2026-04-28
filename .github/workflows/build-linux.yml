@@ -33,7 +33,6 @@ jobs:
           npm run test:coverage -- --json --outputFile=coverage/coverage-final.json
           # Fail build if coverage is below minimum acceptable threshold
           # This will be adjusted upward as we improve coverage
-          echo "Current coverage: ~52%. Target: 90%"
 
       - name: Upload coverage to Codecov
         if: always()
