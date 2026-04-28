@@ -2,6 +2,7 @@
  * Unit tests for EventBus
  */
 
+const EventBus = require('../../../../src/shared/events/EventBus');
 
 describe('EventBus', () => {
   let bus;

@@ -9,6 +9,7 @@ const PRStateMachine = require('../../../src/core/services/PRStateMachine');
 const { PRState } = PRStateMachine;
 const ProcessPRUseCase = require('../../../src/application/use-cases/ProcessPRUseCase');
 const PullRequest = require('../../../src/core/entities/PullRequest');
+const EventBus = require('../../../src/shared/events/EventBus');
 
 // Mock implementations
 class MockStateMachine {

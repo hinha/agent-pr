@@ -364,6 +364,7 @@ describe('MCPGitHubAdapter', () => {
 
       mockSpawnProcess.on.mockImplementation((event, cb) => {
         if (event === 'close') {
+          onCloseCallback = cb;
           callCount++;
           // First call fails with "own PR" error, second succeeds
           if (callCount === 1) {

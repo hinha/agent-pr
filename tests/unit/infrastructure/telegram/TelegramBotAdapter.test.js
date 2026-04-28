@@ -8,13 +8,19 @@ const TelegramBotAdapter = require('../../../../src/infrastructure/telegram/Tele
 
 // Mock node-telegram-bot-api module
 jest.mock('node-telegram-bot-api', () => {
-  return jest.fn(() => ({
+  const MockBot = jest.fn(() => ({
     sendMessage: jest.fn().mockResolvedValue({ message_id: 789 }),
     answerCallbackQuery: jest.fn().mockResolvedValue(true),
     on: jest.fn(),
     stopPolling: jest.fn(),
     deleteWebhook: jest.fn().mockResolvedValue(true)
   }));
+  // Also add methods to prototype for compatibility
+  MockBot.prototype.on = jest.fn();
+  MockBot.prototype.sendMessage = jest.fn().mockResolvedValue({ message_id: 789 });
+  MockBot.prototype.stopPolling = jest.fn();
+  MockBot.prototype.deleteWebhook = jest.fn().mockResolvedValue(true);
+  return MockBot;
 });
 
 describe('TelegramBotAdapter', () => {
@@ -137,9 +143,10 @@ describe('TelegramBotAdapter', () => {
   describe('stop', () => {
     test('should stop Telegram bot polling', async () => {
       await adapter.start();
+      const bot = adapter.bot;
       await adapter.stop();
 
-      expect(adapter.bot.stopPolling).toHaveBeenCalled();
+      expect(bot.stopPolling).toHaveBeenCalled();
       expect(adapter.bot).toBeNull();
       expect(mockLogger.info).toHaveBeenCalledWith(
         expect.stringContaining('stopped')

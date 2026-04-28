@@ -62,7 +62,7 @@ class EventBus {
 
     const handlerMeta = {
       handler,
-      priority: options.priority || EventPriority.NORMAL,
+      priority: options.priority !== undefined ? options.priority : EventPriority.NORMAL,
       id: options.id || this._generateHandlerId(),
       timestamp: Date.now()
     };
@@ -233,7 +233,8 @@ class EventBus {
       }
     }
 
-    return handlers;
+    // Sort handlers by priority (higher priority values first)
+    return handlers.sort((a, b) => b.priority - a.priority);
   }
 
   /**

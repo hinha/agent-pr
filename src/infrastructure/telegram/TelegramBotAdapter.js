@@ -152,10 +152,11 @@ class TelegramBotAdapter extends ITelegramService {
 
     this.logger.info(`[TelegramBotAdapter] Sending PR notification for ${owner}/${repo} PR #${pr.number}`);
 
-    const { instanceIdx, repoIdx } = this._getRepoIndices(owner, repo);
-    if (!instanceIdx) {
+    const result = this._getRepoIndices(owner, repo);
+    if (!result) {
       throw new Error(`No indices found for ${owner}/${repo}`);
     }
+    const { instanceIdx, repoIdx } = result;
 
     // Get instance configuration
     const instance = this.instanceMap.get(instanceIdx)?.instance;
@@ -194,10 +195,11 @@ class TelegramBotAdapter extends ITelegramService {
 
     this.logger.info(`[TelegramBotAdapter] Sending outdated review notification for ${owner}/${repo} PR #${pr.number}`);
 
-    const { instanceIdx, repoIdx } = this._getRepoIndices(owner, repo);
-    if (!instanceIdx) {
+    const result = this._getRepoIndices(owner, repo);
+    if (!result) {
       throw new Error(`No indices found for ${owner}/${repo}`);
     }
+    const { instanceIdx, repoIdx } = result;
 
     const message = this._buildOutdatedReviewMessage(pr, reviewState);
 
