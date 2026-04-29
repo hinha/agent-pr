@@ -32,8 +32,16 @@ class TelegramBotAdapter extends ITelegramService {
     this.config = options.config;
     this.eventBus = options.eventBus || null;
 
-    this.bot = null;
+    // EAGER instantiation - create bot immediately (like feature branch)
+    // This ensures bot is available as soon as adapter is instantiated
+    this.bot = new TelegramBot(this.botToken, { polling: true });
     this.chatId = this.config?.app?.telegram?.chatId;
+
+    // Setup event handlers immediately
+    this.bot.on('polling_error', (error) => this._handlePollingError(error));
+    this.bot.on('callback_query', (query) => {
+      this.emit('callback_query', query);
+    });
 
     // Build instance/repo mapping for compact callback data
     this.instanceMap = new Map();
@@ -80,20 +88,10 @@ class TelegramBotAdapter extends ITelegramService {
    * @returns {Promise<void>}
    */
   async start() {
+    // Bot is already created in constructor - just perform additional setup
     if (this.bot) {
-      this.logger.warn('TelegramBotAdapter already started');
-      return;
+      this.logger.debug('TelegramBotAdapter bot already initialized');
     }
-
-    this.bot = new TelegramBot(this.botToken, { polling: true });
-
-    // Setup error handler
-    this.bot.on('polling_error', (error) => this._handlePollingError(error));
-
-    // Setup callback query handler - emit event for CallbackHandler via Bootstrap
-    this.bot.on('callback_query', (query) => {
-      this.emit('callback_query', query);
-    });
 
     // Clean webhook to ensure polling mode
     await this._cleanWebhook();
