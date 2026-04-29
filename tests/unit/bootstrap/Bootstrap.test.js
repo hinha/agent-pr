@@ -116,7 +116,7 @@ describe('Bootstrap', () => {
 
       // Verify error handling in callback
       expect(bootstrapSource).toContain('catch (error)');
-      expect(bootstrapSource).toContain('query.answer');
+      expect(bootstrapSource).toContain('answerCallbackQuery');
     });
   });
 

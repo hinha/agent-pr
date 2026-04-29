@@ -206,13 +206,16 @@ class Bootstrap {
     this._callbackQueryHandler = async (query) => {
       try {
         logger.info(`[Bootstrap] Processing callback: ${query.data}`);
-        await callbackHandler.handleCallbackQuery(query, config);
+
+        // Wrap raw query with helper methods that delegate to bot API
+        const wrappedQuery = this._wrapCallbackQuery(query, bot, chatId);
+        await callbackHandler.handleCallbackQuery(wrappedQuery, config);
       } catch (error) {
         logger.error(`Error handling callback query: ${error.message}`);
 
         // Answer the callback to prevent it from hanging
         try {
-          await query.answer('An error occurred', true);
+          await bot.answerCallbackQuery(query.id, { text: 'An error occurred', show_alert: true });
         } catch (answerError) {
           // Ignore answer errors
         }
@@ -221,6 +224,42 @@ class Bootstrap {
 
     // Register callback handler
     telegramAdapter.on('callback_query', this._callbackQueryHandler);
+  }
+
+  /**
+   * Wrap a raw Telegram callback query with helper methods
+   * @private
+   */
+  _wrapCallbackQuery(query, bot, chatId) {
+    return {
+      ...query,
+      message: query.message || {},
+      answer: async (text, showAlert) => {
+        const opts = {};
+        if (text) opts.text = text;
+        if (showAlert) opts.show_alert = true;
+        return bot.answerCallbackQuery(query.id, opts);
+      },
+      editMessageText: async (text, options = {}) => {
+        const msgId = query.message?.message_id;
+        if (!msgId) return;
+        return bot.editMessageText(text, {
+          chat_id: chatId,
+          message_id: msgId,
+          parse_mode: 'HTML',
+          ...options
+        });
+      },
+      editMessageReplyMarkup: async (replyMarkup, options = {}) => {
+        const msgId = query.message?.message_id;
+        if (!msgId) return;
+        return bot.editMessageReplyMarkup(replyMarkup, {
+          chat_id: chatId,
+          message_id: msgId,
+          ...options
+        });
+      }
+    };
   }
 
   /**
