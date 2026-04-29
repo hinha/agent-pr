@@ -14,9 +14,15 @@ npm-debug.log*
 # Data files (runtime generated)
 data/
 
+# Build artifacts
+.version.json
+
 # OS files
 .DS_Store
 Thumbs.db
+
+/dist/
+/build/
 
 # IDE
 .vscode/

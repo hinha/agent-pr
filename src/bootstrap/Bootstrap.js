@@ -15,6 +15,7 @@
 
 const container = require('../container/Container');
 const MemoryMonitor = require('../utils/memoryMonitor');
+const { getVersionInfo } = require('../shared/utils/version');
 
 class Bootstrap {
   constructor() {
@@ -33,9 +34,16 @@ class Bootstrap {
     const config = this.container.get('config');
 
     try {
-      logger.info('🚀 Starting PR Monitor Daemon...');
-      logger.info(`📦 Node.js ${process.version}`);
-      logger.info(`📅 Started at ${new Date().toISOString()}`);
+      // Get version info
+      const versionInfo = getVersionInfo();
+
+      logger.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      logger.info('   PR Monitor Daemon');
+      logger.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      logger.info(`   🏷️  Version: ${versionInfo.fullString}`);
+      logger.info(`   📦 Node.js: ${process.version}`);
+      logger.info(`   📅 Started: ${new Date().toISOString()}`);
+      logger.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
       // Set up error handlers for process stability
       this._setupErrorHandlers(logger);

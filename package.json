@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node --expose-gc --max-old-space-size=128 index.js",
     "dev": "nodemon --exec 'node --expose-gc --max-old-space-size=128' index.js",
+    "prebuild": "node scripts/prebuild.js",
     "build": "pkg . --targets latest-linux-x64 --output dist/agent-pr-monitor --no-bytecode --public-packages \"*\" --public",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -47,7 +48,8 @@
       "index.js"
     ],
     "assets": [
-      "package.json"
+      "package.json",
+      ".version.json"
     ],
     "targets": [
       "latest-linux-x64"
