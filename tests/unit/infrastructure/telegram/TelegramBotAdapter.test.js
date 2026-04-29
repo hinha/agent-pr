@@ -776,11 +776,19 @@ describe('TelegramBotAdapter', () => {
       expect(keyboard[0]).toHaveLength(2);
       expect(keyboard[0][0]).toEqual({
         text: '🔍 Review Now',
-        callback_data: 'action:0:0:pr_123'
+        callback_data: 'review_now:0:0:pr_123'
       });
       expect(keyboard[0][1]).toEqual({
+        text: '🔗 Visit PR',
+        callback_data: 'visit:0:0:pr_123'
+      });
+      expect(keyboard[1][0]).toEqual({
         text: '✅ Approve',
         callback_data: 'approve:0:0:pr_123'
+      });
+      expect(keyboard[1][1]).toEqual({
+        text: '❌ Reject',
+        callback_data: 'reject:0:0:pr_123'
       });
     });
   });

@@ -35,14 +35,17 @@ class FileSystemStateRepository extends IStateRepository {
     this.files = {
       processedPRs: 'processed_prs.json',
       notificationCounts: 'notification_counts.json',
-      processedTimestamps: 'processed_timestamps.json'
+      processedTimestamps: 'processed_timestamps.json',
+      reviewState: 'review_state.json'
     };
 
     // In-memory cache
     this.cache = {
       processedPRs: new Set(),
       notificationCounts: new Map(),
-      processedTimestamps: new Map()
+      processedTimestamps: new Map(),
+      reviewState: new Map(), // prId -> { reviewId, headSha, submittedAt, dismissed }
+      outdatedNotified: new Map() // prId -> reviewId (tracks which outdated reviews were notified)
     };
 
     this.loaded = false;
@@ -181,7 +184,88 @@ class FileSystemStateRepository extends IStateRepository {
     this.cache.processedPRs.clear();
     this.cache.notificationCounts.clear();
     this.cache.processedTimestamps.clear();
+    this.cache.reviewState.clear();
+    this.cache.outdatedNotified.clear();
     this.loaded = false;
+  }
+
+  // ===== Review State Management =====
+
+  /**
+   * Save review state for a PR
+   *
+   * @param {string} owner - Repository owner (unused, using instance owner)
+   * @param {string} repo - Repository name (unused, using instance repo)
+   * @param {string} prId - Pull request ID
+   * @param {Object} reviewState - Review state to save
+   * @param {string} reviewState.reviewId - Review ID
+   * @param {string} reviewState.headSha - Head SHA at time of review
+   * @param {string} reviewState.submittedAt - ISO timestamp of submission
+   * @param {boolean} reviewState.dismissed - Whether review was dismissed
+   * @returns {Promise<void>}
+   */
+  async saveReviewState(owner, repo, prId, reviewState) {
+    await this.initialize();
+    this.cache.reviewState.set(prId, reviewState);
+    await this._persistState();
+  }
+
+  /**
+   * Get review state for a PR
+   *
+   * @param {string} owner - Repository owner (unused)
+   * @param {string} repo - Repository name (unused)
+   * @param {string} prId - Pull request ID
+   * @returns {Promise<Object|null>} Review state or null
+   */
+  async getReviewState(owner, repo, prId) {
+    await this.initialize();
+    return this.cache.reviewState.get(prId) || null;
+  }
+
+  /**
+   * Clear review state for a PR
+   *
+   * @param {string} owner - Repository owner (unused)
+   * @param {string} repo - Repository name (unused)
+   * @param {string} prId - Pull request ID
+   * @returns {Promise<void>}
+   */
+  async clearReviewState(owner, repo, prId) {
+    await this.initialize();
+    this.cache.reviewState.delete(prId);
+    this.cache.outdatedNotified.delete(prId);
+    await this._persistState();
+  }
+
+  /**
+   * Mark that an outdated review notification was sent
+   *
+   * @param {string} owner - Repository owner (unused)
+   * @param {string} repo - Repository name (unused)
+   * @param {string} prId - Pull request ID
+   * @param {string} reviewId - Review ID that was notified as outdated
+   * @returns {Promise<void>}
+   */
+  async markOutdatedNotified(owner, repo, prId, reviewId) {
+    await this.initialize();
+    this.cache.outdatedNotified.set(prId, reviewId);
+    await this._persistState();
+  }
+
+  /**
+   * Check if an outdated review was already notified
+   *
+   * @param {string} owner - Repository owner (unused)
+   * @param {string} repo - Repository name (unused)
+   * @param {string} prId - Pull request ID
+   * @param {string} reviewId - Review ID to check
+   * @returns {Promise<boolean>} True if already notified
+   */
+  async isOutdatedNotified(owner, repo, prId, reviewId) {
+    await this.initialize();
+    const notifiedReviewId = this.cache.outdatedNotified.get(prId);
+    return notifiedReviewId === reviewId;
   }
 
   // ===== Private Methods =====
@@ -214,7 +298,21 @@ class FileSystemStateRepository extends IStateRepository {
         this.cache.processedTimestamps = new Map(Object.entries(timestampsData).map(([k, v]) => [parseInt(k, 10), v]));
       }
 
-      this.logger.debug(`[FileSystemStateRepository:${this.owner}/${this.repo}] State loaded: ${this.cache.processedPRs.size} processed PRs, ${this.cache.notificationCounts.size} notification counts`);
+      // Load review state
+      const reviewStatePath = path.join(this.storagePath, this.files.reviewState);
+      const reviewStateData = await this._readJSONFile(reviewStatePath);
+      if (reviewStateData && typeof reviewStateData === 'object') {
+        // Load reviews
+        if (reviewStateData.reviews && typeof reviewStateData.reviews === 'object') {
+          this.cache.reviewState = new Map(Object.entries(reviewStateData.reviews));
+        }
+        // Load outdated notified
+        if (reviewStateData.outdatedNotified && typeof reviewStateData.outdatedNotified === 'object') {
+          this.cache.outdatedNotified = new Map(Object.entries(reviewStateData.outdatedNotified));
+        }
+      }
+
+      this.logger.debug(`[FileSystemStateRepository:${this.owner}/${this.repo}] State loaded: ${this.cache.processedPRs.size} processed PRs, ${this.cache.notificationCounts.size} notification counts, ${this.cache.reviewState.size} review states`);
     } catch (error) {
       this.logger.warn(`[FileSystemStateRepository:${this.owner}/${this.repo}] Failed to load state: ${error.message}`);
     }
@@ -249,6 +347,14 @@ class FileSystemStateRepository extends IStateRepository {
         timestampsObj[prId] = timestamp;
       }
       await this._writeJSONFile(timestampsPath, timestampsObj);
+
+      // Save review state
+      const reviewStatePath = path.join(this.storagePath, this.files.reviewState);
+      const reviewStateObj = {
+        reviews: Object.fromEntries(this.cache.reviewState),
+        outdatedNotified: Object.fromEntries(this.cache.outdatedNotified)
+      };
+      await this._writeJSONFile(reviewStatePath, reviewStateObj);
 
       this.logger.debug(`[FileSystemStateRepository:${this.owner}/${this.repo}] State persisted`);
     } catch (error) {

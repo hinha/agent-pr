@@ -124,7 +124,7 @@ describe('FileSystemStateRepository', () => {
 
       expect(await repository.isProcessed(owner, repo, 123)).toBe(true);
       expect(fs.writeFile).toHaveBeenCalled();
-      expect(fs.writeFile).toHaveBeenCalledTimes(3); // processed, counts, timestamps
+      expect(fs.writeFile).toHaveBeenCalledTimes(4); // processed, counts, timestamps, review_state
     });
   });
 

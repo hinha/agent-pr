@@ -185,8 +185,22 @@ class Bootstrap {
   _setupTelegramCallbacks(logger, config) {
     const telegramAdapter = this.container.get('telegramAdapter');
     const callbackHandler = this.container.get('callbackHandler');
+    const skipManager = this.container.get('skipManager');
+    const stateRepositoryFactory = this.container.get('stateRepositoryFactory');
+    const checkOutdatedReviewsUseCase = this.container.get('checkOutdatedReviewsUseCase');
 
     logger.info(`[Bootstrap] Setting up Telegram callbacks (isPollingOwner: ${telegramAdapter.isPollingOwner})`);
+
+    // Get bot and chatId for CallbackHandler
+    const bot = telegramAdapter.getBot();
+    const chatId = telegramAdapter.chatId;
+
+    // Update CallbackHandler with bot and dependencies
+    callbackHandler.bot = bot;
+    callbackHandler.chatId = chatId;
+    callbackHandler.skipManager = skipManager;
+    callbackHandler.stateRepositoryFactory = stateRepositoryFactory;
+    callbackHandler.checkOutdatedReviewsUseCase = checkOutdatedReviewsUseCase;
 
     // Store handler for cleanup
     this._callbackQueryHandler = async (query) => {

@@ -255,16 +255,17 @@ class TelegramBotAdapter extends ITelegramService {
 
     try {
       await this.retryHelper.retry(async () => {
+        // Get review ID from reviewState if available
+        const reviewId = reviewState?.reviewId || reviewState?.id || pr.id;
+
         const keyboard = [
           [
-            { text: '🔍 Review Now', callback_data: `action:${instanceIdx}:${repoIdx}:${pr.id}` },
-            { text: '✅ Approve', callback_data: `approve:${instanceIdx}:${repoIdx}:${pr.id}` }
+            { text: '✅ Approve', callback_data: `approve_outdated:${instanceIdx}:${repoIdx}:${pr.id}:${reviewId}` },
+            { text: '🔍 Re-review', callback_data: `re_review:${instanceIdx}:${repoIdx}:${pr.id}:${reviewId}` }
           ],
           [
-            { text: '❌ Close PR', callback_data: `close:${instanceIdx}:${repoIdx}:${pr.id}` }
-          ],
-          [
-            { text: '⏸️ Skip (3h)', callback_data: `skip:${instanceIdx}:${repoIdx}:${pr.id}` }
+            { text: '🔗 Visit PR', callback_data: `visit:${instanceIdx}:${repoIdx}:${pr.id}` },
+            { text: '❌ Dismiss', callback_data: `dismiss_outdated:${instanceIdx}:${repoIdx}:${pr.id}:${reviewId}` }
           ]
         ];
 
@@ -452,14 +453,15 @@ class TelegramBotAdapter extends ITelegramService {
   _buildPRKeyboard(instanceIdx, repoIdx, pr) {
     return [
       [
-        { text: '🔍 Review Now', callback_data: `action:${instanceIdx}:${repoIdx}:${pr.id}` },
-        { text: '✅ Approve', callback_data: `approve:${instanceIdx}:${repoIdx}:${pr.id}` }
+        { text: '🔍 Review Now', callback_data: `review_now:${instanceIdx}:${repoIdx}:${pr.id}` },
+        { text: '🔗 Visit PR', callback_data: `visit:${instanceIdx}:${repoIdx}:${pr.id}` }
       ],
       [
-        { text: '❌ Request Changes', callback_data: `reject:${instanceIdx}:${repoIdx}:${pr.id}` },
-        { text: '🔒 Close PR', callback_data: `close:${instanceIdx}:${repoIdx}:${pr.id}` }
+        { text: '✅ Approve', callback_data: `approve:${instanceIdx}:${repoIdx}:${pr.id}` },
+        { text: '❌ Reject', callback_data: `reject:${instanceIdx}:${repoIdx}:${pr.id}` }
       ],
       [
+        { text: '🔒 Close PR', callback_data: `close:${instanceIdx}:${repoIdx}:${pr.id}` },
         { text: '⏸️ Skip (3h)', callback_data: `skip:${instanceIdx}:${repoIdx}:${pr.id}` }
       ]
     ];

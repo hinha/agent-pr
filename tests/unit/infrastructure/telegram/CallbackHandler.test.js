@@ -180,16 +180,16 @@ describe('CallbackHandler', () => {
       });
     });
 
-    test('should parse dismiss callback with reviewId', () => {
-      const data = 'dismiss:0:0:review-123';
+    test('should parse dismiss_outdated callback with reviewId', () => {
+      const data = 'dismiss_outdated:0:0:test-repo-123:review-456';
       const result = handler._parseCallbackData(data);
 
       expect(result).toEqual({
-        action: 'dismiss',
+        action: 'dismiss_outdated',
         instanceIdx: 0,
         repoIdx: 0,
-        prId: 'review-123',
-        reviewId: 'review-123'
+        prId: 'test-repo-123',
+        reviewId: 'review-456'
       });
     });
 
@@ -207,38 +207,50 @@ describe('CallbackHandler', () => {
     });
   });
 
-  describe('handleCallbackQuery - action (review level selection)', () => {
-    test('should handle action callback successfully', async () => {
+  describe('handleCallbackQuery - review_now (review level selection)', () => {
+    test('should handle review_now callback successfully', async () => {
       const mockQuery = {
-        data: 'action:0:0:test-repo-123',
+        data: 'review_now:0:0:test-repo-123',
         answer: jest.fn().mockResolvedValue(),
-        editMessageText: jest.fn().mockResolvedValue()
+        message: { message_id: 999 }
       };
+
+      // Mock bot.sendMessage
+      handler.bot = {
+        sendMessage: jest.fn().mockResolvedValue({ message_id: 1000 })
+      };
+      handler.chatId = 123;
 
       const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
 
       expect(result.success).toBe(true);
       expect(result.action).toBe('show_levels');
-      expect(mockQuery.answer).toHaveBeenCalledWith('Select review level...');
-      expect(mockQuery.editMessageText).toHaveBeenCalled();
-      expect(mockQuery.editMessageText.mock.calls[0][0]).toContain('Select Review Level');
+      expect(mockQuery.answer).toHaveBeenCalledWith();
+      expect(handler.bot.sendMessage).toHaveBeenCalled();
       expect(mockEventBus.emitAsync).toHaveBeenCalledWith('callback.handled', expect.any(Object));
     });
 
     test('should build keyboard with default levels', async () => {
       const mockQuery = {
-        data: 'action:0:0:test-repo-123',
+        data: 'review_now:0:0:test-repo-123',
         answer: jest.fn().mockResolvedValue(),
-        editMessageText: jest.fn().mockResolvedValue()
+        message: { message_id: 999 }
       };
+
+      // Mock bot.sendMessage
+      handler.bot = {
+        sendMessage: jest.fn().mockResolvedValue({ message_id: 1000 })
+      };
+      handler.chatId = 123;
 
       await handler.handleCallbackQuery(mockQuery, mockConfig);
 
-      const keyboard = mockQuery.editMessageText.mock.calls[0][1].reply_markup.inline_keyboard;
-      expect(keyboard).toHaveLength(3); // low, medium, high
-      expect(keyboard[0][0].text).toBe('LOW');
-      expect(keyboard[1][0].text).toBe('MEDIUM');
-      expect(keyboard[2][0].text).toBe('HIGH');
+      const keyboard = handler.bot.sendMessage.mock.calls[0][2].reply_markup.inline_keyboard;
+      expect(keyboard).toHaveLength(4); // low, medium, high + cancel
+      expect(keyboard[0][0].text).toContain('LOW');
+      expect(keyboard[1][0].text).toContain('MEDIUM');
+      expect(keyboard[2][0].text).toContain('HIGH');
+      expect(keyboard[3][0].text).toBe('❌ Batal');
     });
 
     test('should build keyboard with custom levels from config', async () => {
@@ -258,17 +270,24 @@ describe('CallbackHandler', () => {
       };
 
       const mockQuery = {
-        data: 'action:0:0:test-repo-123',
+        data: 'review_now:0:0:test-repo-123',
         answer: jest.fn().mockResolvedValue(),
-        editMessageText: jest.fn().mockResolvedValue()
+        message: { message_id: 999 }
       };
+
+      // Mock bot.sendMessage
+      handler.bot = {
+        sendMessage: jest.fn().mockResolvedValue({ message_id: 1000 })
+      };
+      handler.chatId = 123;
 
       await handler.handleCallbackQuery(mockQuery, customConfig);
 
-      const keyboard = mockQuery.editMessageText.mock.calls[0][1].reply_markup.inline_keyboard;
-      expect(keyboard).toHaveLength(2);
-      expect(keyboard[0][0].text).toBe('LOW');
-      expect(keyboard[1][0].text).toBe('HIGH');
+      const keyboard = handler.bot.sendMessage.mock.calls[0][2].reply_markup.inline_keyboard;
+      expect(keyboard).toHaveLength(3); // low, high + cancel
+      expect(keyboard[0][0].text).toContain('LOW');
+      expect(keyboard[1][0].text).toContain('HIGH');
+      expect(keyboard[2][0].text).toBe('❌ Batal');
     });
   });
 
@@ -535,18 +554,25 @@ describe('CallbackHandler', () => {
   });
 
   describe('handleCallbackQuery - dismiss', () => {
-    test('should handle dismiss callback for outdated reviews', async () => {
+    test('should handle dismiss_outdated callback for outdated reviews', async () => {
       const mockQuery = {
-        data: 'dismiss:0:0:review_123',
+        data: 'dismiss_outdated:0:0:test-repo-123:review-456',
         answer: jest.fn().mockResolvedValue(),
         editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      // Mock checkOutdatedReviewsUseCase
+      handler.checkOutdatedReviewsUseCase = {
+        dismissOutdatedReview: jest.fn().mockResolvedValue({ success: true })
       };
 
       const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
 
       expect(result.success).toBe(true);
       expect(mockQuery.answer).toHaveBeenCalledWith('Dismissing...');
-      expect(mockQuery.editMessageText).toHaveBeenCalledWith('✅ Notification dismissed');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('Dismissed outdated review notification')
+      );
       expect(mockEventBus.emitAsync).toHaveBeenCalledWith('callback.handled', expect.any(Object));
     });
   });

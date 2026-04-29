@@ -286,8 +286,21 @@ class Container {
         {
           logger: cradle.logger,
           githubAdapter: cradle.githubAdapter,
-          config: cradle.config
+          config: cradle.config,
+          skipManager: cradle.skipManager,
+          stateRepositoryFactory: cradle.stateRepositoryFactory,
+          checkOutdatedReviewsUseCase: cradle.checkOutdatedReviewsUseCase
         }
+      );
+    }).singleton();
+
+    // Skip Manager
+    this.registerFunction('skipManager', (cradle) => {
+      const SkipManager = require('../infrastructure/persistence/SkipManager');
+
+      return new SkipManager(
+        cradle.logger,
+        cradle.config
       );
     }).singleton();
 
