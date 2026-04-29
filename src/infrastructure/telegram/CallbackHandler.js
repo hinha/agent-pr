@@ -295,12 +295,9 @@ class CallbackHandler {
     // Get available levels from instance config
     const levels = instance.agent?.level || ['low', 'medium', 'high'];
 
-    // Get instance and repo indices from config
-    const instances = Object.values(this.config?.instances || {});
-    const instanceIdx = instances.findIndex(i => i.key === instance.key);
-
-    const repos = Object.values(instance.repos || {});
-    const repoIdx = repos.findIndex(r => r.name === repo.name || r === repo);
+    // Use indices already resolved by _getInstance/_getRepo
+    const instanceIdx = instance.instanceIdx;
+    const repoIdx = repo.repoIdx;
 
     // Build level selection keyboard
     const keyboard = levels.map(level => [
@@ -389,12 +386,9 @@ class CallbackHandler {
     // Get available levels from instance config
     const levels = instance.agent?.level || ['low', 'medium', 'high'];
 
-    // Get instance and repo indices from config
-    const instances = Object.values(this.config?.instances || {});
-    const instanceIdx = instances.findIndex(i => i.key === instance.key);
-
-    const repos = Object.values(instance.repos || {});
-    const repoIdx = repos.findIndex(r => r.name === repo.name || r === repo);
+    // Use indices already resolved by _getInstance/_getRepo
+    const instanceIdx = instance.instanceIdx;
+    const repoIdx = repo.repoIdx;
 
     return levels.map(level => [
       {
@@ -602,12 +596,9 @@ class CallbackHandler {
     // Get available levels from instance config
     const levels = instance.agent?.level || ['low', 'medium', 'high'];
 
-    // Get instance and repo indices from config
-    const instances = Object.values(this.config?.instances || {});
-    const instanceIdx = instances.findIndex(i => i.key === instance.key);
-
-    const repos = Object.values(instance.repos || {});
-    const repoIdx = repos.findIndex(r => r.name === repo.name || r === repo);
+    // Use indices already resolved by _getInstance/_getRepo
+    const instanceIdx = instance.instanceIdx;
+    const repoIdx = repo.repoIdx;
 
     // Build level selection keyboard for outdated review
     const keyboard = levels.map(level => [
