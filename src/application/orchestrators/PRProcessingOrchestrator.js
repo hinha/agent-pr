@@ -293,7 +293,7 @@ class PRProcessingOrchestrator {
 
       // Check for outdated reviews
       try {
-        await this.useCases.checkOutdatedReviews.execute(instance, repo, openPRs);
+        await this.useCases.checkOutdatedReviews.execute(instance, repo, openPRs, githubAdapter);
       } catch (error) {
         this.logger.error(
           `[PRProcessingOrchestrator] Error checking outdated reviews in ${repo.name}:`,

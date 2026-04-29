@@ -227,7 +227,6 @@ class Container {
       const CheckOutdatedReviewsUseCase = require('../application/use-cases/CheckOutdatedReviewsUseCase');
 
       return new CheckOutdatedReviewsUseCase(
-        cradle.githubAdapter,
         cradle.sendNotificationUseCase,
         cradle.stateMachine,
         cradle.eventBus,

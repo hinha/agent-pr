@@ -12,15 +12,13 @@
 
 class CheckOutdatedReviewsUseCase {
   /**
-   * @param {Object} githubService - GitHubService instance
    * @param {Object} notificationService - SendNotificationUseCase instance
    * @param {Object} stateMachine - PRStateMachine instance
    * @param {Object} eventBus - EventBus instance
    * @param {Object} options - Configuration options
    * @param {Object} options.logger - Logger instance
    */
-  constructor(githubService, notificationService, stateMachine, eventBus, options = {}) {
-    this.githubService = githubService;
+  constructor(notificationService, stateMachine, eventBus, options = {}) {
     this.notificationService = notificationService;
     this.stateMachine = stateMachine;
     this.eventBus = eventBus;
@@ -33,9 +31,10 @@ class CheckOutdatedReviewsUseCase {
    * @param {Object} instance - Instance configuration
    * @param {Object} repo - Repository configuration
    * @param {Array} pullRequests - Array of PullRequest entities
+   * @param {Object} githubAdapter - MCPGitHubAdapter instance for the instance
    * @returns {Promise<Object>} Check result with outdated reviews
    */
-  async execute(instance, repo, pullRequests) {
+  async execute(instance, repo, pullRequests, githubAdapter) {
     const instanceKey = instance.key;
     const repoName = repo.name;
 
@@ -48,7 +47,7 @@ class CheckOutdatedReviewsUseCase {
 
       // Check each PR for outdated reviews
       for (const pr of pullRequests) {
-        const reviews = await this.githubService.getReviews(repoName, pr.number);
+        const reviews = await githubAdapter.getPRReviews(repoName, pr.number);
 
         for (const review of reviews) {
           if (await this._isReviewOutdated(instance, repo, pr, review)) {
@@ -175,37 +174,6 @@ class CheckOutdatedReviewsUseCase {
     setTimeout(() => {
       this._outdatedNotifications.delete(key);
     }, 24 * 60 * 60 * 1000);
-  }
-
-  /**
-   * Get reviews for a specific PR
-   *
-   * @param {Object} instance - Instance configuration
-   * @param {Object} repo - Repository configuration
-   * @param {Object} pr - PullRequest entity
-   * @returns {Promise<Array>} Array of reviews
-   */
-  async getReviewsForPR(instance, repo, pr) {
-    try {
-      const reviews = await this.githubService.getReviews(repo.name, pr.number);
-
-      // Filter out dismissed reviews
-      const activeReviews = reviews.filter(r => r.state !== 'DISMISSED');
-
-      this.logger.debug(
-        `[CheckOutdatedReviewsUseCase] Found ${activeReviews.length} active reviews for PR #${pr.number}`
-      );
-
-      return activeReviews;
-
-    } catch (error) {
-      this.logger.error(
-        `[CheckOutdatedReviewsUseCase] Error getting reviews for PR #${pr.number}:`,
-        error
-      );
-
-      return [];
-    }
   }
 
   /**
