@@ -98,9 +98,6 @@ class TelegramBotAdapter extends ITelegramService {
     // Clean webhook to ensure polling mode
     await this._cleanWebhook();
 
-    // Setup graceful shutdown
-    this._setupGracefulShutdown();
-
     this.logger.info('TelegramBotAdapter started with active polling');
 
     // Publish event
@@ -147,6 +144,11 @@ class TelegramBotAdapter extends ITelegramService {
 
     this.logger.info(`[TelegramBotAdapter] Sending PR notification for ${owner}/${repo} PR #${pr.number}`);
 
+    // Ensure bot is initialized
+    if (!this.bot) {
+      throw new Error('Telegram bot not initialized. Call start() before sending notifications.');
+    }
+
     const result = this._getRepoIndices(owner, repo);
     if (!result) {
       throw new Error(`No indices found for ${owner}/${repo}`);
@@ -189,6 +191,11 @@ class TelegramBotAdapter extends ITelegramService {
     const { owner, repo, pr, reviewState, threadId } = notification;
 
     this.logger.info(`[TelegramBotAdapter] Sending outdated review notification for ${owner}/${repo} PR #${pr.number}`);
+
+    // Ensure bot is initialized
+    if (!this.bot) {
+      throw new Error('Telegram bot not initialized. Call start() before sending notifications.');
+    }
 
     const result = this._getRepoIndices(owner, repo);
     if (!result) {
@@ -327,21 +334,6 @@ class TelegramBotAdapter extends ITelegramService {
         timestamp: new Date().toISOString()
       });
     }
-  }
-
-  /**
-   * Setup graceful shutdown handlers
-   * @private
-   */
-  _setupGracefulShutdown() {
-    const shutdown = async () => {
-      this.logger.info('Received shutdown signal, stopping TelegramBotAdapter...');
-      await this.stop();
-      process.exit(0);
-    };
-
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
   }
 
   /**

@@ -62,9 +62,6 @@ class PRProcessingOrchestrator {
       `[PRProcessingOrchestrator] Starting (poll interval: ${this.pollInterval}ms)`
     );
 
-    // Set up graceful shutdown handlers
-    this._setupShutdownHandlers();
-
     // Initial poll
     await this._poll();
 
@@ -310,21 +307,6 @@ class PRProcessingOrchestrator {
     }
 
     return results;
-  }
-
-  /**
-   * Set up graceful shutdown handlers
-   * @private
-   */
-  _setupShutdownHandlers() {
-    const shutdownHandler = async (signal) => {
-      this.logger.info(`[PRProcessingOrchestrator] Received ${signal}, shutting down...`);
-      await this.stop();
-      process.exit(0);
-    };
-
-    process.on('SIGTERM', () => shutdownHandler('SIGTERM'));
-    process.on('SIGINT', () => shutdownHandler('SIGINT'));
   }
 
   /**

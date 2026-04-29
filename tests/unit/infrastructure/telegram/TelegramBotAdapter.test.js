@@ -160,6 +160,38 @@ describe('TelegramBotAdapter', () => {
   });
 
   describe('sendPRNotification', () => {
+    test('should throw error when bot is not initialized', async () => {
+      // Create a fresh adapter without calling start()
+      const freshAdapter = new TelegramBotAdapter(
+        mockConfig.app.telegram.bot_token,
+        { logger: mockLogger, retryHelper: mockRetryHelper, config: mockConfig }
+      );
+
+      const notification = {
+        owner: 'testorg',
+        repo: 'test-repo',
+        pr: {
+          id: 'pr_123',
+          number: 456,
+          title: 'Test PR',
+          author: 'testuser',
+          baseBranch: 'main'
+        },
+        summary: {
+          riskLevel: 'LOW',
+          impactArea: 'Docs',
+          purpose: 'Update docs',
+          filesChanged: 1,
+          diffSize: '10 lines'
+        },
+        threadId: 456
+      };
+
+      await expect(freshAdapter.sendPRNotification(notification)).rejects.toThrow(
+        'Telegram bot not initialized. Call start() before sending notifications.'
+      );
+    });
+
     beforeEach(async () => {
       await adapter.start();
     });
@@ -259,6 +291,35 @@ describe('TelegramBotAdapter', () => {
   });
 
   describe('sendOutdatedReviewNotification', () => {
+    test('should throw error when bot is not initialized', async () => {
+      // Create a fresh adapter without calling start()
+      const freshAdapter = new TelegramBotAdapter(
+        mockConfig.app.telegram.bot_token,
+        { logger: mockLogger, retryHelper: mockRetryHelper, config: mockConfig }
+      );
+
+      const notification = {
+        owner: 'testorg',
+        repo: 'test-repo',
+        pr: {
+          id: 'pr_123',
+          number: 456,
+          title: 'Test PR',
+          author: 'testuser'
+        },
+        reviewState: {
+          reviewId: 'review_1',
+          commitsAtReview: ['abc123'],
+          currentCommits: ['abc123', 'def456']
+        },
+        threadId: 456
+      };
+
+      await expect(freshAdapter.sendOutdatedReviewNotification(notification)).rejects.toThrow(
+        'Telegram bot not initialized. Call start() before sending notifications.'
+      );
+    });
+
     beforeEach(async () => {
       await adapter.start();
     });

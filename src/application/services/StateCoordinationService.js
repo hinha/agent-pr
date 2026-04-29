@@ -2,28 +2,28 @@
  * StateCoordinationService - Facade for coordinating multiple state managers
  *
  * This service provides a unified interface for managing state across different
- * concerns (PR processing, skip cache, notification tracking, etc.).
+ * concerns (PR processing, notification tracking, skip functionality, etc.).
  *
  * It implements the Facade pattern to simplify the complexity of working with
  * multiple state repositories and the PR state machine.
  *
+ * Note: Skip functionality is managed through PRStateMachine, not a separate cache.
+ *
  * @example
- * const coordinator = new StateCoordinationService(stateMachine, skipCache, stateRepository, eventBus);
+ * const coordinator = new StateCoordinationService(stateMachine, stateRepository, eventBus, { logger });
  * await coordinator.markPRAsNotified(instanceKey, repoName, prNumber);
  */
 
 class StateCoordinationService {
   /**
    * @param {Object} stateMachine - PRStateMachine instance
-   * @param {Object} skipCache - SkipCacheService instance (optional)
    * @param {Object} stateRepository - StateRepository instance
    * @param {Object} eventBus - EventBus instance
    * @param {Object} options - Configuration options
    * @param {Object} options.logger - Logger instance
    */
-  constructor(stateMachine, skipCache, stateRepository, eventBus, options = {}) {
+  constructor(stateMachine, stateRepository, eventBus, options = {}) {
     this.stateMachine = stateMachine;
-    this.skipCache = skipCache;
     this.stateRepository = stateRepository;
     this.eventBus = eventBus;
     this.logger = options.logger || console;
@@ -39,7 +39,6 @@ class StateCoordinationService {
    */
   async getPRState(instanceKey, repoName, prNumber) {
     const key = this._buildPRKey(instanceKey, repoName, prNumber);
-
     try {
       const [currentState, notificationCount, isSkipped, skipExpiry] = await Promise.all([
         this.stateMachine.getState(instanceKey, repoName, prNumber),
@@ -128,7 +127,7 @@ class StateCoordinationService {
       );
 
       // Emit state change event
-      await this.eventBus.emitAsync('state.'pr.processed'', {
+      await this.eventBus.emitAsync('state.pr.processed', {
         instanceKey,
         repoName,
         prNumber,

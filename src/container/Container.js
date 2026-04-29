@@ -260,7 +260,6 @@ class Container {
 
       return new StateCoordinationService(
         cradle.stateMachine,
-        cradle.skipManager,
         new FileSystemStateRepository(cradle.logger),
         cradle.eventBus,
         { logger: cradle.logger }
