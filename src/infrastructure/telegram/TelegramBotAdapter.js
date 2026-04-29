@@ -34,7 +34,6 @@ class TelegramBotAdapter extends ITelegramService {
 
     this.bot = null;
     this.chatId = this.config?.app?.telegram?.chatId;
-    this.callbackHandlers = new Map();
 
     // Build instance/repo mapping for compact callback data
     this.instanceMap = new Map();
@@ -91,13 +90,9 @@ class TelegramBotAdapter extends ITelegramService {
     // Setup error handler
     this.bot.on('polling_error', (error) => this._handlePollingError(error));
 
-    // Setup callback query handler - emit event for external handlers
+    // Setup callback query handler - emit event for CallbackHandler via Bootstrap
     this.bot.on('callback_query', (query) => {
-      // Emit event for external handlers
       this.emit('callback_query', query);
-
-      // Also handle internally for backward compatibility
-      this._handleCallbackQuery(query);
     });
 
     // Clean webhook to ensure polling mode
@@ -206,15 +201,14 @@ class TelegramBotAdapter extends ITelegramService {
     return this.retryHelper.retry(async () => {
       const keyboard = [
         [
-          { text: '🔍 Review Now', callback_data: `review_now:${instanceIdx}:${repoIdx}:${pr.id}` },
+          { text: '🔍 Review Now', callback_data: `action:${instanceIdx}:${repoIdx}:${pr.id}` },
           { text: '✅ Approve', callback_data: `approve:${instanceIdx}:${repoIdx}:${pr.id}` }
         ],
         [
           { text: '❌ Close PR', callback_data: `close:${instanceIdx}:${repoIdx}:${pr.id}` }
         ],
         [
-          { text: '⏸️ Skip (3h)', callback_data: `skip:${instanceIdx}:${repoIdx}:${pr.id}` },
-          { text: '👁️ View PR', callback_data: `visit:${instanceIdx}:${repoIdx}:${pr.id}` }
+          { text: '⏸️ Skip (3h)', callback_data: `skip:${instanceIdx}:${repoIdx}:${pr.id}` }
         ]
       ];
 
@@ -232,17 +226,6 @@ class TelegramBotAdapter extends ITelegramService {
       factor: 2,
       context: 'TelegramBotAdapter.sendOutdatedReviewNotification'
     });
-  }
-
-  /**
-   * Register a callback handler for a specific action
-   * @param {string} action - Action name (e.g., 'approve', 'reject', 'review_now')
-   * @param {Function} handler - Handler function
-   * @returns {void}
-   */
-  registerCallbackHandler(action, handler) {
-    this.callbackHandlers.set(action, handler);
-    this.logger.debug(`[TelegramBotAdapter] Registered callback handler for action: ${action}`);
   }
 
   /**
@@ -347,80 +330,6 @@ class TelegramBotAdapter extends ITelegramService {
   }
 
   /**
-   * Handle callback queries from inline buttons
-   * Emits event for external handlers and provides backward compatibility
-   * @param {Object} query - Callback query object
-   * @private
-   */
-  async _handleCallbackQuery(query) {
-    const { data } = query;
-
-    this.logger.debug(`[TelegramBotAdapter] Received callback query: ${data}`);
-
-    try {
-      // Parse callback data
-      const parts = data.split(':');
-      const action = parts[0];
-      const instanceIdx = parseInt(parts[1], 10);
-      const repoIdx = parseInt(parts[2], 10);
-      const prId = parts[3];
-      const level = parts[4]; // For review_level action
-
-      // Get repo info
-      const repoInfo = this._getRepoInfo(instanceIdx, repoIdx);
-      if (!repoInfo) {
-        this.logger.error(`No repo info found for indices ${instanceIdx}:${repoIdx}`);
-        await this.bot.answerCallbackQuery(query.id, { text: '❌ Error: Repository not found' });
-        return;
-      }
-
-      // Build callback context
-      const context = {
-        action,
-        instanceIdx,
-        repoIdx,
-        prId,
-        level,
-        repoInfo,
-        query,
-        bot: this.bot,
-        chatId: this.chatId
-      };
-
-      // Check if we have a registered handler for this action
-      if (this.callbackHandlers.has(action)) {
-        const handler = this.callbackHandlers.get(action);
-        await handler(context);
-      } else {
-        this.logger.warn(`No handler registered for action: ${action}`);
-        await this.bot.answerCallbackQuery(query.id, { text: '⚠️ Action not implemented' });
-      }
-
-      // Publish event
-      if (this.eventBus) {
-        await this.eventBus.emitAsync('telegram.callback_handled', {
-          action,
-          owner: repoInfo.owner,
-          repo: repoInfo.repo,
-          prId,
-          timestamp: new Date().toISOString()
-        });
-      }
-    } catch (error) {
-      this.logger.error(`Error handling callback query: ${error.message}`);
-
-      try {
-        await this.bot.answerCallbackQuery(query.id, {
-          text: `❌ Error: ${error.message}`,
-          show_alert: true
-        });
-      } catch (answerErr) {
-        this.logger.error(`Failed to answer callback query: ${answerErr.message}`);
-      }
-    }
-  }
-
-  /**
    * Setup graceful shutdown handlers
    * @private
    */
@@ -489,7 +398,7 @@ class TelegramBotAdapter extends ITelegramService {
   _buildPRKeyboard(instanceIdx, repoIdx, pr) {
     return [
       [
-        { text: '🔍 Review Now', callback_data: `review_now:${instanceIdx}:${repoIdx}:${pr.id}` },
+        { text: '🔍 Review Now', callback_data: `action:${instanceIdx}:${repoIdx}:${pr.id}` },
         { text: '✅ Approve', callback_data: `approve:${instanceIdx}:${repoIdx}:${pr.id}` }
       ],
       [
@@ -497,8 +406,7 @@ class TelegramBotAdapter extends ITelegramService {
         { text: '🔒 Close PR', callback_data: `close:${instanceIdx}:${repoIdx}:${pr.id}` }
       ],
       [
-        { text: '⏸️ Skip (3h)', callback_data: `skip:${instanceIdx}:${repoIdx}:${pr.id}` },
-        { text: '👁️ View PR', callback_data: `visit:${instanceIdx}:${repoIdx}:${pr.id}` }
+        { text: '⏸️ Skip (3h)', callback_data: `skip:${instanceIdx}:${repoIdx}:${pr.id}` }
       ]
     ];
   }

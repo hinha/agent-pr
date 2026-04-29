@@ -15,7 +15,6 @@ jest.mock('node-telegram-bot-api', () => {
     stopPolling: jest.fn(),
     deleteWebhook: jest.fn().mockResolvedValue(true)
   }));
-  // Also add methods to prototype for compatibility
   MockBot.prototype.on = jest.fn();
   MockBot.prototype.sendMessage = jest.fn().mockResolvedValue({ message_id: 789 });
   MockBot.prototype.stopPolling = jest.fn();
@@ -296,15 +295,12 @@ describe('TelegramBotAdapter', () => {
     });
   });
 
-  describe('registerCallbackHandler', () => {
-    test('should register callback handler for action', () => {
-      const handler = jest.fn();
-      adapter.registerCallbackHandler('approve', handler);
+  describe('callback_query forwarding', () => {
+    test('should register callback_query handler on bot start', async () => {
+      await adapter.start();
 
-      expect(adapter.callbackHandlers.get('approve')).toBe(handler);
-      expect(mockLogger.debug).toHaveBeenCalledWith(
-        expect.stringContaining('Registered callback handler for action: approve')
-      );
+      const bot = adapter.getBot();
+      expect(bot.on).toHaveBeenCalledWith('callback_query', expect.any(Function));
     });
   });
 
@@ -443,7 +439,7 @@ describe('TelegramBotAdapter', () => {
       expect(keyboard[0]).toHaveLength(2);
       expect(keyboard[0][0]).toEqual({
         text: '🔍 Review Now',
-        callback_data: 'review_now:0:0:pr_123'
+        callback_data: 'action:0:0:pr_123'
       });
       expect(keyboard[0][1]).toEqual({
         text: '✅ Approve',
