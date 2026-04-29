@@ -191,23 +191,30 @@ class TelegramBotAdapter extends ITelegramService {
 
     const message = this._buildPRMessage(pr, summary, instance);
 
-    return this.retryHelper.retry(async () => {
-      const keyboard = this._buildPRKeyboard(instanceIdx, repoIdx, pr);
+    try {
+      await this.retryHelper.retry(async () => {
+        const keyboard = this._buildPRKeyboard(instanceIdx, repoIdx, pr);
 
-      await this.bot.sendMessage(this.chatId, message, {
-        reply_markup: { inline_keyboard: keyboard },
-        message_thread_id: threadId,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true
+        await this.bot.sendMessage(this.chatId, message, {
+          reply_markup: { inline_keyboard: keyboard },
+          message_thread_id: threadId,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true
+        });
+
+        this.logger.info(`[TelegramBotAdapter] PR notification sent for ${owner}/${repo} PR #${pr.number}`);
+      }, {
+        retries: 3,
+        minTimeout: 1000,
+        factor: 2,
+        context: 'TelegramBotAdapter.sendPRNotification'
       });
 
-      this.logger.info(`[TelegramBotAdapter] PR notification sent for ${owner}/${repo} PR #${pr.number}`);
-    }, {
-      retries: 3,
-      minTimeout: 1000,
-      factor: 2,
-      context: 'TelegramBotAdapter.sendPRNotification'
-    });
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`[TelegramBotAdapter] Failed to send PR notification: ${error.message}`);
+      return { success: false, error: error.message };
+    }
   }
 
   /**
@@ -233,34 +240,41 @@ class TelegramBotAdapter extends ITelegramService {
 
     const message = this._buildOutdatedReviewMessage(pr, reviewState);
 
-    return this.retryHelper.retry(async () => {
-      const keyboard = [
-        [
-          { text: '🔍 Review Now', callback_data: `action:${instanceIdx}:${repoIdx}:${pr.id}` },
-          { text: '✅ Approve', callback_data: `approve:${instanceIdx}:${repoIdx}:${pr.id}` }
-        ],
-        [
-          { text: '❌ Close PR', callback_data: `close:${instanceIdx}:${repoIdx}:${pr.id}` }
-        ],
-        [
-          { text: '⏸️ Skip (3h)', callback_data: `skip:${instanceIdx}:${repoIdx}:${pr.id}` }
-        ]
-      ];
+    try {
+      await this.retryHelper.retry(async () => {
+        const keyboard = [
+          [
+            { text: '🔍 Review Now', callback_data: `action:${instanceIdx}:${repoIdx}:${pr.id}` },
+            { text: '✅ Approve', callback_data: `approve:${instanceIdx}:${repoIdx}:${pr.id}` }
+          ],
+          [
+            { text: '❌ Close PR', callback_data: `close:${instanceIdx}:${repoIdx}:${pr.id}` }
+          ],
+          [
+            { text: '⏸️ Skip (3h)', callback_data: `skip:${instanceIdx}:${repoIdx}:${pr.id}` }
+          ]
+        ];
 
-      await this.bot.sendMessage(this.chatId, message, {
-        reply_markup: { inline_keyboard: keyboard },
-        message_thread_id: threadId,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true
+        await this.bot.sendMessage(this.chatId, message, {
+          reply_markup: { inline_keyboard: keyboard },
+          message_thread_id: threadId,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true
+        });
+
+        this.logger.info(`[TelegramBotAdapter] Outdated review notification sent for ${owner}/${repo} PR #${pr.number}`);
+      }, {
+        retries: 3,
+        minTimeout: 1000,
+        factor: 2,
+        context: 'TelegramBotAdapter.sendOutdatedReviewNotification'
       });
 
-      this.logger.info(`[TelegramBotAdapter] Outdated review notification sent for ${owner}/${repo} PR #${pr.number}`);
-    }, {
-      retries: 3,
-      minTimeout: 1000,
-      factor: 2,
-      context: 'TelegramBotAdapter.sendOutdatedReviewNotification'
-    });
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`[TelegramBotAdapter] Failed to send outdated review notification: ${error.message}`);
+      return { success: false, error: error.message };
+    }
   }
 
   /**
