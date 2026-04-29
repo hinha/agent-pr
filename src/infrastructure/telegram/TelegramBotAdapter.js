@@ -105,7 +105,11 @@ class TelegramBotAdapter extends ITelegramService {
    * @returns {boolean} True if event had listeners
    */
   emit(event, data) {
-    return EventEmitter.prototype.emit.call(this, event, data);
+    const hasListeners = EventEmitter.prototype.emit.call(this, event, data);
+    if (!hasListeners && event === 'callback_query') {
+      this.logger.warn(`[TelegramBotAdapter] Emitted ${event} with no listeners registered`);
+    }
+    return hasListeners;
   }
 
   /**

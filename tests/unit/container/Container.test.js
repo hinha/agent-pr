@@ -95,24 +95,21 @@ describe('DI Container', () => {
     test('should resolve logger as singleton', () => {
       const logger1 = container.get('logger');
       const logger2 = container.get('logger');
-      // Logger instances might be different due to Winston internals
-      // but they should have the same methods
-      expect(logger1.info).toBeDefined();
-      expect(logger1.error).toBeDefined();
-      expect(logger1.warn).toBeDefined();
-      expect(logger2.info).toBeDefined();
-      expect(logger2.error).toBeDefined();
-      expect(logger2.warn).toBeDefined();
+      // Verify strict singleton identity
+      expect(logger1).toBe(logger2);
     });
 
     test('should resolve retryHelper as singleton', () => {
       const helper1 = container.get('retryHelper');
       const helper2 = container.get('retryHelper');
-      // Check that both have the required methods
-      expect(helper1.retry).toBeDefined();
-      expect(helper1.sleep).toBeDefined();
-      expect(helper2.retry).toBeDefined();
-      expect(helper2.sleep).toBeDefined();
+      // Verify strict singleton identity
+      expect(helper1).toBe(helper2);
+    });
+
+    test('should resolve eventBus as singleton', () => {
+      const eventBus1 = container.get('eventBus');
+      const eventBus2 = container.get('eventBus');
+      expect(eventBus1).toBe(eventBus2);
     });
 
     test('should resolve errorHandler', () => {
@@ -121,7 +118,7 @@ describe('DI Container', () => {
       expect(handler.handle).toBeDefined();
     });
 
-    test('should resolve eventBus', () => {
+    test('should resolve eventBus with correct methods', () => {
       const eventBus = container.get('eventBus');
       expect(eventBus).toBeDefined();
       expect(eventBus.on).toBeDefined();

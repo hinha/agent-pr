@@ -338,26 +338,43 @@ class Container {
 
   /**
    * Register a class as a dependency
+   * Returns a builder that defers registration until lifecycle is specified.
    * @param {string} name - Dependency name
    * @param {Function} ClassConstructor - Class constructor
-   * @returns {Object} Registration object for chaining
+   * @returns {Object} Builder with .singleton() / .scoped() / .transient() methods
    */
   registerClass(name, ClassConstructor) {
     const registration = awilix.asClass(ClassConstructor);
-    this.awilixContainer.register(name, registration);
-    return registration;
+    return this._createLifecycleBuilder(name, registration);
   }
 
   /**
    * Register a function as a dependency
+   * Returns a builder that defers registration until lifecycle is specified.
    * @param {string} name - Dependency name
    * @param {Function} factory - Factory function
-   * @returns {Object} Registration object for chaining
+   * @returns {Object} Builder with .singleton() / .scoped() / .transient() methods
    */
   registerFunction(name, factory) {
     const registration = awilix.asFunction(factory);
-    this.awilixContainer.register(name, registration);
-    return registration;
+    return this._createLifecycleBuilder(name, registration);
+  }
+
+  /**
+   * Create a lifecycle builder that registers with the container
+   * only after the lifecycle method (.singleton/.scoped/.transient) is called.
+   * @param {string} name - Dependency name
+   * @param {Object} registration - Awilix registration
+   * @returns {Object} Builder object
+   * @private
+   */
+  _createLifecycleBuilder(name, registration) {
+    const container = this.awilixContainer;
+    return {
+      singleton() { container.register(name, registration.singleton()); },
+      scoped()    { container.register(name, registration.scoped()); },
+      transient() { container.register(name, registration.transient()); }
+    };
   }
 
   /**
