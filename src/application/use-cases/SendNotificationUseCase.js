@@ -269,7 +269,8 @@ class SendNotificationUseCase {
     message += `Review for <a href="${pr.url}">#${pr.number}</a> is outdated.\n`;
     message += `New commits have been pushed since the review.\n\n`;
     message += `<b>Review:</b> ${review.state}\n`;
-    message += `<b>Comments:</b> ${review.getCommentsCount()}\n`;
+    const commentCount = typeof review.getCommentsCount === 'function' ? review.getCommentsCount() : (review.comments?.length || 0);
+    message += `<b>Comments:</b> ${commentCount}\n`;
 
     return message;
   }

@@ -93,12 +93,14 @@ class MockNotificationService {
     this.sentNotifications = [];
   }
 
-  async sendPRNotification(instance, repo, pr, prDetails, analysis) {
+  async sendPRNotification(notification) {
+    const { owner, repo, pr, summary, threadId } = notification;
+
     this.sentNotifications.push({
-      instance: instance.key,
-      repo: repo.name,
+      instance: owner,  // Will be mapped to key later
+      repo: repo,
       prNumber: pr.number,
-      analysis
+      summary
     });
 
     return {

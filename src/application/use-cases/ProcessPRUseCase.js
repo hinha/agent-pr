@@ -97,13 +97,19 @@ class ProcessPRUseCase {
       );
 
       // Step 5: Send notification
-      const notificationResult = await this.notificationService.sendPRNotification(
-        instance,
-        repo,
+      const notificationResult = await this.notificationService.sendPRNotification({
+        owner: instance.owner,
+        repo: repo.name,
         pr,
-        prDetails,
-        analysis
-      );
+        summary: {
+          purpose: analysis.purpose,
+          riskLevel: analysis.riskLevel,
+          impactArea: analysis.impactArea,
+          diffSize: analysis.diffSize,
+          suspiciousPatterns: analysis.suspiciousPatterns
+        },
+        threadId: repo.threadId
+      });
 
       // Step 6: Emit domain event
       await this.eventBus.emitAsync('pr.processed', {
