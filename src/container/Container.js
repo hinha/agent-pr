@@ -275,6 +275,14 @@ class Container {
       );
     }).singleton();
 
+    // State Repository Factory
+    this.registerFunction('stateRepositoryFactory', (cradle) => {
+      const FileSystemStateRepository = require('../infrastructure/persistence/FileSystemStateRepository');
+      return {
+        create: (owner, repoName) => new FileSystemStateRepository(owner, repoName, cradle.logger)
+      };
+    }).singleton();
+
     // Callback Handler (Telegram callbacks)
     this.registerFunction('callbackHandler', (cradle) => {
       const CallbackHandler = require('../infrastructure/telegram/CallbackHandler');
