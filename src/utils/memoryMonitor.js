@@ -50,7 +50,7 @@ class MemoryMonitor {
 
     logger.info('Memory monitor started', {
       limit: `${this.memoryLimit / 1024 / 1024}MB`,
-      warn: `${this.warnThreshold / 1024 / 1024}MB`,
+      warnThreshold: `${this.warnThreshold / 1024 / 1024}MB`,
       critical: `${this.critThreshold / 1024 / 1024}MB`,
       restart: `${this.restartThreshold / 1024 / 1024}MB`,
       interval: `${this.intervalMs / 1000}s`,
@@ -193,7 +193,7 @@ class MemoryMonitor {
       usagePercent: Math.round((usage.heapUsed / this.memoryLimit) * 100),
       status: this.getMemoryStatus(usage.heapUsed),
       thresholds: {
-        warn: this.warnThreshold,
+        warnThreshold: this.warnThreshold,
         critical: this.critThreshold,
         restart: this.restartThreshold
       }
