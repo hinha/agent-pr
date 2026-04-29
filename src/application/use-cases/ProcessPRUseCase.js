@@ -102,10 +102,11 @@ class ProcessPRUseCase {
         repo: repo.name,
         pr,
         summary: {
-          purpose: analysis.purpose,
+          purpose: pr.description?.substring(0, 200) || 'No description provided',
           riskLevel: analysis.riskLevel,
           impactArea: analysis.impactArea,
-          diffSize: analysis.diffSize,
+          diffSize: prDetails.totalChanges || 0,
+          filesChanged: prDetails.filesChanged || 0,
           suspiciousPatterns: analysis.suspiciousPatterns
         },
         threadId: repo.threadId

@@ -32,9 +32,10 @@ class SendNotificationUseCase {
    * @param {Object} repo - Repository configuration
    * @param {Object} pr - PullRequest entity
    * @param {Object} analysis - PR analysis result
+   * @param {Object} prDetails - PR details (files, changes, etc.)
    * @returns {Promise<Object>} Notification result
    */
-  async execute(instance, repo, pr, analysis) {
+  async execute(instance, repo, pr, analysis, prDetails = {}) {
     const instanceKey = instance.key;
     const repoName = repo.name;
     const prNumber = pr.number;
@@ -57,10 +58,11 @@ class SendNotificationUseCase {
         repo: repoName,
         pr,
         summary: {
-          purpose: analysis.purpose,
+          purpose: analysis.purpose || pr.description?.substring(0, 200) || 'No description provided',
           riskLevel: analysis.riskLevel,
           impactArea: analysis.impactArea,
-          diffSize: analysis.diffSize,
+          diffSize: prDetails.totalChanges || analysis.diffSize || 0,
+          filesChanged: prDetails.filesChanged || 0,
           suspiciousPatterns: analysis.suspiciousPatterns
         },
         threadId: repo.threadId

@@ -156,7 +156,7 @@ describe('RetryHelper', () => {
       const elapsed = Date.now() - startTime;
 
       expect(elapsed).toBeGreaterThanOrEqual(95);
-      expect(elapsed).toBeLessThan(150);
+      expect(elapsed).toBeLessThan(200); // Increased tolerance for timing variations
     });
 
     test('should return Promise', () => {

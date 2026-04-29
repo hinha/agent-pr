@@ -1,6 +1,11 @@
 const TelegramBot = require('node-telegram-bot-api');
 const EventEmitter = require('events');
+const fs = require('fs');
+const path = require('path');
 const ITelegramService = require('../../interfaces/ITelegramService');
+
+// File lock path - ensures only one instance polls
+const LOCK_FILE = path.join(process.cwd(), 'data', '.telegram-polling.lock');
 
 /**
  * TelegramBotAdapter - Telegram bot operations adapter
@@ -10,6 +15,9 @@ const ITelegramService = require('../../interfaces/ITelegramService');
  *
  * It extends EventEmitter to allow external handlers to subscribe to
  * callback queries and other events.
+ *
+ * Uses file locking to ensure only ONE instance polls the Telegram bot.
+ * Multiple instances can coexist, but only the lock holder will poll.
  *
  * @example
  * const adapter = new TelegramBotAdapter(config, logger, retryHelper);
@@ -32,16 +40,32 @@ class TelegramBotAdapter extends ITelegramService {
     this.config = options.config;
     this.eventBus = options.eventBus || null;
 
-    // EAGER instantiation - create bot immediately (like feature branch)
-    // This ensures bot is available as soon as adapter is instantiated
-    this.bot = new TelegramBot(this.botToken, { polling: true });
+    // Singleton: ensure lock directory exists
+    this._ensureLockDir();
+
+    // Try to acquire lock for polling
+    this.isPollingOwner = this._acquireLock();
+    this.lockFd = null;
+
+    // EAGER instantiation - create bot immediately
+    // Only the lock holder should enable polling
+    this.bot = new TelegramBot(this.botToken, { polling: this.isPollingOwner });
     this.chatId = this.config?.app?.telegram?.chatId;
+
+    if (!this.isPollingOwner) {
+      this.logger.info('TelegramBotAdapter initialized in NON-POLLING mode (another instance owns the lock)');
+    }
 
     // Setup event handlers immediately
     this.bot.on('polling_error', (error) => this._handlePollingError(error));
     this.bot.on('callback_query', (query) => {
       this.emit('callback_query', query);
     });
+
+    // Store lock fd for cleanup
+    if (this.isPollingOwner) {
+      this._holdLock();
+    }
 
     // Build instance/repo mapping for compact callback data
     this.instanceMap = new Map();
@@ -120,6 +144,12 @@ class TelegramBotAdapter extends ITelegramService {
     try {
       this.bot.stopPolling();
       this.bot = null;
+
+      // Release lock if we own it
+      if (this.isPollingOwner) {
+        this._releaseLock();
+      }
+
       this.logger.info('TelegramBotAdapter stopped');
 
       if (this.eventBus) {
@@ -319,6 +349,12 @@ class TelegramBotAdapter extends ITelegramService {
    * @private
    */
   async _handlePollingError(error) {
+    // Suppress 409 errors in non-polling mode (expected)
+    if (!this.isPollingOwner && error.code === 'ETELEGRAM' && error.message.includes('409')) {
+      // Silently ignore - we're not polling anyway
+      return;
+    }
+
     this.logger.error(`Polling error: ${error.code} - ${error.message}`);
 
     if (error.code === 'ETELEGRAM' && error.message.includes('409')) {
@@ -353,7 +389,7 @@ class TelegramBotAdapter extends ITelegramService {
 
     return (
       `🔔 <b>New PR: ${this._escapeHtml(pr.title)}</b>\n\n` +
-      `📂 <b>Repository:</b> ${this._escapeHtml(pr.author)} → ${this._escapeHtml(pr.baseBranch)}\n` +
+      `📂 <b>Repository:</b> ${this._escapeHtml(pr.owner)} → ${this._escapeHtml(pr.repo)}\n` +
       `📊 <b>Risk:</b> ${riskEmojiForLevel} ${this._escapeHtml(summary.riskLevel)} | Impact: ${this._escapeHtml(summary.impactArea)}\n` +
       `📝 <b>Purpose:</b> ${this._escapeHtml(summary.purpose)}\n\n` +
       `📁 <b>Files:</b> ${summary.filesChanged} | 📈 <b>Changes:</b> ${summary.diffSize}`
@@ -415,6 +451,92 @@ class TelegramBotAdapter extends ITelegramService {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  // ===== Lock Management (Singleton Pattern) =====
+
+  /**
+   * Ensure lock directory exists
+   * @private
+   */
+  _ensureLockDir() {
+    const lockDir = path.dirname(LOCK_FILE);
+    if (!fs.existsSync(lockDir)) {
+      fs.mkdirSync(lockDir, { recursive: true });
+    }
+  }
+
+  /**
+   * Try to acquire the polling lock
+   * Returns true if lock acquired, false otherwise
+   * @private
+   */
+  _acquireLock() {
+    try {
+      // Try exclusive lock (O_EXCL) - fails if file exists
+      this.lockFd = fs.openSync(LOCK_FILE, 'wx');
+      // Write PID to lock file
+      fs.writeSync(this.lockFd, String(process.pid));
+      this.logger.info(`[TelegramBotAdapter] Acquired polling lock (PID: ${process.pid})`);
+      return true;
+    } catch (err) {
+      if (err.code === 'EEXIST') {
+        // Lock file exists - check if process is still alive
+        try {
+          const pid = parseInt(fs.readFileSync(LOCK_FILE, 'utf8').trim());
+          // Check if process exists (try sending signal 0)
+          process.kill(pid, 0);
+          // Process still alive, we can't acquire lock
+          this.logger.info(`[TelegramBotAdapter] Lock held by PID ${pid}, running in non-polling mode`);
+          return false;
+        } catch (readErr) {
+          if (readErr.code === 'ESRCH' || readErr.code === 'ENOENT') {
+            // Process dead or lock file gone, try to acquire stale lock
+            try {
+              fs.unlinkSync(LOCK_FILE);
+              this.lockFd = fs.openSync(LOCK_FILE, 'wx');
+              fs.writeSync(this.lockFd, String(process.pid));
+              this.logger.info(`[TelegramBotAdapter] Cleaned stale lock, acquired polling lock (PID: ${process.pid})`);
+              return true;
+            } catch (retryErr) {
+              this.logger.warn(`[TelegramBotAdapter] Could not acquire lock after cleanup: ${retryErr.message}`);
+              return false;
+            }
+          }
+          return false;
+        }
+      }
+      this.logger.warn(`[TelegramBotAdapter] Lock acquisition error: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Hold the lock - keep file descriptor open
+   * @private
+   */
+  _holdLock() {
+    // Lock is held as long as fd is open
+    this.logger.debug('[TelegramBotAdapter] Holding polling lock');
+  }
+
+  /**
+   * Release the polling lock
+   * @private
+   */
+  _releaseLock() {
+    try {
+      if (this.lockFd !== null) {
+        fs.closeSync(this.lockFd);
+        this.lockFd = null;
+      }
+      if (fs.existsSync(LOCK_FILE)) {
+        fs.unlinkSync(LOCK_FILE);
+      }
+      this.logger.info('[TelegramBotAdapter] Released polling lock');
+    } catch (err) {
+      this.logger.warn(`[TelegramBotAdapter] Lock release error: ${err.message}`);
+    }
   }
 }
 
