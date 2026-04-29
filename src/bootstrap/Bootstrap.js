@@ -207,10 +207,6 @@ class Bootstrap {
 
     // Register callback handler
     telegramAdapter.on('callback_query', this._callbackQueryHandler);
-
-    // Verify listener is registered
-    const listenerCount = telegramAdapter.listenerCount('callback_query');
-    logger.info(`[Bootstrap] Callback handlers registered (${listenerCount} listener(s) for 'callback_query' event)`);
   }
 
   /**
