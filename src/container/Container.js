@@ -168,7 +168,7 @@ class Container {
       const config = cradle.config;
 
       return new TelegramBotAdapter(
-        config.app.telegram.bot_token,
+        config.app.telegram.botToken,
         {
           logger: cradle.logger,
           retryHelper: cradle.retryHelper,
