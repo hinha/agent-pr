@@ -22,6 +22,7 @@ class Bootstrap {
     this.container = container;
     this.memoryMonitor = null;
     this.isShuttingDown = false;
+    this._callbackQueryHandler = null; // Store for cleanup
   }
 
   /**
@@ -129,8 +130,15 @@ class Bootstrap {
       await orchestrator.stop();
       logger.info('   ✓ PR processing orchestrator stopped');
 
-      // Stop Telegram bot
+      // Remove Telegram callback handler before stopping bot
       const telegramAdapter = this.container.get('telegramAdapter');
+      if (this._callbackQueryHandler) {
+        telegramAdapter.off('callback_query', this._callbackQueryHandler);
+        this._callbackQueryHandler = null;
+        logger.info('   ✓ Telegram callback handlers removed');
+      }
+
+      // Stop Telegram bot
       await telegramAdapter.stop();
       logger.info('   ✓ Telegram bot stopped');
 
@@ -139,8 +147,12 @@ class Bootstrap {
       flagsmithSyncService.stop();
       logger.info('   ✓ Flagsmith sync stopped');
 
-      // Emit application stopped event
+      // Clear EventBus to remove all listeners
       const eventBus = this.container.get('eventBus');
+      eventBus.clear();
+      logger.info('   ✓ EventBus cleared');
+
+      // Emit application stopped event
       await eventBus.emitAsync('application.stopped', {
         stopTime: new Date()
       });
@@ -176,8 +188,8 @@ class Bootstrap {
 
     logger.info(`[Bootstrap] Setting up Telegram callbacks (isPollingOwner: ${telegramAdapter.isPollingOwner})`);
 
-    // Register callback handler
-    telegramAdapter.on('callback_query', async (query) => {
+    // Store handler for cleanup
+    this._callbackQueryHandler = async (query) => {
       try {
         logger.info(`[Bootstrap] Processing callback: ${query.data}`);
         await callbackHandler.handleCallbackQuery(query, config);
@@ -191,9 +203,14 @@ class Bootstrap {
           // Ignore answer errors
         }
       }
-    });
+    };
 
-    logger.info('Telegram callback handlers registered');
+    // Register callback handler
+    telegramAdapter.on('callback_query', this._callbackQueryHandler);
+
+    // Verify listener is registered
+    const listenerCount = telegramAdapter.listenerCount('callback_query');
+    logger.info(`[Bootstrap] Callback handlers registered (${listenerCount} listener(s) for 'callback_query' event)`);
   }
 
   /**

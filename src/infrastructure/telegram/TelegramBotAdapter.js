@@ -60,6 +60,7 @@ class TelegramBotAdapter extends ITelegramService {
     this.bot.on('polling_error', (error) => this._handlePollingError(error));
     this.bot.on('callback_query', (query) => {
       this.logger.info(`[TelegramBotAdapter] Received callback_query: ${query.data}`);
+      this.logger.info(`[TelegramBotAdapter] Emitting to ${this.listenerCount('callback_query')} listener(s)`);
       this.emit('callback_query', query);
     });
 
@@ -143,8 +144,17 @@ class TelegramBotAdapter extends ITelegramService {
     this.logger.info('Stopping TelegramBotAdapter...');
 
     try {
+      // Stop bot polling
       this.bot.stopPolling();
-      this.bot = null;
+
+      // Clear mapping caches
+      this.instanceMap.clear();
+      this.repoMap.clear();
+
+      // Note: We don't remove event listeners from this adapter's EventEmitter
+      // because it extends ITelegramService, not EventEmitter.
+      // The adapter's listeners are for external subscribers (Bootstrap).
+      // Those will be removed by Bootstrap via off() call.
 
       // Release lock if we own it
       if (this.isPollingOwner) {
@@ -160,6 +170,9 @@ class TelegramBotAdapter extends ITelegramService {
       }
     } catch (error) {
       this.logger.error(`Error stopping TelegramBotAdapter: ${error.message}`);
+    } finally {
+      // Always nullify the bot reference, even on error
+      this.bot = null;
     }
   }
 
