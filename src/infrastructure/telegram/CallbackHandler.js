@@ -237,16 +237,44 @@ class CallbackHandler {
    */
   _buildPREntity(callback, repo) {
     const PullRequest = require('../../core/entities/PullRequest');
+    const prIdNum = parseInt(callback.prId, 10);
+    const owner = repo.instanceKey.split('/')[1];
 
+    // Placeholder entity - pr.number is 0 until resolved via _resolveFreshPR
+    // callback.prId is the GitHub node ID, NOT the PR number
     return new PullRequest({
-      id: callback.prId,
-      number: parseInt(callback.prId.split('-').pop() || callback.prId, 10),
-      title: 'PR from callback',
-      owner: repo.instanceKey.split('/')[1],
+      id: prIdNum,
+      number: 0,
+      title: '',
+      owner: owner,
       repo: repo.name,
-      url: `https://github.com/${repo.instanceKey.split('/')[1]}/${repo.name}/pull/${callback.prId}`,
+      url: '',
       createdAt: new Date()
     });
+  }
+
+  /**
+   * Resolve fresh PR data from GitHub API using node ID
+   * Matches feature branch pattern: getOpenPRs() → find by id
+   * @param {PullRequest} pr - Placeholder PR with node ID
+   * @param {Object} repo - Repository config
+   * @param {Object} githubAdapter - GitHub adapter instance
+   * @returns {Promise<PullRequest>} Resolved PR with correct number and full data
+   * @private
+   */
+  async _resolveFreshPR(pr, repo, githubAdapter) {
+    const openPRs = await githubAdapter.getOpenPRs(repo.name);
+    const freshData = openPRs.find(p => p.id === pr.id);
+    if (freshData) {
+      const PullRequest = require('../../core/entities/PullRequest');
+      const freshPR = new PullRequest(freshData);
+      this.logger.info(
+        `[CallbackHandler] Fresh PR data loaded: #${freshPR.number} (${freshPR.headBranch} → ${freshPR.baseBranch})`
+      );
+      return freshPR;
+    }
+    this.logger.warn(`[CallbackHandler] Could not find PR with id=${pr.id} in open PRs`);
+    return pr;
   }
 
   /**
@@ -287,10 +315,14 @@ class CallbackHandler {
    */
   async _handleReviewNow(query, instance, repo, pr) {
     this.logger.info(
-      `[CallbackHandler] Review now requested for PR #${pr.number}`
+      `[CallbackHandler] Review now requested for PR with id=${pr.id}`
     );
 
     await query.answer();
+
+    // Resolve fresh PR data for display (title, number, author)
+    const githubAdapter = this.githubAdapter.create(instance.key);
+    pr = await this._resolveFreshPR(pr, repo, githubAdapter);
 
     // Get available levels from instance config
     const levels = instance.agent?.level || ['low', 'medium', 'high'];
@@ -338,10 +370,14 @@ class CallbackHandler {
    */
   async _handleVisit(query, instance, repo, pr) {
     this.logger.info(
-      `[CallbackHandler] Visit PR requested for PR #${pr.number}`
+      `[CallbackHandler] Visit PR requested for PR with id=${pr.id}`
     );
 
     await query.answer('🔗 Membuka halaman PR...');
+
+    // Resolve fresh PR data for correct URL
+    const githubAdapter = this.githubAdapter.create(instance.key);
+    pr = await this._resolveFreshPR(pr, repo, githubAdapter);
 
     await this.bot.sendMessage(
       this.chatId,
@@ -417,11 +453,12 @@ class CallbackHandler {
    * @private
    */
   async _handleApprove(query, instance, repo, pr) {
-    this.logger.info(`[CallbackHandler] Approving PR #${pr.number}`);
+    this.logger.info(`[CallbackHandler] Approving PR with id=${pr.id}`);
 
     await query.answer('Approving PR...');
 
     const githubAdapter = this.githubAdapter.create(instance.key);
+    pr = await this._resolveFreshPR(pr, repo, githubAdapter);
     const result = await this.reviewPRUseCase.approve(instance, repo, pr, githubAdapter);
 
     if (result.success) {
@@ -438,11 +475,12 @@ class CallbackHandler {
    * @private
    */
   async _handleReject(query, instance, repo, pr) {
-    this.logger.info(`[CallbackHandler] Rejecting PR #${pr.number}`);
+    this.logger.info(`[CallbackHandler] Rejecting PR with id=${pr.id}`);
 
     await query.answer('Requesting changes...');
 
     const githubAdapter = this.githubAdapter.create(instance.key);
+    pr = await this._resolveFreshPR(pr, repo, githubAdapter);
     const result = await this.reviewPRUseCase.reject(instance, repo, pr, null, githubAdapter);
 
     if (result.success) {
@@ -459,11 +497,12 @@ class CallbackHandler {
    * @private
    */
   async _handleClose(query, instance, repo, pr) {
-    this.logger.info(`[CallbackHandler] Closing PR #${pr.number}`);
+    this.logger.info(`[CallbackHandler] Closing PR with id=${pr.id}`);
 
     await query.answer('Closing PR...');
 
     const githubAdapter = this.githubAdapter.create(instance.key);
+    pr = await this._resolveFreshPR(pr, repo, githubAdapter);
     const result = await this.reviewPRUseCase.close(instance, repo, pr, githubAdapter);
 
     if (result.success) {
@@ -503,17 +542,19 @@ class CallbackHandler {
    */
   async _handleReviewLevel(query, instance, repo, pr, level) {
     this.logger.info(
-      `[CallbackHandler] Starting ${level} review for PR #${pr.number}`
+      `[CallbackHandler] Starting ${level} review for PR with id=${pr.id}`
     );
 
-    await query.answer(`Running ${level} review...`);
+    await query.answer(`🚀 Running ${level} review...`);
 
     const githubAdapter = this.githubAdapter.create(instance.key);
+    pr = await this._resolveFreshPR(pr, repo, githubAdapter);
+
     const result = await this.reviewPRUseCase.execute(instance, repo, pr, level, githubAdapter);
 
     if (result.success) {
       await query.editMessageText(
-        `🔍 ${level.toUpperCase()} review completed\n` +
+        `✅ ${level.toUpperCase()} review completed\n` +
         `${result.reviewResult.comments.length} comments added`
       );
     } else {
@@ -559,11 +600,12 @@ class CallbackHandler {
    * @private
    */
   async _handleApproveOutdated(query, instance, repo, pr, reviewId) {
-    this.logger.info(`[CallbackHandler] Approving outdated review ${reviewId} for PR #${pr.number}`);
+    this.logger.info(`[CallbackHandler] Approving outdated review ${reviewId} for PR with id=${pr.id}`);
 
     await query.answer('Approving PR...');
 
     const githubAdapter = this.githubAdapter.create(instance.key);
+    pr = await this._resolveFreshPR(pr, repo, githubAdapter);
     const result = await this.reviewPRUseCase.approve(instance, repo, pr, githubAdapter);
 
     if (result.success) {
@@ -630,12 +672,14 @@ class CallbackHandler {
    */
   async _handleReviewLevelOutdated(query, instance, repo, pr, reviewId, level) {
     this.logger.info(
-      `[CallbackHandler] Starting ${level} re-review for PR #${pr.number}, review ${reviewId}`
+      `[CallbackHandler] Starting ${level} re-review for PR with id=${pr.id}, review ${reviewId}`
     );
 
     await query.answer(`🚀 Starting ${level} re-review...`);
 
     const githubAdapter = this.githubAdapter.create(instance.key);
+    pr = await this._resolveFreshPR(pr, repo, githubAdapter);
+
     const result = await this.reviewPRUseCase.execute(instance, repo, pr, level, githubAdapter);
 
     if (result.success) {
@@ -646,7 +690,7 @@ class CallbackHandler {
       }
 
       await query.editMessageText(
-        `🔍 ${level.toUpperCase()} re-review completed\n` +
+        `✅ ${level.toUpperCase()} re-review completed\n` +
         `${result.reviewResult.comments.length} comments added`
       );
     } else {

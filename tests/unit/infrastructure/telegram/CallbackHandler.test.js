@@ -33,10 +33,22 @@ describe('CallbackHandler', () => {
       emitAsync: jest.fn().mockResolvedValue()
     };
 
+    // Mock PRs that can be resolved by node ID
+    const mockOpenPRs = [
+      { id: 12345, number: 42, title: 'Test PR 42', author: 'testuser', owner: 'testorg', repo: 'test-repo', url: 'https://github.com/testorg/test-repo/pull/42', headBranch: 'feature', baseBranch: 'main', headSha: 'abc123' },
+      { id: 67890, number: 99, title: 'Test PR 99', author: 'testuser', owner: 'testorg', repo: 'test-repo', url: 'https://github.com/testorg/test-repo/pull/99', headBranch: 'fix', baseBranch: 'main', headSha: 'def456' },
+      { id: 11111, number: 100, title: 'Test PR 100', author: 'testuser', owner: 'testorg', repo: 'test-repo', url: 'https://github.com/testorg/test-repo/pull/100', headBranch: 'feat', baseBranch: 'main', headSha: 'ghi789' },
+      { id: 22222, number: 101, title: 'Test PR 101', author: 'testuser', owner: 'testorg', repo: 'test-repo', url: 'https://github.com/testorg/test-repo/pull/101', headBranch: 'chore', baseBranch: 'main', headSha: 'jkl012' },
+      { id: 33333, number: 102, title: 'Test PR 102', author: 'testuser', owner: 'testorg', repo: 'test-repo', url: 'https://github.com/testorg/test-repo/pull/102', headBranch: 'dev', baseBranch: 'main', headSha: 'mno345' },
+      { id: 44444, number: 103, title: 'Test PR 103', author: 'testuser', owner: 'testorg', repo: 'test-repo', url: 'https://github.com/testorg/test-repo/pull/103', headBranch: 'bugfix', baseBranch: 'main', headSha: 'pqr678' },
+      { id: 55555, number: 104, title: 'Test PR 104', author: 'testuser', owner: 'testorg', repo: 'test-repo', url: 'https://github.com/testorg/test-repo/pull/104', headBranch: 'hotfix', baseBranch: 'main', headSha: 'stu901' }
+    ];
+
     mockGitHubAdapter = {
       create: jest.fn().mockReturnValue({
         createPullRequestReview: jest.fn(),
-        updatePullRequest: jest.fn()
+        updatePullRequest: jest.fn(),
+        getOpenPRs: jest.fn().mockResolvedValue(mockOpenPRs)
       })
     };
 
@@ -82,26 +94,26 @@ describe('CallbackHandler', () => {
 
   describe('_parseCallbackData', () => {
     test('should parse standard action callback', () => {
-      const data = 'action:0:0:test-repo-123';
+      const data = 'action:0:0:12345';
       const result = handler._parseCallbackData(data);
 
       expect(result).toEqual({
         action: 'action',
         instanceIdx: 0,
         repoIdx: 0,
-        prId: 'test-repo-123'
+        prId: '12345'
       });
     });
 
     test('should parse approve callback', () => {
-      const data = 'approve:0:0:test-repo-456';
+      const data = 'approve:0:0:67890';
       const result = handler._parseCallbackData(data);
 
       expect(result).toEqual({
         action: 'approve',
         instanceIdx: 0,
         repoIdx: 0,
-        prId: 'test-repo-456'
+        prId: '67890'
       });
     });
 
@@ -118,38 +130,38 @@ describe('CallbackHandler', () => {
     });
 
     test('should parse close callback', () => {
-      const data = 'close:0:0:test-repo-999';
+      const data = 'close:0:0:11111';
       const result = handler._parseCallbackData(data);
 
       expect(result).toEqual({
         action: 'close',
         instanceIdx: 0,
         repoIdx: 0,
-        prId: 'test-repo-999'
+        prId: '11111'
       });
     });
 
     test('should parse skip callback', () => {
-      const data = 'skip:0:0:test-repo-111';
+      const data = 'skip:0:0:22222';
       const result = handler._parseCallbackData(data);
 
       expect(result).toEqual({
         action: 'skip',
         instanceIdx: 0,
         repoIdx: 0,
-        prId: 'test-repo-111'
+        prId: '22222'
       });
     });
 
     test('should parse review_level callback with level', () => {
-      const data = 'review_level:0:0:test-repo-222:low';
+      const data = 'review_level:0:0:33333:low';
       const result = handler._parseCallbackData(data);
 
       expect(result).toEqual({
         action: 'review_level',
         instanceIdx: 0,
         repoIdx: 0,
-        prId: 'test-repo-222',
+        prId: '33333',
         level: 'low'
       });
     });
@@ -168,28 +180,28 @@ describe('CallbackHandler', () => {
     });
 
     test('should parse review_level callback with high level', () => {
-      const data = 'review_level:0:0:test-repo-444:high';
+      const data = 'review_level:0:0:44444:high';
       const result = handler._parseCallbackData(data);
 
       expect(result).toEqual({
         action: 'review_level',
         instanceIdx: 0,
         repoIdx: 0,
-        prId: 'test-repo-444',
+        prId: '44444',
         level: 'high'
       });
     });
 
     test('should parse dismiss_outdated callback with reviewId', () => {
-      const data = 'dismiss_outdated:0:0:test-repo-123:review-456';
+      const data = 'dismiss_outdated:0:0:12345:review-789';
       const result = handler._parseCallbackData(data);
 
       expect(result).toEqual({
         action: 'dismiss_outdated',
         instanceIdx: 0,
         repoIdx: 0,
-        prId: 'test-repo-123',
-        reviewId: 'review-456'
+        prId: '12345',
+        reviewId: 'review-789'
       });
     });
 
@@ -210,7 +222,7 @@ describe('CallbackHandler', () => {
   describe('handleCallbackQuery - review_now (review level selection)', () => {
     test('should handle review_now callback successfully', async () => {
       const mockQuery = {
-        data: 'review_now:0:0:test-repo-123',
+        data: 'review_now:0:0:12345',
         answer: jest.fn().mockResolvedValue(),
         message: { message_id: 999 }
       };
@@ -232,7 +244,7 @@ describe('CallbackHandler', () => {
 
     test('should build keyboard with default levels', async () => {
       const mockQuery = {
-        data: 'review_now:0:0:test-repo-123',
+        data: 'review_now:0:0:12345',
         answer: jest.fn().mockResolvedValue(),
         message: { message_id: 999 }
       };
@@ -270,7 +282,7 @@ describe('CallbackHandler', () => {
       };
 
       const mockQuery = {
-        data: 'review_now:0:0:test-repo-123',
+        data: 'review_now:0:0:12345',
         answer: jest.fn().mockResolvedValue(),
         message: { message_id: 999 }
       };
@@ -294,7 +306,7 @@ describe('CallbackHandler', () => {
   describe('handleCallbackQuery - approve', () => {
     test('should handle approve callback successfully', async () => {
       const mockQuery = {
-        data: 'approve:0:0:test-repo-456',
+        data: 'approve:0:0:67890',
         answer: jest.fn().mockResolvedValue(),
         editMessageText: jest.fn().mockResolvedValue()
       };
@@ -303,7 +315,7 @@ describe('CallbackHandler', () => {
 
       expect(result.success).toBe(true);
       expect(mockQuery.answer).toHaveBeenCalledWith('Approving PR...');
-      expect(mockQuery.editMessageText).toHaveBeenCalledWith('✅ PR #456 approved');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith('✅ PR #99 approved');
       expect(mockReviewPRUseCase.approve).toHaveBeenCalled();
       expect(mockGitHubAdapter.create).toHaveBeenCalledWith('github/testorg');
       expect(mockEventBus.emitAsync).toHaveBeenCalledWith('callback.handled', expect.any(Object));
@@ -316,7 +328,7 @@ describe('CallbackHandler', () => {
       });
 
       const mockQuery = {
-        data: 'approve:0:0:test-repo-456',
+        data: 'approve:0:0:67890',
         answer: jest.fn().mockResolvedValue(),
         editMessageText: jest.fn().mockResolvedValue()
       };
@@ -332,7 +344,7 @@ describe('CallbackHandler', () => {
   describe('handleCallbackQuery - reject', () => {
     test('should handle reject callback successfully', async () => {
       const mockQuery = {
-        data: 'reject:0:0:test-repo-789',
+        data: 'reject:0:0:55555',
         answer: jest.fn().mockResolvedValue(),
         editMessageText: jest.fn().mockResolvedValue()
       };
@@ -341,7 +353,7 @@ describe('CallbackHandler', () => {
 
       expect(result.success).toBe(true);
       expect(mockQuery.answer).toHaveBeenCalledWith('Requesting changes...');
-      expect(mockQuery.editMessageText).toHaveBeenCalledWith('❌ Changes requested for PR #789');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith('❌ Changes requested for PR #104');
       expect(mockReviewPRUseCase.reject).toHaveBeenCalled();
       expect(mockEventBus.emitAsync).toHaveBeenCalledWith('callback.handled', expect.any(Object));
     });
@@ -353,7 +365,7 @@ describe('CallbackHandler', () => {
       });
 
       const mockQuery = {
-        data: 'reject:0:0:test-repo-789',
+        data: 'reject:0:0:55555',
         answer: jest.fn().mockResolvedValue(),
         editMessageText: jest.fn().mockResolvedValue()
       };
@@ -368,7 +380,7 @@ describe('CallbackHandler', () => {
   describe('handleCallbackQuery - close', () => {
     test('should handle close callback successfully', async () => {
       const mockQuery = {
-        data: 'close:0:0:test-repo-999',
+        data: 'close:0:0:11111',
         answer: jest.fn().mockResolvedValue(),
         editMessageText: jest.fn().mockResolvedValue()
       };
@@ -377,7 +389,7 @@ describe('CallbackHandler', () => {
 
       expect(result.success).toBe(true);
       expect(mockQuery.answer).toHaveBeenCalledWith('Closing PR...');
-      expect(mockQuery.editMessageText).toHaveBeenCalledWith('🔒 PR #999 closed');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith('🔒 PR #100 closed');
       expect(mockReviewPRUseCase.close).toHaveBeenCalled();
       expect(mockEventBus.emitAsync).toHaveBeenCalledWith('callback.handled', expect.any(Object));
     });
@@ -389,7 +401,7 @@ describe('CallbackHandler', () => {
       });
 
       const mockQuery = {
-        data: 'close:0:0:test-repo-999',
+        data: 'close:0:0:11111',
         answer: jest.fn().mockResolvedValue(),
         editMessageText: jest.fn().mockResolvedValue()
       };
@@ -404,7 +416,7 @@ describe('CallbackHandler', () => {
   describe('handleCallbackQuery - skip', () => {
     test('should handle skip callback successfully', async () => {
       const mockQuery = {
-        data: 'skip:0:0:test-repo-111',
+        data: 'skip:0:0:22222',
         answer: jest.fn().mockResolvedValue(),
         editMessageText: jest.fn().mockResolvedValue()
       };
@@ -432,7 +444,7 @@ describe('CallbackHandler', () => {
       });
 
       const mockQuery = {
-        data: 'skip:0:0:test-repo-111',
+        data: 'skip:0:0:22222',
         answer: jest.fn().mockResolvedValue(),
         editMessageText: jest.fn().mockResolvedValue()
       };
@@ -447,7 +459,7 @@ describe('CallbackHandler', () => {
   describe('handleCallbackQuery - review_level', () => {
     test('should handle review_level with low level', async () => {
       const mockQuery = {
-        data: 'review_level:0:0:test-repo-222:low',
+        data: 'review_level:0:0:33333:low',
         answer: jest.fn().mockResolvedValue(),
         editMessageText: jest.fn().mockResolvedValue()
       };
@@ -455,7 +467,7 @@ describe('CallbackHandler', () => {
       const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
 
       expect(result.success).toBe(true);
-      expect(mockQuery.answer).toHaveBeenCalledWith('Running low review...');
+      expect(mockQuery.answer).toHaveBeenCalledWith('🚀 Running low review...');
       expect(mockQuery.editMessageText).toHaveBeenCalledWith(
         expect.stringContaining('LOW review completed')
       );
@@ -479,7 +491,7 @@ describe('CallbackHandler', () => {
       const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
 
       expect(result.success).toBe(true);
-      expect(mockQuery.answer).toHaveBeenCalledWith('Running medium review...');
+      expect(mockQuery.answer).toHaveBeenCalledWith('🚀 Running medium review...');
       expect(mockReviewPRUseCase.execute).toHaveBeenCalledWith(
         expect.any(Object),
         expect.any(Object),
@@ -491,7 +503,7 @@ describe('CallbackHandler', () => {
 
     test('should handle review_level with high level', async () => {
       const mockQuery = {
-        data: 'review_level:0:0:test-repo-444:high',
+        data: 'review_level:0:0:44444:high',
         answer: jest.fn().mockResolvedValue(),
         editMessageText: jest.fn().mockResolvedValue()
       };
@@ -499,7 +511,7 @@ describe('CallbackHandler', () => {
       const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
 
       expect(result.success).toBe(true);
-      expect(mockQuery.answer).toHaveBeenCalledWith('Running high review...');
+      expect(mockQuery.answer).toHaveBeenCalledWith('🚀 Running high review...');
       expect(mockReviewPRUseCase.execute).toHaveBeenCalledWith(
         expect.any(Object),
         expect.any(Object),
@@ -516,7 +528,7 @@ describe('CallbackHandler', () => {
       });
 
       const mockQuery = {
-        data: 'review_level:0:0:test-repo-222:low',
+        data: 'review_level:0:0:33333:low',
         answer: jest.fn().mockResolvedValue(),
         editMessageText: jest.fn().mockResolvedValue()
       };
@@ -540,7 +552,7 @@ describe('CallbackHandler', () => {
       });
 
       const mockQuery = {
-        data: 'review_level:0:0:test-repo-222:medium',
+        data: 'review_level:0:0:33333:medium',
         answer: jest.fn().mockResolvedValue(),
         editMessageText: jest.fn().mockResolvedValue()
       };
@@ -548,7 +560,7 @@ describe('CallbackHandler', () => {
       await handler.handleCallbackQuery(mockQuery, mockConfig);
 
       expect(mockQuery.editMessageText).toHaveBeenCalledWith(
-        '🔍 MEDIUM review completed\n3 comments added'
+        '✅ MEDIUM review completed\n3 comments added'
       );
     });
   });
@@ -556,7 +568,7 @@ describe('CallbackHandler', () => {
   describe('handleCallbackQuery - dismiss', () => {
     test('should handle dismiss_outdated callback for outdated reviews', async () => {
       const mockQuery = {
-        data: 'dismiss_outdated:0:0:test-repo-123:review-456',
+        data: 'dismiss_outdated:0:0:12345:review-789',
         answer: jest.fn().mockResolvedValue(),
         editMessageText: jest.fn().mockResolvedValue()
       };
@@ -680,11 +692,11 @@ describe('CallbackHandler', () => {
   });
 
   describe('_buildPREntity', () => {
-    test('should build PR entity from callback', () => {
+    test('should build placeholder PR entity with node ID', () => {
       const callback = {
         instanceIdx: 0,
         repoIdx: 0,
-        prId: 'test-repo-123'
+        prId: '12345'
       };
 
       const repo = {
@@ -694,19 +706,17 @@ describe('CallbackHandler', () => {
 
       const pr = handler._buildPREntity(callback, repo);
 
-      expect(pr).toHaveProperty('id', 'test-repo-123');
-      expect(pr).toHaveProperty('number');
-      expect(pr).toHaveProperty('title');
+      expect(pr).toHaveProperty('id', 12345);
+      expect(pr).toHaveProperty('number', 0); // Placeholder - resolved later via _resolveFreshPR
       expect(pr).toHaveProperty('owner', 'testorg');
       expect(pr).toHaveProperty('repo', 'test-repo');
-      expect(pr).toHaveProperty('url');
     });
 
-    test('should handle prId with number suffix', () => {
+    test('should store node ID as id field', () => {
       const callback = {
         instanceIdx: 0,
         repoIdx: 0,
-        prId: 'test-repo-123'
+        prId: '67890'
       };
 
       const repo = {
@@ -715,7 +725,8 @@ describe('CallbackHandler', () => {
       };
 
       const pr = handler._buildPREntity(callback, repo);
-      expect(pr.number).toBe(123);
+      expect(pr.id).toBe(67890);
+      expect(pr.number).toBe(0);
     });
   });
 
@@ -760,7 +771,7 @@ describe('CallbackHandler', () => {
         name: 'test-repo'
       };
 
-      const pr = { id: 'test-repo-123', number: 123, title: 'Test PR' };
+      const pr = { id: '42', number: 123, title: 'Test PR' };
 
       const keyboard = handler._buildLevelKeyboard(instance, repo, pr);
 

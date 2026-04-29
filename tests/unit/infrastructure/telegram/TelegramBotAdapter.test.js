@@ -770,7 +770,7 @@ describe('TelegramBotAdapter', () => {
 
   describe('_buildPRKeyboard', () => {
     test('should build keyboard with all actions', () => {
-      const keyboard = adapter._buildPRKeyboard(0, 0, { id: 'pr_123' });
+      const keyboard = adapter._buildPRKeyboard(0, 0, { id: 'pr_123', number: 42 });
 
       expect(keyboard).toHaveLength(3);
       expect(keyboard[0]).toHaveLength(2);

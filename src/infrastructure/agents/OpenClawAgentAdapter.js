@@ -1,4 +1,6 @@
 const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 const IAgentService = require('../../interfaces/IAgentService');
 const { MCPError } = require('../../shared/errors');
 
@@ -169,35 +171,45 @@ class OpenClawAgentAdapter extends IAgentService {
    * @private
    */
   _buildReviewPrompt(owner, repo, pr, level, levelConfig, files) {
-    const filesList = files.map(f => `- ${f.filename} (${f.status}, ${f.additions}+ ${f.deletions}-)`).join('\n');
+    const focusAreas = levelConfig.focusAreas.join(', ');
 
-    return (
-      `Review the following pull request:\n\n` +
-      `Repository: ${owner}/${repo}\n` +
-      `PR Title: ${pr.title}\n` +
-      `PR Description: ${pr.description || 'No description'}\n` +
-      `Base Branch: ${pr.baseBranch}\n` +
-      `Head Branch: ${pr.headBranch}\n` +
-      `Head SHA: ${pr.headSha}\n\n` +
-      `Files Changed:\n${filesList}\n\n` +
-      `Review Level: ${level.toUpperCase()}\n` +
-      `Focus Areas: ${levelConfig.focusAreas.join(', ')}\n` +
-      `Max Comments Per File: ${levelConfig.maxCommentsPerFile}\n\n` +
-      `Provide your review as a JSON object with this structure:\n` +
-      `{\n` +
-      `  "summary": "Overall review summary",\n` +
-      `  "comments": [\n` +
-      `    {\n` +
-      `      "file": "path/to/file.js",\n` +
-      `      "line": 123,\n` +
-      `      "message": "Issue description",\n` +
-      `      "severity": "LOW|MEDIUM|HIGH",\n` +
-      `      "suggestedCode": "Fixed code (optional)"\n` +
-      `    }\n` +
-      `  ]\n` +
-      `}\n\n` +
-      `Only comment on actual issues. For minor issues, use LOW severity. For bugs or security issues, use HIGH severity.`
-    );
+    // Load prompt template from file (like feature branch)
+    const possiblePaths = [
+      path.join(process.cwd(), 'src/prompts/review.txt'),
+      path.join(process.cwd(), 'prompts/review.txt'),
+      path.join(__dirname, '../../prompts/review.txt')
+    ];
+
+    let template;
+    for (const tryPath of possiblePaths) {
+      try {
+        template = fs.readFileSync(tryPath, 'utf-8');
+        this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] Prompt template loaded from: ${tryPath}`);
+        break;
+      } catch (err) {
+        // Try next path
+      }
+    }
+
+    if (!template) {
+      this.logger.error(`[OpenClawAgentAdapter:${owner}/${repo}] Failed to read prompt template`);
+      throw new Error('Prompt template not found');
+    }
+
+    const instance = this._getInstanceByOwner(owner);
+    const mcpName = instance?.mcpName || 'github';
+
+    return template
+      .replace('{{PR_NUMBER}}', pr.number)
+      .replace('{{LEVEL}}', level.toUpperCase())
+      .replace('{{FOCUS_AREAS}}', focusAreas)
+      .replace('{{MAX_COMMENTS}}', levelConfig.maxCommentsPerFile)
+      .replace('{{OWNER}}', owner)
+      .replace('{{REPO}}', repo)
+      .replace('{{SOURCE_BRANCH}}', pr.headBranch || 'unknown')
+      .replace('{{TARGET_BRANCH}}', pr.baseBranch || 'main')
+      .replace('{{PR_URL}}', pr.url)
+      .replace('{{MCP_NAME}}', mcpName);
   }
 
   /**
