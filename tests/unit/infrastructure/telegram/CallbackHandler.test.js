@@ -1,0 +1,748 @@
+/**
+ * Unit Tests: CallbackHandler
+ *
+ * Tests for the callback handler that processes Telegram bot button callbacks.
+ */
+
+const CallbackHandler = require('../../../../src/infrastructure/telegram/CallbackHandler');
+
+describe('CallbackHandler', () => {
+  let handler;
+  let mockReviewPRUseCase;
+  let mockStateMachine;
+  let mockEventBus;
+  let mockGitHubAdapter;
+  let mockConfig;
+  let mockLogger;
+
+  beforeEach(() => {
+    mockReviewPRUseCase = {
+      approve: jest.fn().mockResolvedValue({ success: true }),
+      reject: jest.fn().mockResolvedValue({ success: true }),
+      close: jest.fn().mockResolvedValue({ success: true }),
+      skip: jest.fn().mockResolvedValue({ success: true }),
+      execute: jest.fn().mockResolvedValue({
+        success: true,
+        reviewResult: { comments: [] }
+      })
+    };
+
+    mockStateMachine = jest.fn();
+
+    mockEventBus = {
+      emitAsync: jest.fn().mockResolvedValue()
+    };
+
+    mockGitHubAdapter = {
+      create: jest.fn().mockReturnValue({
+        createPullRequestReview: jest.fn(),
+        updatePullRequest: jest.fn()
+      })
+    };
+
+    mockConfig = {
+      instances: {
+        'github/testorg': {
+          key: 'github/testorg',
+          owner: 'testorg',
+          mcpName: 'github-work',
+          repos: {
+            'test-repo': { name: 'test-repo', thread_id: 456 }
+          }
+        },
+        'github/otherorg': {
+          key: 'github/otherorg',
+          owner: 'otherorg',
+          mcpName: 'github-other',
+          repos: {
+            'another-repo': { name: 'another-repo', thread_id: 789 }
+          }
+        }
+      }
+    };
+
+    mockLogger = {
+      info: jest.fn(),
+      debug: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn()
+    };
+
+    handler = new CallbackHandler(
+      mockReviewPRUseCase,
+      mockStateMachine,
+      mockEventBus,
+      {
+        logger: mockLogger,
+        githubAdapter: mockGitHubAdapter,
+        config: mockConfig
+      }
+    );
+  });
+
+  describe('_parseCallbackData', () => {
+    test('should parse standard action callback', () => {
+      const data = 'action:0:0:test-repo-123';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'action',
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: 'test-repo-123'
+      });
+    });
+
+    test('should parse approve callback', () => {
+      const data = 'approve:0:0:test-repo-456';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'approve',
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: 'test-repo-456'
+      });
+    });
+
+    test('should parse reject callback', () => {
+      const data = 'reject:1:0:another-repo-789';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'reject',
+        instanceIdx: 1,
+        repoIdx: 0,
+        prId: 'another-repo-789'
+      });
+    });
+
+    test('should parse close callback', () => {
+      const data = 'close:0:0:test-repo-999';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'close',
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: 'test-repo-999'
+      });
+    });
+
+    test('should parse skip callback', () => {
+      const data = 'skip:0:0:test-repo-111';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'skip',
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: 'test-repo-111'
+      });
+    });
+
+    test('should parse review_level callback with level', () => {
+      const data = 'review_level:0:0:test-repo-222:low';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'review_level',
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: 'test-repo-222',
+        level: 'low'
+      });
+    });
+
+    test('should parse review_level callback with medium level', () => {
+      const data = 'review_level:1:0:another-repo-333:medium';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'review_level',
+        instanceIdx: 1,
+        repoIdx: 0,
+        prId: 'another-repo-333',
+        level: 'medium'
+      });
+    });
+
+    test('should parse review_level callback with high level', () => {
+      const data = 'review_level:0:0:test-repo-444:high';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'review_level',
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: 'test-repo-444',
+        level: 'high'
+      });
+    });
+
+    test('should parse dismiss callback with reviewId', () => {
+      const data = 'dismiss:0:0:review-123';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'dismiss',
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: 'review-123',
+        reviewId: 'review-123'
+      });
+    });
+
+    test('should return null for invalid format (too few parts)', () => {
+      const data = 'action:0:0';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toBeNull();
+    });
+
+    test('should return null for empty string', () => {
+      const result = handler._parseCallbackData('');
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('handleCallbackQuery - action (review level selection)', () => {
+    test('should handle action callback successfully', async () => {
+      const mockQuery = {
+        data: 'action:0:0:test-repo-123',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('show_levels');
+      expect(mockQuery.answer).toHaveBeenCalledWith('Select review level...');
+      expect(mockQuery.editMessageText).toHaveBeenCalled();
+      expect(mockQuery.editMessageText.mock.calls[0][0]).toContain('Select Review Level');
+      expect(mockEventBus.emitAsync).toHaveBeenCalledWith('callback.handled', expect.any(Object));
+    });
+
+    test('should build keyboard with default levels', async () => {
+      const mockQuery = {
+        data: 'action:0:0:test-repo-123',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      const keyboard = mockQuery.editMessageText.mock.calls[0][1].reply_markup.inline_keyboard;
+      expect(keyboard).toHaveLength(3); // low, medium, high
+      expect(keyboard[0][0].text).toBe('LOW');
+      expect(keyboard[1][0].text).toBe('MEDIUM');
+      expect(keyboard[2][0].text).toBe('HIGH');
+    });
+
+    test('should build keyboard with custom levels from config', async () => {
+      const customConfig = {
+        instances: {
+          'github/testorg': {
+            key: 'github/testorg',
+            owner: 'testorg',
+            agent: {
+              level: ['low', 'high']
+            },
+            repos: {
+              'test-repo': { name: 'test-repo', thread_id: 456 }
+            }
+          }
+        }
+      };
+
+      const mockQuery = {
+        data: 'action:0:0:test-repo-123',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      await handler.handleCallbackQuery(mockQuery, customConfig);
+
+      const keyboard = mockQuery.editMessageText.mock.calls[0][1].reply_markup.inline_keyboard;
+      expect(keyboard).toHaveLength(2);
+      expect(keyboard[0][0].text).toBe('LOW');
+      expect(keyboard[1][0].text).toBe('HIGH');
+    });
+  });
+
+  describe('handleCallbackQuery - approve', () => {
+    test('should handle approve callback successfully', async () => {
+      const mockQuery = {
+        data: 'approve:0:0:test-repo-456',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Approving PR...');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith('✅ PR #456 approved');
+      expect(mockReviewPRUseCase.approve).toHaveBeenCalled();
+      expect(mockGitHubAdapter.create).toHaveBeenCalledWith('github/testorg');
+      expect(mockEventBus.emitAsync).toHaveBeenCalledWith('callback.handled', expect.any(Object));
+    });
+
+    test('should handle approve failure', async () => {
+      mockReviewPRUseCase.approve.mockResolvedValue({
+        success: false,
+        error: 'Approval failed'
+      });
+
+      const mockQuery = {
+        data: 'approve:0:0:test-repo-456',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(false);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Failed to approve: Approval failed', true);
+      expect(mockQuery.editMessageText).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleCallbackQuery - reject', () => {
+    test('should handle reject callback successfully', async () => {
+      const mockQuery = {
+        data: 'reject:0:0:test-repo-789',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Requesting changes...');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith('❌ Changes requested for PR #789');
+      expect(mockReviewPRUseCase.reject).toHaveBeenCalled();
+      expect(mockEventBus.emitAsync).toHaveBeenCalledWith('callback.handled', expect.any(Object));
+    });
+
+    test('should handle reject failure', async () => {
+      mockReviewPRUseCase.reject.mockResolvedValue({
+        success: false,
+        error: 'Reject failed'
+      });
+
+      const mockQuery = {
+        data: 'reject:0:0:test-repo-789',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(false);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Failed to reject: Reject failed', true);
+    });
+  });
+
+  describe('handleCallbackQuery - close', () => {
+    test('should handle close callback successfully', async () => {
+      const mockQuery = {
+        data: 'close:0:0:test-repo-999',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Closing PR...');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith('🔒 PR #999 closed');
+      expect(mockReviewPRUseCase.close).toHaveBeenCalled();
+      expect(mockEventBus.emitAsync).toHaveBeenCalledWith('callback.handled', expect.any(Object));
+    });
+
+    test('should handle close failure', async () => {
+      mockReviewPRUseCase.close.mockResolvedValue({
+        success: false,
+        error: 'Close failed'
+      });
+
+      const mockQuery = {
+        data: 'close:0:0:test-repo-999',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(false);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Failed to close: Close failed', true);
+    });
+  });
+
+  describe('handleCallbackQuery - skip', () => {
+    test('should handle skip callback successfully', async () => {
+      const mockQuery = {
+        data: 'skip:0:0:test-repo-111',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Skipping...');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('Notifications skipped until')
+      );
+      expect(mockReviewPRUseCase.skip).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.any(Object),
+        expect.any(Object),
+        3 * 60 * 60 * 1000 // 3 hours
+      );
+      expect(mockEventBus.emitAsync).toHaveBeenCalledWith('callback.handled', expect.any(Object));
+    });
+
+    test('should handle skip failure', async () => {
+      mockReviewPRUseCase.skip.mockResolvedValue({
+        success: false,
+        error: 'Skip failed'
+      });
+
+      const mockQuery = {
+        data: 'skip:0:0:test-repo-111',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(false);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Failed to skip: Skip failed', true);
+    });
+  });
+
+  describe('handleCallbackQuery - review_level', () => {
+    test('should handle review_level with low level', async () => {
+      const mockQuery = {
+        data: 'review_level:0:0:test-repo-222:low',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Running low review...');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('LOW review completed')
+      );
+      expect(mockReviewPRUseCase.execute).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.any(Object),
+        expect.any(Object),
+        'low',
+        expect.any(Object)
+      );
+      expect(mockEventBus.emitAsync).toHaveBeenCalledWith('callback.handled', expect.any(Object));
+    });
+
+    test('should handle review_level with medium level', async () => {
+      const mockQuery = {
+        data: 'review_level:1:0:another-repo-333:medium',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Running medium review...');
+      expect(mockReviewPRUseCase.execute).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.any(Object),
+        expect.any(Object),
+        'medium',
+        expect.any(Object)
+      );
+    });
+
+    test('should handle review_level with high level', async () => {
+      const mockQuery = {
+        data: 'review_level:0:0:test-repo-444:high',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Running high review...');
+      expect(mockReviewPRUseCase.execute).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.any(Object),
+        expect.any(Object),
+        'high',
+        expect.any(Object)
+      );
+    });
+
+    test('should handle review_level failure', async () => {
+      mockReviewPRUseCase.execute.mockResolvedValue({
+        success: false,
+        error: 'Review failed'
+      });
+
+      const mockQuery = {
+        data: 'review_level:0:0:test-repo-222:low',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(false);
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith('❌ Review failed: Review failed');
+    });
+
+    test('should show comment count in editMessageText', async () => {
+      mockReviewPRUseCase.execute.mockResolvedValue({
+        success: true,
+        reviewResult: {
+          comments: [
+            { id: 1, body: 'Comment 1' },
+            { id: 2, body: 'Comment 2' },
+            { id: 3, body: 'Comment 3' }
+          ]
+        }
+      });
+
+      const mockQuery = {
+        data: 'review_level:0:0:test-repo-222:medium',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        '🔍 MEDIUM review completed\n3 comments added'
+      );
+    });
+  });
+
+  describe('handleCallbackQuery - dismiss', () => {
+    test('should handle dismiss callback for outdated reviews', async () => {
+      const mockQuery = {
+        data: 'dismiss:0:0:review_123',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Dismissing...');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith('✅ Notification dismissed');
+      expect(mockEventBus.emitAsync).toHaveBeenCalledWith('callback.handled', expect.any(Object));
+    });
+  });
+
+  describe('handleCallbackQuery - error handling', () => {
+    test('should handle invalid callback data format', async () => {
+      const mockQuery = {
+        data: 'invalid-format',
+        answer: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Invalid callback data format');
+      expect(mockEventBus.emitAsync).toHaveBeenCalledWith('callback.error', expect.any(Object));
+    });
+
+    test('should handle unknown action', async () => {
+      const mockQuery = {
+        data: 'unknown:0:0:pr_123',
+        answer: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Unknown callback action: unknown');
+    });
+
+    test('should handle exception during callback processing', async () => {
+      const mockQuery = {
+        data: 'approve:99:99:pr_999',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(false);
+      expect(mockEventBus.emitAsync).toHaveBeenCalledWith('callback.error', expect.any(Object));
+    });
+  });
+
+  describe('_getInstance', () => {
+    test('should return instance at index 0', () => {
+      const instance = handler._getInstance(mockConfig, 0);
+
+      expect(instance).toEqual({
+        ...mockConfig.instances['github/testorg'],
+        instanceIdx: 0
+      });
+      expect(instance.key).toBe('github/testorg');
+    });
+
+    test('should return instance at index 1', () => {
+      const instance = handler._getInstance(mockConfig, 1);
+
+      expect(instance).toEqual({
+        ...mockConfig.instances['github/otherorg'],
+        instanceIdx: 1
+      });
+      expect(instance.key).toBe('github/otherorg');
+    });
+
+    test('should throw error for invalid index', () => {
+      expect(() => handler._getInstance(mockConfig, 99)).toThrow('Instance not found at index 99');
+    });
+  });
+
+  describe('_getRepo', () => {
+    const mockInstance = {
+      key: 'github/testorg',
+      repos: {
+        'test-repo': { name: 'test-repo', thread_id: 456 },
+        'another-repo': { name: 'another-repo', thread_id: 789 }
+      }
+    };
+
+    test('should return repo at index 0', () => {
+      const repo = handler._getRepo(mockInstance, 0);
+
+      expect(repo).toEqual({
+        name: 'test-repo',
+        threadId: 456,
+        instanceKey: 'github/testorg',
+        repoIdx: 0
+      });
+    });
+
+    test('should return repo at index 1', () => {
+      const repo = handler._getRepo(mockInstance, 1);
+
+      expect(repo).toEqual({
+        name: 'another-repo',
+        threadId: 789,
+        instanceKey: 'github/testorg',
+        repoIdx: 1
+      });
+    });
+
+    test('should throw error for invalid index', () => {
+      expect(() => handler._getRepo(mockInstance, 99)).toThrow('Repository not found at index 99');
+    });
+  });
+
+  describe('_buildPREntity', () => {
+    test('should build PR entity from callback', () => {
+      const callback = {
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: 'test-repo-123'
+      };
+
+      const repo = {
+        name: 'test-repo',
+        instanceKey: 'github/testorg'
+      };
+
+      const pr = handler._buildPREntity(callback, repo);
+
+      expect(pr).toHaveProperty('id', 'test-repo-123');
+      expect(pr).toHaveProperty('number');
+      expect(pr).toHaveProperty('title');
+      expect(pr).toHaveProperty('owner', 'testorg');
+      expect(pr).toHaveProperty('repo', 'test-repo');
+      expect(pr).toHaveProperty('url');
+    });
+
+    test('should handle prId with number suffix', () => {
+      const callback = {
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: 'test-repo-123'
+      };
+
+      const repo = {
+        name: 'test-repo',
+        instanceKey: 'github/testorg'
+      };
+
+      const pr = handler._buildPREntity(callback, repo);
+      expect(pr.number).toBe(123);
+    });
+  });
+
+  describe('_escapeHtml', () => {
+    test('should escape HTML special characters', () => {
+      const input = '<script>alert("test")</script>';
+      const output = handler._escapeHtml(input);
+
+      expect(output).toBe('&lt;script&gt;alert(&quot;test&quot;)&lt;/script&gt;');
+    });
+
+    test('should escape ampersand first', () => {
+      const input = 'a & b < c';
+      const output = handler._escapeHtml(input);
+
+      expect(output).toBe('a &amp; b &lt; c');
+    });
+
+    test('should handle empty string', () => {
+      expect(handler._escapeHtml('')).toBe('');
+    });
+
+    test('should handle null/undefined', () => {
+      expect(handler._escapeHtml(null)).toBe('');
+      expect(handler._escapeHtml(undefined)).toBe('');
+    });
+  });
+
+  describe('_buildLevelKeyboard', () => {
+    test('should build keyboard with all levels', () => {
+      const instance = {
+        key: 'github/testorg',
+        agent: {
+          level: ['low', 'medium', 'high']
+        },
+        repos: {
+          'test-repo': { name: 'test-repo' }
+        }
+      };
+
+      const repo = {
+        name: 'test-repo'
+      };
+
+      const pr = { id: 'test-repo-123', number: 123, title: 'Test PR' };
+
+      const keyboard = handler._buildLevelKeyboard(instance, repo, pr);
+
+      expect(keyboard).toHaveLength(3);
+      expect(keyboard[0][0]).toEqual({
+        text: 'LOW',
+        callback_data: expect.stringContaining('review_level:')
+      });
+    });
+  });
+});

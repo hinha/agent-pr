@@ -389,6 +389,256 @@ describe('TelegramBotAdapter', () => {
       const bot = adapter.getBot();
       expect(bot.on).toHaveBeenCalledWith('callback_query', expect.any(Function));
     });
+
+    test('should forward callback_query events to registered listeners', async () => {
+      await adapter.start();
+
+      const bot = adapter.getBot();
+      const mockListener = jest.fn();
+      adapter.on('callback_query', mockListener);
+
+      // Get the callback handler that was registered with the bot
+      const callbackHandlerCalls = bot.on.mock.calls.filter(
+        call => call[0] === 'callback_query'
+      );
+      const callbackHandler = callbackHandlerCalls[0][1];
+
+      // Simulate receiving a callback query
+      const mockQuery = {
+        data: 'action:0:0:pr_123',
+        message: { message_id: 456 }
+      };
+
+      await callbackHandler(mockQuery);
+
+      expect(mockListener).toHaveBeenCalledWith(mockQuery);
+    });
+
+    test('should handle approve button callback', async () => {
+      await adapter.start();
+
+      const mockListener = jest.fn();
+      adapter.on('callback_query', mockListener);
+
+      const bot = adapter.getBot();
+      const callbackHandlerCalls = bot.on.mock.calls.filter(
+        call => call[0] === 'callback_query'
+      );
+      const callbackHandler = callbackHandlerCalls[0][1];
+
+      const mockQuery = {
+        data: 'approve:0:0:pr_456',
+        id: 'cb_123',
+        message: { message_id: 789 }
+      };
+
+      await callbackHandler(mockQuery);
+
+      expect(mockListener).toHaveBeenCalledWith(mockQuery);
+      expect(mockListener).toHaveBeenCalledTimes(1);
+    });
+
+    test('should handle reject button callback', async () => {
+      await adapter.start();
+
+      const mockListener = jest.fn();
+      adapter.on('callback_query', mockListener);
+
+      const bot = adapter.getBot();
+      const callbackHandlerCalls = bot.on.mock.calls.filter(
+        call => call[0] === 'callback_query'
+      );
+      const callbackHandler = callbackHandlerCalls[0][1];
+
+      const mockQuery = {
+        data: 'reject:1:0:pr_789',
+        id: 'cb_456',
+        message: { message_id: 101 }
+      };
+
+      await callbackHandler(mockQuery);
+
+      expect(mockListener).toHaveBeenCalledWith(mockQuery);
+      expect(mockListener).toHaveBeenCalledTimes(1);
+    });
+
+    test('should handle close button callback', async () => {
+      await adapter.start();
+
+      const mockListener = jest.fn();
+      adapter.on('callback_query', mockListener);
+
+      const bot = adapter.getBot();
+      const callbackHandlerCalls = bot.on.mock.calls.filter(
+        call => call[0] === 'callback_query'
+      );
+      const callbackHandler = callbackHandlerCalls[0][1];
+
+      const mockQuery = {
+        data: 'close:0:0:pr_999',
+        id: 'cb_789',
+        message: { message_id: 202 }
+      };
+
+      await callbackHandler(mockQuery);
+
+      expect(mockListener).toHaveBeenCalledWith(mockQuery);
+      expect(mockListener).toHaveBeenCalledTimes(1);
+    });
+
+    test('should handle skip button callback', async () => {
+      await adapter.start();
+
+      const mockListener = jest.fn();
+      adapter.on('callback_query', mockListener);
+
+      const bot = adapter.getBot();
+      const callbackHandlerCalls = bot.on.mock.calls.filter(
+        call => call[0] === 'callback_query'
+      );
+      const callbackHandler = callbackHandlerCalls[0][1];
+
+      const mockQuery = {
+        data: 'skip:0:0:pr_111',
+        id: 'cb_999',
+        message: { message_id: 303 }
+      };
+
+      await callbackHandler(mockQuery);
+
+      expect(mockListener).toHaveBeenCalledWith(mockQuery);
+      expect(mockListener).toHaveBeenCalledTimes(1);
+    });
+
+    test('should handle review_level button callback', async () => {
+      await adapter.start();
+
+      const mockListener = jest.fn();
+      adapter.on('callback_query', mockListener);
+
+      const bot = adapter.getBot();
+      const callbackHandlerCalls = bot.on.mock.calls.filter(
+        call => call[0] === 'callback_query'
+      );
+      const callbackHandler = callbackHandlerCalls[0][1];
+
+      const mockQuery = {
+        data: 'review_level:0:0:pr_222:medium',
+        id: 'cb_111',
+        message: { message_id: 404 }
+      };
+
+      await callbackHandler(mockQuery);
+
+      expect(mockListener).toHaveBeenCalledWith(mockQuery);
+      expect(mockListener).toHaveBeenCalledTimes(1);
+    });
+
+    test('should handle dismiss button callback for outdated reviews', async () => {
+      await adapter.start();
+
+      const mockListener = jest.fn();
+      adapter.on('callback_query', mockListener);
+
+      const bot = adapter.getBot();
+      const callbackHandlerCalls = bot.on.mock.calls.filter(
+        call => call[0] === 'callback_query'
+      );
+      const callbackHandler = callbackHandlerCalls[0][1];
+
+      const mockQuery = {
+        data: 'dismiss:0:0:review_123',
+        id: 'cb_222',
+        message: { message_id: 505 }
+      };
+
+      await callbackHandler(mockQuery);
+
+      expect(mockListener).toHaveBeenCalledWith(mockQuery);
+      expect(mockListener).toHaveBeenCalledTimes(1);
+    });
+
+    test('should handle multiple callbacks sequentially', async () => {
+      await adapter.start();
+
+      const mockListener = jest.fn();
+      adapter.on('callback_query', mockListener);
+
+      const bot = adapter.getBot();
+      const callbackHandlerCalls = bot.on.mock.calls.filter(
+        call => call[0] === 'callback_query'
+      );
+      const callbackHandler = callbackHandlerCalls[0][1];
+
+      const mockQueries = [
+        { data: 'action:0:0:pr_123', id: 'cb_1' },
+        { data: 'approve:0:0:pr_456', id: 'cb_2' },
+        { data: 'reject:1:0:pr_789', id: 'cb_3' },
+        { data: 'review_level:0:0:pr_999:high', id: 'cb_4' },
+        { data: 'skip:0:0:pr_111', id: 'cb_5' }
+      ];
+
+      for (const query of mockQueries) {
+        await callbackHandler(query);
+      }
+
+      expect(mockListener).toHaveBeenCalledTimes(5);
+      mockQueries.forEach((query, index) => {
+        expect(mockListener).toHaveBeenNthCalledWith(index + 1, query);
+      });
+    });
+
+    test('should handle multiple listeners for callback_query', async () => {
+      await adapter.start();
+
+      const mockListener1 = jest.fn();
+      const mockListener2 = jest.fn();
+      adapter.on('callback_query', mockListener1);
+      adapter.on('callback_query', mockListener2);
+
+      const bot = adapter.getBot();
+      const callbackHandlerCalls = bot.on.mock.calls.filter(
+        call => call[0] === 'callback_query'
+      );
+      const callbackHandler = callbackHandlerCalls[0][1];
+
+      const mockQuery = {
+        data: 'action:0:0:pr_123',
+        id: 'cb_1'
+      };
+
+      await callbackHandler(mockQuery);
+
+      expect(mockListener1).toHaveBeenCalledWith(mockQuery);
+      expect(mockListener2).toHaveBeenCalledWith(mockQuery);
+      expect(mockListener1).toHaveBeenCalledTimes(1);
+      expect(mockListener2).toHaveBeenCalledTimes(1);
+    });
+
+    test('should allow removing listeners', async () => {
+      await adapter.start();
+
+      const mockListener = jest.fn();
+      adapter.on('callback_query', mockListener);
+      adapter.off('callback_query', mockListener);
+
+      const bot = adapter.getBot();
+      const callbackHandlerCalls = bot.on.mock.calls.filter(
+        call => call[0] === 'callback_query'
+      );
+      const callbackHandler = callbackHandlerCalls[0][1];
+
+      const mockQuery = {
+        data: 'action:0:0:pr_123',
+        id: 'cb_1'
+      };
+
+      await callbackHandler(mockQuery);
+
+      // The listener was removed, so emit won't call it
+      // Note: This tests the adapter's EventEmitter-like behavior
+      expect(mockListener).not.toHaveBeenCalled();
+    });
   });
 
   describe('getBot', () => {

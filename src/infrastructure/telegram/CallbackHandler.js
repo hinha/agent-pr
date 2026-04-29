@@ -126,6 +126,7 @@ class CallbackHandler {
   _parseCallbackData(data) {
     // Standard format: action:instanceIdx:repoIdx:prId
     // Review level format: review_level:instanceIdx:repoIdx:prId:level
+    // Dismiss format: dismiss:instanceIdx:repoIdx:reviewId
     const parts = data.split(':');
 
     if (parts.length < 4) {
@@ -143,8 +144,8 @@ class CallbackHandler {
       callback.level = parts[4];
     }
 
-    if (callback.action === 'dismiss' && parts.length >= 5) {
-      callback.reviewId = parts[4];
+    if (callback.action === 'dismiss' && parts.length >= 4) {
+      callback.reviewId = parts[3]; // For dismiss, prId is actually reviewId
     }
 
     return callback;
@@ -197,7 +198,7 @@ class CallbackHandler {
 
     return new PullRequest({
       id: callback.prId,
-      number: parseInt(callback.prId.split('-')[1] || callback.prId, 10),
+      number: parseInt(callback.prId.split('-').pop() || callback.prId, 10),
       title: 'PR from callback',
       owner: repo.instanceKey.split('/')[1],
       repo: repo.name,

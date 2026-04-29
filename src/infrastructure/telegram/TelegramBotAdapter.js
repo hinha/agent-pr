@@ -60,7 +60,6 @@ class TelegramBotAdapter extends ITelegramService {
     this.bot.on('polling_error', (error) => this._handlePollingError(error));
     this.bot.on('callback_query', (query) => {
       this.logger.info(`[TelegramBotAdapter] Received callback_query: ${query.data}`);
-      this.logger.info(`[TelegramBotAdapter] Emitting to ${this.listenerCount('callback_query')} listener(s)`);
       this.emit('callback_query', query);
     });
 
