@@ -17,6 +17,7 @@ class CallbackHandler {
    * @param {Object} options - Configuration options
    * @param {Object} options.logger - Logger instance
    * @param {Object} options.githubAdapter - GitHub adapter factory with create/createForOwner methods
+   * @param {Object} options.config - Full application config (for level options)
    */
   constructor(reviewPRUseCase, stateMachine, eventBus, options = {}) {
     this.reviewPRUseCase = reviewPRUseCase;
@@ -24,6 +25,7 @@ class CallbackHandler {
     this.eventBus = eventBus;
     this.logger = options.logger || console;
     this.githubAdapter = options.githubAdapter;
+    this.config = options.config || null;
   }
 
   /**
@@ -216,12 +218,61 @@ class CallbackHandler {
     // Answer callback to show processing
     await query.answer('Select review level...');
 
+    // Build level selection keyboard
+    const keyboard = this._buildLevelKeyboard(instance, repo, pr);
+
     // Edit message to show level options
-    // This would be handled by TelegramAdapter
+    await query.editMessageText(
+      `🔍 <b>Select Review Level</b>\n\n` +
+      `📌 PR #${pr.number}: ${this._escapeHtml(pr.title)}\n\n` +
+      `Choose the review depth:`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: keyboard }
+      }
+    );
+
     return {
       success: true,
       action: 'show_levels'
     };
+  }
+
+  /**
+   * Build keyboard for review level selection
+   * @private
+   */
+  _buildLevelKeyboard(instance, repo, pr) {
+    // Get available levels from instance config
+    const levels = instance.agent?.level || ['low', 'medium', 'high'];
+
+    // Get instance and repo indices from config
+    const instances = Object.values(this.config?.instances || {});
+    const instanceIdx = instances.findIndex(i => i.key === instance.key);
+
+    const repos = Object.values(instance.repos || {});
+    const repoIdx = repos.findIndex(r => r.name === repo.name || r === repo);
+
+    return levels.map(level => [
+      {
+        text: level.toUpperCase(),
+        callback_data: `review_level:${instanceIdx}:${repoIdx}:${pr.id}:${level}`
+      }
+    ]);
+  }
+
+  /**
+   * Escape HTML special characters
+   * @private
+   */
+  _escapeHtml(text) {
+    if (!text) return '';
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   /**

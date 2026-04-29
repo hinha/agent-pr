@@ -404,7 +404,8 @@ class TelegramBotAdapter extends ITelegramService {
     return (
       `🔔 <b>New PR: ${this._escapeHtml(pr.title)}</b>\n\n` +
       `📂 <b>Repository:</b> ${this._escapeHtml(pr.owner)} → ${this._escapeHtml(pr.repo)}\n` +
-      `📊 <b>Risk:</b> ${riskEmojiForLevel} ${this._escapeHtml(summary.riskLevel)} | Impact: ${this._escapeHtml(summary.impactArea)}\n` +
+      `📊 <b>Risk:</b> ${riskEmojiForLevel} ${this._escapeHtml(summary.riskLevel)}\n` +
+      `💥 <b>Impact:</b> ${this._escapeHtml(summary.impactArea)}\n` +
       `📝 <b>Purpose:</b> ${this._escapeHtml(summary.purpose)}\n\n` +
       `📁 <b>Files:</b> ${summary.filesChanged} | 📈 <b>Changes:</b> ${summary.diffSize}`
     );
