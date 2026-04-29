@@ -283,7 +283,11 @@ class Container {
         cradle.reviewPRUseCase,
         cradle.stateMachine,
         cradle.eventBus,
-        { logger: cradle.logger, githubAdapter: cradle.githubAdapter }
+        {
+          logger: cradle.logger,
+          githubAdapter: cradle.githubAdapter,
+          config: cradle.config
+        }
       );
     }).singleton();
 
