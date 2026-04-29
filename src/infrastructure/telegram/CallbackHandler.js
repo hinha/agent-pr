@@ -5,8 +5,8 @@
  * such as approve, reject, review now, skip, etc.
  *
  * @example
- * const handler = new CallbackHandler(reviewPRUseCase, stateMachine, eventBus);
- * await handler.handleCallbackQuery(query);
+ * const handler = new CallbackHandler(reviewPRUseCase, stateMachine, eventBus, { githubAdapter });
+ * await handler.handleCallbackQuery(query, config);
  */
 
 class CallbackHandler {
@@ -16,12 +16,14 @@ class CallbackHandler {
    * @param {Object} eventBus - EventBus instance
    * @param {Object} options - Configuration options
    * @param {Object} options.logger - Logger instance
+   * @param {Object} options.githubAdapter - GitHub adapter factory with create/createForOwner methods
    */
   constructor(reviewPRUseCase, stateMachine, eventBus, options = {}) {
     this.reviewPRUseCase = reviewPRUseCase;
     this.stateMachine = stateMachine;
     this.eventBus = eventBus;
     this.logger = options.logger || console;
+    this.githubAdapter = options.githubAdapter;
   }
 
   /**
@@ -231,7 +233,8 @@ class CallbackHandler {
 
     await query.answer('Approving PR...');
 
-    const result = await this.reviewPRUseCase.approve(instance, repo, pr);
+    const githubAdapter = this.githubAdapter.create(instance.key);
+    const result = await this.reviewPRUseCase.approve(instance, repo, pr, githubAdapter);
 
     if (result.success) {
       await query.editMessageText(`✅ PR #${pr.number} approved`);
@@ -251,7 +254,8 @@ class CallbackHandler {
 
     await query.answer('Requesting changes...');
 
-    const result = await this.reviewPRUseCase.reject(instance, repo, pr);
+    const githubAdapter = this.githubAdapter.create(instance.key);
+    const result = await this.reviewPRUseCase.reject(instance, repo, pr, null, githubAdapter);
 
     if (result.success) {
       await query.editMessageText(`❌ Changes requested for PR #${pr.number}`);
@@ -271,7 +275,8 @@ class CallbackHandler {
 
     await query.answer('Closing PR...');
 
-    const result = await this.reviewPRUseCase.close(instance, repo, pr);
+    const githubAdapter = this.githubAdapter.create(instance.key);
+    const result = await this.reviewPRUseCase.close(instance, repo, pr, githubAdapter);
 
     if (result.success) {
       await query.editMessageText(`🔒 PR #${pr.number} closed`);
@@ -315,7 +320,8 @@ class CallbackHandler {
 
     await query.answer(`Running ${level} review...`);
 
-    const result = await this.reviewPRUseCase.execute(instance, repo, pr, level);
+    const githubAdapter = this.githubAdapter.create(instance.key);
+    const result = await this.reviewPRUseCase.execute(instance, repo, pr, level, githubAdapter);
 
     if (result.success) {
       await query.editMessageText(

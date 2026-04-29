@@ -104,18 +104,13 @@ class Container {
       });
     }).singleton();
 
-    // State Machine with in-memory repository for simplicity
+    // State Machine with simple key-value store
     this.registerFunction('stateMachine', (cradle) => {
       const PRStateMachine = require('../core/services/PRStateMachine');
-      const InMemoryStateRepository = require('../infrastructure/persistence/InMemoryStateRepository');
-
-      // Use a placeholder in-memory repository
-      // Note: This won't persist across restarts, but allows the app to run
-      const repository = new InMemoryStateRepository('placeholder', 'placeholder', cradle.logger);
-      repository.initialize();
+      const SimpleKeyMapStateRepository = require('../infrastructure/persistence/SimpleKeyMapStateRepository');
 
       return new PRStateMachine(
-        repository,
+        new SimpleKeyMapStateRepository(),
         { logger: cradle.logger, maxNotifications: 3 }
       );
     }).singleton();
@@ -216,7 +211,6 @@ class Container {
 
       return new ReviewPRUseCase(
         cradle.agentAdapter,
-        cradle.githubAdapter,
         cradle.stateMachine,
         cradle.eventBus,
         { logger: cradle.logger }
@@ -292,7 +286,7 @@ class Container {
         cradle.reviewPRUseCase,
         cradle.stateMachine,
         cradle.eventBus,
-        { logger: cradle.logger }
+        { logger: cradle.logger, githubAdapter: cradle.githubAdapter }
       );
     }).singleton();
 

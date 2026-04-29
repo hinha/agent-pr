@@ -9,8 +9,8 @@
  * 5. Update state machine
  *
  * @example
- * const useCase = new ReviewPRUseCase(agentService, githubService, stateMachine, eventBus);
- * await useCase.execute(instance, repo, pr, level);
+ * const useCase = new ReviewPRUseCase(agentService, stateMachine, eventBus);
+ * await useCase.execute(instance, repo, pr, level, githubAdapter);
  */
 
 const PRStateMachine = require('../../core/services/PRStateMachine');
@@ -19,15 +19,13 @@ const { PRState } = PRStateMachine;
 class ReviewPRUseCase {
   /**
    * @param {Object} agentService - AgentService instance for AI review
-   * @param {Object} githubService - GitHubService instance
    * @param {Object} stateMachine - PRStateMachine instance
    * @param {Object} eventBus - EventBus instance
    * @param {Object} options - Configuration options
    * @param {Object} options.logger - Logger instance
    */
-  constructor(agentService, githubService, stateMachine, eventBus, options = {}) {
+  constructor(agentService, stateMachine, eventBus, options = {}) {
     this.agentService = agentService;
-    this.githubService = githubService;
     this.stateMachine = stateMachine;
     this.eventBus = eventBus;
     this.logger = options.logger || console;
@@ -40,9 +38,10 @@ class ReviewPRUseCase {
    * @param {Object} repo - Repository configuration
    * @param {Object} pr - PullRequest entity
    * @param {string} level - Review level (low, medium, high)
+   * @param {Object} githubAdapter - MCPGitHubAdapter instance for the instance
    * @returns {Promise<Object>} Review result
    */
-  async execute(instance, repo, pr, level = 'medium') {
+  async execute(instance, repo, pr, level = 'medium', githubAdapter) {
     const instanceKey = instance.key;
     const repoName = repo.name;
     const prNumber = pr.number;
@@ -53,7 +52,7 @@ class ReviewPRUseCase {
       );
 
       // Step 1: Fetch PR details
-      const prDetails = await this.githubService.getPRDetails(repoName, prNumber);
+      const prDetails = await githubAdapter.getPRDetails(repoName, prNumber);
       const { files, totalChanges } = prDetails;
 
       this.logger.debug(
@@ -61,15 +60,13 @@ class ReviewPRUseCase {
       );
 
       // Step 2: Run AI analysis
-      const agentConfig = {
-        owner: instance.owner,
-        repo: repoName,
-        prNumber,
-        level,
-        mcpName: instance.mcpName
-      };
-
-      const reviewResult = await this.agentService.runReview(agentConfig, files);
+      const reviewResult = await this.agentService.reviewPR(
+        instance.owner,
+        repoName,
+        pr,
+        files,
+        level
+      );
 
       if (!reviewResult.success) {
         throw new Error(`AI review failed: ${reviewResult.error}`);
@@ -85,7 +82,8 @@ class ReviewPRUseCase {
         repoName,
         pr,
         reviewResult,
-        instance
+        instance,
+        githubAdapter
       );
 
       // Step 4: Update state machine based on review result
@@ -146,7 +144,7 @@ class ReviewPRUseCase {
    * Submit review to GitHub
    * @private
    */
-  async _submitReview(repoName, pr, reviewResult, instance) {
+  async _submitReview(repoName, pr, reviewResult, instance, githubAdapter) {
     const { comments, summary, requiresChanges } = reviewResult;
 
     // Determine review state
@@ -160,7 +158,7 @@ class ReviewPRUseCase {
     }
 
     // Submit review
-    const review = await this.githubService.createReviewWithComments(
+    const review = await githubAdapter.createReviewWithComments(
       repoName,
       pr,
       {
@@ -211,9 +209,10 @@ class ReviewPRUseCase {
    * @param {Object} instance - Instance configuration
    * @param {Object} repo - Repository configuration
    * @param {Object} pr - PullRequest entity
+   * @param {Object} githubAdapter - MCPGitHubAdapter instance for the instance
    * @returns {Promise<Object>} Approval result
    */
-  async approve(instance, repo, pr) {
+  async approve(instance, repo, pr, githubAdapter) {
     const instanceKey = instance.key;
     const repoName = repo.name;
     const prNumber = pr.number;
@@ -221,7 +220,7 @@ class ReviewPRUseCase {
     try {
       this.logger.info(`[ReviewPRUseCase] Approving PR #${prNumber}`);
 
-      const review = await this.githubService.approvePR(
+      const review = await githubAdapter.approvePR(
         repoName,
         prNumber,
         'Approved via Telegram bot'
@@ -268,9 +267,10 @@ class ReviewPRUseCase {
    * @param {Object} repo - Repository configuration
    * @param {Object} pr - PullRequest entity
    * @param {string} reason - Reason for rejection
+   * @param {Object} githubAdapter - MCPGitHubAdapter instance for the instance
    * @returns {Promise<Object>} Rejection result
    */
-  async reject(instance, repo, pr, reason = 'Changes requested via Telegram bot') {
+  async reject(instance, repo, pr, reason = 'Changes requested via Telegram bot', githubAdapter) {
     const instanceKey = instance.key;
     const repoName = repo.name;
     const prNumber = pr.number;
@@ -278,7 +278,7 @@ class ReviewPRUseCase {
     try {
       this.logger.info(`[ReviewPRUseCase] Requesting changes for PR #${prNumber}`);
 
-      const review = await this.githubService.createReviewWithComments(
+      const review = await githubAdapter.createReviewWithComments(
         repoName,
         pr,
         {
@@ -328,9 +328,10 @@ class ReviewPRUseCase {
    * @param {Object} instance - Instance configuration
    * @param {Object} repo - Repository configuration
    * @param {Object} pr - PullRequest entity
+   * @param {Object} githubAdapter - MCPGitHubAdapter instance for the instance
    * @returns {Promise<Object>} Close result
    */
-  async close(instance, repo, pr) {
+  async close(instance, repo, pr, githubAdapter) {
     const instanceKey = instance.key;
     const repoName = repo.name;
     const prNumber = pr.number;
@@ -338,7 +339,7 @@ class ReviewPRUseCase {
     try {
       this.logger.info(`[ReviewPRUseCase] Closing PR #${prNumber}`);
 
-      await this.githubService.closePR(repoName, prNumber);
+      await githubAdapter.closePR(repoName, prNumber);
 
       // Update state
       await this.stateMachine.transition(
