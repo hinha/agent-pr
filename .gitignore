@@ -30,3 +30,4 @@ Thumbs.db
 /examples/
 /coverage/*
 /config.yml.backup
+/.ai/mcp/mcp.json

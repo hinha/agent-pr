@@ -142,10 +142,10 @@ class PRProcessingOrchestrator {
       this.stats.lastPollTime = new Date();
 
       // Process all instances
-      const instances = this.config.instances || [];
+      const instances = this.config.instances || {};
       const results = [];
 
-      for (const instance of instances) {
+      for (const instance of Object.values(instances)) {
         try {
           const instanceResult = await this._processInstance(instance);
           results.push(...instanceResult);
