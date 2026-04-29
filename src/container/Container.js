@@ -48,7 +48,9 @@ class Container {
     }).singleton();
 
     // Retry Helper - Shared retry logic
-    this.registerClass('retryHelper', RetryHelper).singleton();
+    this.registerFunction('retryHelper', (cradle) => {
+      return new RetryHelper(cradle.logger);
+    }).singleton();
 
     // Error Handler - Centralized error handling
     this.registerFunction('errorHandler', (cradle) => {
