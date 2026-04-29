@@ -195,6 +195,8 @@ class PRProcessingOrchestrator {
 
     this.logger.debug(`[PRProcessingOrchestrator] Processing instance ${instance.key}`);
 
+    const githubAdapter = this.useCases.githubService.create(instance.key);
+
     for (const [repoName, repoConfig] of repos) {
       try {
         const repo = {
@@ -204,7 +206,7 @@ class PRProcessingOrchestrator {
           config: repoConfig
         };
 
-        const repoResults = await this._processRepository(instance, repo);
+        const repoResults = await this._processRepository(instance, repo, githubAdapter);
         results.push(...repoResults);
 
       } catch (error) {
@@ -222,12 +224,12 @@ class PRProcessingOrchestrator {
    * Process a single repository
    * @private
    */
-  async _processRepository(instance, repo) {
+  async _processRepository(instance, repo, githubAdapter) {
     const results = [];
 
     try {
       // Fetch open PRs from GitHub
-      const openPRs = await this.useCases.githubService.getOpenPRs(repo.name);
+      const openPRs = await githubAdapter.getOpenPRs(repo.name);
 
       this.logger.debug(
         `[PRProcessingOrchestrator] Found ${openPRs.length} open PRs in ${repo.name}`
@@ -252,7 +254,7 @@ class PRProcessingOrchestrator {
           }
 
           // Get PR details
-          const prDetails = await this.useCases.githubService.getPRDetails(
+          const prDetails = await githubAdapter.getPRDetails(
             repo.name,
             pr.number
           );
@@ -339,15 +341,6 @@ class PRProcessingOrchestrator {
     };
   }
 
-  /**
-   * Trigger an immediate poll (manual trigger)
-   *
-   * @returns {Promise<void>}
-   */
-  async triggerPoll() {
-    this.logger.info('[PRProcessingOrchestrator] Manual poll triggered');
-    await this._poll();
-  }
 }
 
 module.exports = PRProcessingOrchestrator;

@@ -161,13 +161,13 @@ class ProcessPRUseCase {
 
     // Check PR age
     const maxAgeMs = instanceConfig.maxAgeMs || (instanceConfig.maxAgeHours || 48) * 60 * 60 * 1000;
-    const prAgeMs = pr.getAgeInMs();
+    const prAgeMs = typeof pr.getAgeInMs === 'function' ? pr.getAgeInMs() : (Date.now() - new Date(pr.createdAt).getTime());
 
     if (prAgeMs > maxAgeMs) {
       return {
         shouldProcess: false,
         reason: 'PR too old',
-        prAgeHours: pr.getAgeInHours(),
+        prAgeHours: typeof pr.getAgeInHours === 'function' ? pr.getAgeInHours() : Math.floor(prAgeMs / (60 * 60 * 1000)),
         maxAgeHours: Math.floor(maxAgeMs / (60 * 60 * 1000))
       };
     }
