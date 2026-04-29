@@ -174,9 +174,12 @@ class Bootstrap {
     const telegramAdapter = this.container.get('telegramAdapter');
     const callbackHandler = this.container.get('callbackHandler');
 
+    logger.info(`[Bootstrap] Setting up Telegram callbacks (isPollingOwner: ${telegramAdapter.isPollingOwner})`);
+
     // Register callback handler
     telegramAdapter.on('callback_query', async (query) => {
       try {
+        logger.info(`[Bootstrap] Processing callback: ${query.data}`);
         await callbackHandler.handleCallbackQuery(query, config);
       } catch (error) {
         logger.error(`Error handling callback query: ${error.message}`);
@@ -190,7 +193,7 @@ class Bootstrap {
       }
     });
 
-    logger.debug('Telegram callback handlers registered');
+    logger.info('Telegram callback handlers registered');
   }
 
   /**
