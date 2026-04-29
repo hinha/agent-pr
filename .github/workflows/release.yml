@@ -15,6 +15,27 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Get version info
+        id: version
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "is_tag_build=true" >> $GITHUB_OUTPUT
+          echo "🏷️ Building release from TAG: $TAG_NAME"
+
+      - name: Display build info
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Release Build Information"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Tag: ${{ steps.version.outputs.tag }}"
+          echo "Commit SHA: ${{ github.sha }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Run Number: ${{ github.run_number }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -46,7 +67,19 @@ jobs:
           fail_ci_if_error: false
 
       - name: Build binary
-        run: npm run build
+        run: |
+          echo "Building release binary for tag ${{ steps.version.outputs.tag }}"
+          export GIT_TAG="${{ steps.version.outputs.tag }}"
+          export BUILD_VERSION="${{ steps.version.outputs.tag }}"
+          npm run build
+
+      - name: Display build artifacts
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Build Artifacts"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          ls -lh dist/ 2>/dev/null || echo "No dist/ directory found"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
       - name: Release
         uses: softprops/action-gh-release@v2
