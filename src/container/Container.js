@@ -1,7 +1,6 @@
 const awilix = require('awilix');
 const LoggerFactory = require('../shared/logging/LoggerFactory');
 const RetryHelper = require('../shared/utils/RetryHelper');
-const ErrorHandler = require('../shared/errors/ErrorHandler');
 const { ConfigurationError } = require('../shared/errors');
 
 /**
@@ -52,11 +51,19 @@ class Container {
       return new RetryHelper(cradle.logger);
     }).singleton();
 
-    // Error Handler - Centralized error handling
+    // EventBus - must be registered early (before ErrorHandler and TelegramAdapter)
+    this.registerFunction('eventBus', (cradle) => {
+      const EventBus = require('../shared/events/EventBus');
+      return new EventBus({
+        logger: cradle.logger,
+        enableLogging: process.env.EVENT_LOGGING === 'true'
+      });
+    }).singleton();
+
+    // Error Handler - Centralized error handling (after eventBus is available)
     this.registerFunction('errorHandler', (cradle) => {
-      const logger = cradle.logger;
-      const eventBus = null; // Will be registered later
-      return new ErrorHandler(logger, eventBus);
+      const ErrorHandler = require('../shared/errors/ErrorHandler');
+      return new ErrorHandler(cradle.logger, cradle.eventBus);
     }).singleton();
 
     // ===== Existing Services (Registered as Singletons for Backward Compatibility) =====
@@ -81,15 +88,6 @@ class Container {
     }).singleton();
 
     // ===== New Architecture Components =====
-
-    // EventBus (shared events)
-    this.registerFunction('eventBus', (cradle) => {
-      const EventBus = require('../shared/events/EventBus');
-      return new EventBus({
-        logger: cradle.logger,
-        enableLogging: process.env.EVENT_LOGGING === 'true'
-      });
-    }).singleton();
 
     // ===== Domain Layer =====
 
@@ -159,17 +157,15 @@ class Container {
       };
     }).singleton();
 
-    // Telegram Adapter (implements ITelegramService)
+    // Telegram Adapter (implements ITelegramService) - MUST be registered as singleton
     this.registerFunction('telegramAdapter', (cradle) => {
       const TelegramBotAdapter = require('../infrastructure/telegram/TelegramBotAdapter');
-      const config = cradle.config;
-
       return new TelegramBotAdapter(
-        config.app.telegram.botToken,
+        cradle.config.app.telegram.botToken,
         {
           logger: cradle.logger,
           retryHelper: cradle.retryHelper,
-          config: config,
+          config: cradle.config,
           eventBus: cradle.eventBus
         }
       );
