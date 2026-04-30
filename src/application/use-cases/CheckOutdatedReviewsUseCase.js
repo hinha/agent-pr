@@ -63,7 +63,7 @@ class CheckOutdatedReviewsUseCase {
 
       // Send notifications for outdated reviews
       const notificationResults = [];
-      for (const { pr, review } of outdatedReviews) {
+      for (const { pr, review, outdatedCommit, currentCommit } of outdatedReviews) {
         // Check if we already notified about this outdated review
         const notificationKey = `${instanceKey}/${repoName}/outdated/${review.id}`;
         const alreadyNotified = await this._wasAlreadyNotified(notificationKey);
@@ -73,7 +73,8 @@ class CheckOutdatedReviewsUseCase {
             instance,
             repo,
             review,
-            pr
+            pr,
+            { outdatedCommit, currentCommit }
           );
 
           notificationResults.push({

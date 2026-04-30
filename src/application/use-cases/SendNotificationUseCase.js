@@ -116,9 +116,12 @@ class SendNotificationUseCase {
    * @param {Object} repo - Repository configuration
    * @param {Object} review - Review entity
    * @param {Object} pr - Current PR state
+   * @param {Object} [commitInfo] - Commit comparison info
+   * @param {string} [commitInfo.outdatedCommit] - SHA of the reviewed commit
+   * @param {string} [commitInfo.currentCommit] - SHA of the current HEAD commit
    * @returns {Promise<Object>} Notification result
    */
-  async sendOutdatedReviewNotification(instance, repo, review, pr) {
+  async sendOutdatedReviewNotification(instance, repo, review, pr, commitInfo = {}) {
     const instanceKey = instance.key;
     const repoName = repo.name;
 
@@ -133,6 +136,10 @@ class SendNotificationUseCase {
         repo: repoName,
         pr,
         reviewState: review.state,
+        reviewUser: review.user,
+        reviewBody: review.body,
+        outdatedCommit: commitInfo.outdatedCommit,
+        currentCommit: commitInfo.currentCommit,
         threadId: repo.threadId
       });
 

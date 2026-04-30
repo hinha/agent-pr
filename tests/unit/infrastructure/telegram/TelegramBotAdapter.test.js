@@ -358,13 +358,15 @@ describe('TelegramBotAdapter', () => {
           id: 'pr_123',
           number: 456,
           title: 'Test PR',
-          author: 'testuser'
+          author: 'testuser',
+          repo: 'test-repo',
+          headBranch: 'feature-branch',
+          baseBranch: 'main'
         },
-        reviewState: {
-          reviewId: 'review_1',
-          commitsAtReview: ['abc123'],
-          currentCommits: ['abc123', 'def456']
-        },
+        reviewState: 'APPROVED',
+        reviewUser: 'reviewer-bot',
+        outdatedCommit: 'abc123def456789',
+        currentCommit: 'xyz987abc654321',
         threadId: 456
       };
 
@@ -379,6 +381,75 @@ describe('TelegramBotAdapter', () => {
           })
         })
       );
+    });
+
+    test('should include repo name in outdated review message', async () => {
+      const notification = {
+        owner: 'testorg',
+        repo: 'test-repo',
+        pr: {
+          id: 'pr_123',
+          number: 456,
+          title: 'Test PR',
+          author: 'testuser',
+          repo: 'test-repo'
+        },
+        reviewState: 'APPROVED',
+        threadId: 456
+      };
+
+      await adapter.sendOutdatedReviewNotification(notification);
+
+      const sentMessage = adapter.bot.sendMessage.mock.calls[0][1];
+      expect(sentMessage).toContain('testorg/test-repo');
+    });
+
+    test('should include commit SHA comparison in outdated review message', async () => {
+      const notification = {
+        owner: 'testorg',
+        repo: 'test-repo',
+        pr: {
+          id: 'pr_123',
+          number: 456,
+          title: 'Test PR',
+          author: 'testuser',
+          repo: 'test-repo'
+        },
+        reviewState: 'COMMENTED',
+        reviewUser: 'reviewer-bot',
+        outdatedCommit: 'abc123def456789',
+        currentCommit: 'xyz987abc654321',
+        threadId: 456
+      };
+
+      await adapter.sendOutdatedReviewNotification(notification);
+
+      const sentMessage = adapter.bot.sendMessage.mock.calls[0][1];
+      expect(sentMessage).toContain('abc123d');
+      expect(sentMessage).toContain('xyz987a');
+    });
+
+    test('should include reviewer info in outdated review message', async () => {
+      const notification = {
+        owner: 'testorg',
+        repo: 'test-repo',
+        pr: {
+          id: 'pr_123',
+          number: 456,
+          title: 'Test PR',
+          author: 'testuser',
+          repo: 'test-repo'
+        },
+        reviewState: 'CHANGES_REQUESTED',
+        reviewUser: 'reviewer-bot',
+        threadId: 456
+      };
+
+      await adapter.sendOutdatedReviewNotification(notification);
+
+      const sentMessage = adapter.bot.sendMessage.mock.calls[0][1];
+      expect(sentMessage).toContain('reviewer-bot');
+      expect(sentMessage).toContain('CHANGES_REQUESTED');
     });
   });
 

@@ -240,7 +240,10 @@ class TelegramBotAdapter extends ITelegramService {
    * @returns {Promise<void>}
    */
   async sendOutdatedReviewNotification(notification) {
-    const { owner, repo, pr, reviewState, threadId } = notification;
+    const {
+      owner, repo, pr, reviewState, reviewUser, reviewBody,
+      outdatedCommit, currentCommit, threadId
+    } = notification;
 
     this.logger.info(`[TelegramBotAdapter] Sending outdated review notification for ${owner}/${repo} PR #${pr.number}`);
 
@@ -255,7 +258,9 @@ class TelegramBotAdapter extends ITelegramService {
     }
     const { instanceIdx, repoIdx } = result;
 
-    const message = this._buildOutdatedReviewMessage(pr, reviewState);
+    const message = this._buildOutdatedReviewMessage(pr, {
+      reviewState, reviewUser, outdatedCommit, currentCommit, owner
+    });
 
     try {
       await this.retryHelper.retry(async () => {
@@ -432,18 +437,50 @@ class TelegramBotAdapter extends ITelegramService {
   /**
    * Build outdated review notification message
    * @param {PullRequest} pr - Pull request object
-   * @param {ReviewState} reviewState - Review state
+   * @param {Object} context - Additional context
+   * @param {string} context.reviewState - Review state (APPROVED, COMMENTED, etc.)
+   * @param {string} [context.reviewUser] - Reviewer username
+   * @param {string} [context.outdatedCommit] - SHA of the reviewed commit
+   * @param {string} [context.currentCommit] - SHA of the current HEAD commit
+   * @param {string} [context.owner] - Repository owner
    * @returns {string} Formatted message
    * @private
    */
-  _buildOutdatedReviewMessage(pr, reviewState) {
-    return (
+  _buildOutdatedReviewMessage(pr, context = {}) {
+    const { reviewState, reviewUser, outdatedCommit, currentCommit, owner } = context;
+
+    const shortSha = (sha) => sha ? sha.substring(0, 7) : 'unknown';
+
+    const stateEmoji = {
+      'APPROVED': '✅',
+      'CHANGES_REQUESTED': '❌',
+      'COMMENTED': '💬',
+      'PENDING': '⏳'
+    };
+
+    const stateLabel = reviewState || 'UNKNOWN';
+    const emoji = stateEmoji[stateLabel] || '📝';
+
+    let message =
       `⚠️ <b>Outdated Review Detected</b>\n\n` +
+      `📂 <b>Repo:</b> ${this._escapeHtml(owner)}/${this._escapeHtml(pr.repo)}\n` +
       `📌 <b>PR #${pr.number}:</b> ${this._escapeHtml(pr.title)}\n` +
-      `👤 <b>Author:</b> ${this._escapeHtml(pr.author)}\n\n` +
-      `❗ <b>This PR has new commits since the last review.</b>\n` +
-      `Please review the latest changes.`
-    );
+      `👤 <b>Author:</b> ${this._escapeHtml(pr.author)}\n`;
+
+    if (reviewUser) {
+      message += `🔍 <b>Reviewed by:</b> ${this._escapeHtml(reviewUser)} ${emoji} ${this._escapeHtml(stateLabel)}\n`;
+    }
+
+    message += `\n🔄 <b>New commits since review:</b>\n` +
+      `   <code>${shortSha(outdatedCommit)}</code> → <code>${shortSha(currentCommit)}</code>\n`;
+
+    if (pr.headBranch && pr.baseBranch) {
+      message += `🔀 <b>Branch:</b> ${this._escapeHtml(pr.headBranch)} → ${this._escapeHtml(pr.baseBranch)}\n`;
+    }
+
+    message += `\n❗ <b>Please re-review the latest changes.</b>`;
+
+    return message;
   }
 
   /**
