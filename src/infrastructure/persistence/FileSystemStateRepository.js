@@ -57,29 +57,19 @@ class FileSystemStateRepository extends IStateRepository {
    */
   async initialize() {
     if (this.loaded) {
-      this.logger.debug(`[FileSystemStateRepository:${this.owner}/${this.repo}] Already initialized`);
       return;
     }
 
-    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] Initializing...`);
-    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] Storage path: ${this.storagePath}`);
-
     try {
       // Ensure storage directory exists
-      this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] Creating storage directory...`);
       await fs.mkdir(this.storagePath, { recursive: true });
-      this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] ✓ Storage directory created`);
 
       // Load state from files
-      this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] Loading existing state...`);
       await this._loadState();
-      this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] ✓ State loaded: ${this.cache.processedPRs.size} processed PRs, ${this.cache.notificationCounts.size} notification counts`);
 
       this.loaded = true;
-      this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] ✓ Initialization complete`);
     } catch (error) {
       this.logger.error(`[FileSystemStateRepository:${this.owner}/${this.repo}] Failed to initialize: ${error.message}`);
-      this.logger.error(`[FileSystemStateRepository:${this.owner}/${this.repo}] Error stack: ${error.stack}`);
       throw error;
     }
   }
@@ -104,15 +94,12 @@ class FileSystemStateRepository extends IStateRepository {
    * @returns {Promise<void>}
    */
   async markProcessed(owner, repo, prId) {
-    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] markProcessed() called for PR #${prId}`);
     await this.initialize();
 
     this.cache.processedPRs.add(prId);
     this.cache.processedTimestamps.set(prId, Date.now());
 
-    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] Saving state for PR #${prId}...`);
     await this._persistState();
-    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] ✓ State saved for PR #${prId}`);
   }
 
   /**
@@ -135,16 +122,13 @@ class FileSystemStateRepository extends IStateRepository {
    * @returns {Promise<number>} New notification count
    */
   async incrementNotificationCount(owner, repo, prId) {
-    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] incrementNotificationCount() called for PR #${prId}`);
     await this.initialize();
 
     const currentCount = this.cache.notificationCounts.get(prId) || 0;
     const newCount = currentCount + 1;
     this.cache.notificationCounts.set(prId, newCount);
 
-    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] Saving notification count for PR #${prId}: ${currentCount} -> ${newCount}`);
     await this._persistState();
-    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] ✓ Notification count saved for PR #${prId}`);
 
     return newCount;
   }
@@ -346,6 +330,22 @@ class FileSystemStateRepository extends IStateRepository {
         }
       }
 
+      // Sync notification counts from notification_counts.json to review_state.json
+      // This ensures notification_counts.json is the source of truth
+      if (this.cache.notificationCounts.size > 0) {
+        for (const [prId, count] of this.cache.notificationCounts.entries()) {
+          const stateData = this.cache.reviewState.get(prId);
+          if (!stateData || stateData.notificationCount === undefined || stateData.notificationCount < count) {
+            if (!stateData) {
+              stateData = { state: 'pending', notificationCount: count, lastUpdated: new Date().toISOString() };
+              this.cache.reviewState.set(prId, stateData);
+            } else {
+              stateData.notificationCount = count;
+            }
+          }
+        }
+      }
+
       this.logger.debug(`[FileSystemStateRepository:${this.owner}/${this.repo}] State loaded: ${this.cache.processedPRs.size} processed PRs, ${this.cache.notificationCounts.size} notification counts, ${this.cache.reviewState.size} review states`);
     } catch (error) {
       this.logger.warn(`[FileSystemStateRepository:${this.owner}/${this.repo}] Failed to load state: ${error.message}`);
@@ -412,6 +412,40 @@ class FileSystemStateRepository extends IStateRepository {
         this.logger.warn(`[FileSystemStateRepository:${this.owner}/${this.repo}] Failed to read ${filePath}: ${error.message}`);
       }
       return null;
+    }
+  }
+
+  /**
+   * Persist notification count to notification_counts.json
+   * @param {number} prId - Pull request ID
+   * @param {number} count - Notification count
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _persistNotificationCount(prId, count) {
+    try {
+      const countsPath = path.join(this.storagePath, this.files.notificationCounts);
+
+      // Read existing counts
+      let countsObj = {};
+      try {
+        const data = await fs.readFile(countsPath, 'utf8');
+        countsObj = JSON.parse(data);
+      } catch (error) {
+        // File doesn't exist yet, start with empty object
+      }
+
+      // Update the count for this PR
+      countsObj[prId] = count;
+
+      // Write back to file
+      await this._writeJSONFile(countsPath, countsObj);
+
+      // Also update in-memory cache
+      this.cache.notificationCounts.set(prId, count);
+    } catch (error) {
+      this.logger.error(`[FileSystemStateRepository:${this.owner}/${this.repo}] Failed to persist notification count for PR #${prId}: ${error.message}`);
+      throw error;
     }
   }
 

@@ -184,7 +184,29 @@ class PRStateMachine {
     const key = this._buildStateKey(instanceKey, repoName, prNumber);
     const stateData = await this.stateRepository.get(key);
 
-    return stateData?.notificationCount || 0;
+    // First try to get from reviewState (current state)
+    if (stateData && stateData.notificationCount !== undefined) {
+      return stateData.notificationCount;
+    }
+
+    // Fallback: try to get from the repository's notificationCounts cache
+    // This handles cases where notification_counts.json exists but review_state.json doesn't have the count yet
+    try {
+      const parsedKey = this.stateRepository._parseKey(key);
+      if (parsedKey) {
+        const fsRepo = this.stateRepository.getRepository(parsedKey.owner, parsedKey.repoName);
+        if (fsRepo && fsRepo.cache && fsRepo.cache.notificationCounts) {
+          const count = fsRepo.cache.notificationCounts.get(prNumber);
+          if (count !== undefined) {
+            return count;
+          }
+        }
+      }
+    } catch (err) {
+      // Ignore errors
+    }
+
+    return 0;
   }
 
   /**

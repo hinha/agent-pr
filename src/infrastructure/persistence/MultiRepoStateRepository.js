@@ -120,8 +120,13 @@ class MultiRepoStateRepository {
     const fsRepo = this._getOrCreateRepository(parsed.owner, parsed.repoName);
 
     try {
-      // Use FileSystemStateRepository.saveReviewState
+      // Save review state (includes notificationCount)
       await fsRepo.saveReviewState(parsed.owner, parsed.repoName, parsed.prNumber, value);
+
+      // Also update notification_counts.json if notificationCount is present
+      if (value && value.notificationCount !== undefined) {
+        await fsRepo._persistNotificationCount(parsed.prNumber, value.notificationCount);
+      }
     } catch (err) {
       this.logger.error(`[MultiRepoStateRepository] Error setting state for ${key}: ${err.message}`);
     }
