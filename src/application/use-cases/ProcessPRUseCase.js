@@ -112,7 +112,20 @@ class ProcessPRUseCase {
         threadId: repo.threadId
       });
 
-      // Step 6: Emit domain event
+      // Step 6: Auto-mark as PROCESSED if max notifications reached (same as feature branch)
+      // Feature branch: if (newCount >= 3) { markProcessed(owner, repo, pr.id); }
+      if (transitionResult.notificationCount >= this.stateMachine.maxNotifications) {
+        this.logger.info(
+          `[ProcessPRUseCase] PR #${prNumber} reached max notifications ` +
+          `(${transitionResult.notificationCount}/${this.stateMachine.maxNotifications}), marking as PROCESSED`
+        );
+        await this.stateMachine.markAsProcessed(instanceKey, repoName, prNumber, {
+          reason: 'Max notifications reached',
+          finalAnalysis: analysis
+        });
+      }
+
+      // Step 7: Emit domain event
       await this.eventBus.emitAsync('pr.processed', {
         instanceKey,
         repoName,
@@ -123,7 +136,7 @@ class ProcessPRUseCase {
 
       this.logger.info(
         `[ProcessPRUseCase] PR #${prNumber} processed successfully ` +
-        `(notification count: ${transitionResult.notificationCount})`
+        `(notification count: ${transitionResult.notificationCount}/${this.stateMachine.maxNotifications})`
       );
 
       return {

@@ -5,7 +5,7 @@
  * 1. Poll for open PRs across all instances/repos
  * 2. Filter PRs that need processing
  * 3. Execute review use cases for new PRs
- * 4. Check for outdated reviews
+ * 4. Check for outdated reviews (with snooze support)
  * 5. Handle graceful shutdown
  *
  * @example
@@ -13,6 +13,7 @@
  * await orchestrator.start();
  */
 
+const { shouldSnooze, getSnoozeReason } = require('../../utils/timeUtils');
 
 class PRProcessingOrchestrator {
   /**
@@ -288,14 +289,23 @@ class PRProcessingOrchestrator {
         }
       }
 
-      // Check for outdated reviews
-      try {
-        await this.useCases.checkOutdatedReviews.execute(instance, repo, openPRs, githubAdapter);
-      } catch (error) {
-        this.logger.error(
-          `[PRProcessingOrchestrator] Error checking outdated reviews in ${repo.name}:`,
-          error
+      // Check for outdated reviews (with snooze support, matching feature branch)
+      // Feature branch: schedulerDaemon.js L261-266
+      const snoozeConfig = this.config.snoozeTime || null;
+      if (shouldSnooze(snoozeConfig)) {
+        const snoozeReason = getSnoozeReason(snoozeConfig);
+        this.logger.info(
+          `[PRProcessingOrchestrator] ${snoozeReason}. Skipping outdated review check for ${repo.name}.`
         );
+      } else {
+        try {
+          await this.useCases.checkOutdatedReviews.execute(instance, repo, openPRs, githubAdapter);
+        } catch (error) {
+          this.logger.error(
+            `[PRProcessingOrchestrator] Error checking outdated reviews in ${repo.name}:`,
+            error
+          );
+        }
       }
 
     } catch (error) {
