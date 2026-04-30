@@ -61,7 +61,12 @@ class OpenClawAgentAdapter extends IAgentService {
       const { stdout, stderr } = await this._spawnWithTimeout(command, timeoutMs);
 
       this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] OpenClaw command completed for PR #${pr.number}`);
-      this.logger.debug(`stdout length: ${stdout?.length || 0}, stderr length: ${stderr?.length || 0}`);
+      this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] stdout length: ${stdout?.length || 0}, stderr length: ${stderr?.length || 0}`);
+      this.logger.debug(`[OpenClawAgentAdapter:${owner}/${repo}] stdout (first 2000 chars): ${stdout?.substring(0, 2000)}`);
+      this.logger.debug(`[OpenClawAgentAdapter:${owner}/${repo}] stdout (last 500 chars): ${stdout?.substring(Math.max(0, (stdout?.length || 0) - 500))}`);
+      if (stderr) {
+        this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] stderr (first 500 chars): ${stderr?.substring(0, 500)}`);
+      }
 
       // Clean up markdown code blocks from output before parsing
       let cleanStdout = stdout;
@@ -70,10 +75,11 @@ class OpenClawAgentAdapter extends IAgentService {
           .replace(/```json\s*/g, '')
           .replace(/```\s*/g, '')
           .trim();
+        this.logger.debug(`[OpenClawAgentAdapter:${owner}/${repo}] Cleaned stdout (removed markdown blocks), length: ${cleanStdout.length}`);
       }
 
-      // Parse the OpenClaw response
-      const result = this._parseOpenClawResponse(cleanStdout, owner, repo, pr);
+      // Parse the OpenClaw response (pass stderr for fallback extraction)
+      const result = this._parseOpenClawResponse(cleanStdout, owner, repo, pr, stderr);
 
       this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] Review completed: ${result.comments?.length || 0} comments`);
 
@@ -235,66 +241,237 @@ class OpenClawAgentAdapter extends IAgentService {
   }
 
   /**
+   * Extract JSON from text by counting braces (more reliable than regex)
+   * Looks for the first valid JSON object with "summary" and "comments" keys
+   * @param {string} text - Text to search
+   * @returns {string|null} Extracted JSON string or null
+   * @private
+   */
+  _extractJSON(text) {
+    if (!text) return null;
+    this.logger.debug(`[OpenClawAgentAdapter] extractJSON called, text length: ${text.length}`);
+
+    let sampleLogged = 0;
+    const maxSamples = 5;
+
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === '{') {
+        // Count braces to find matching closing brace
+        let braceCount = 1;
+        let inString = false;
+        let escapeNext = false;
+
+        for (let j = i + 1; j < text.length; j++) {
+          const char = text[j];
+
+          if (escapeNext) {
+            escapeNext = false;
+            continue;
+          }
+
+          if (char === '\\') {
+            escapeNext = true;
+            continue;
+          }
+
+          if (char === '"') {
+            inString = !inString;
+            continue;
+          }
+
+          if (!inString) {
+            if (char === '{') braceCount++;
+            else if (char === '}') {
+              braceCount--;
+              if (braceCount === 0) {
+                const jsonStr = text.substring(i, j + 1);
+
+                // Verify it's our expected JSON by checking for expected keys
+                if (jsonStr.includes('"summary"') && jsonStr.includes('"comments"')) {
+                  try {
+                    const parsed = JSON.parse(jsonStr);
+                    this.logger.info(`[OpenClawAgentAdapter] Successfully parsed JSON! summary: "${parsed.summary?.substring(0, 50)}...", comments: ${parsed.comments?.length || 0}`);
+                    return jsonStr;
+                  } catch (e) {
+                    this.logger.warn(`[OpenClawAgentAdapter] JSON at ${i}-${j} has "summary" and "comments" but failed to parse: ${e.message}`);
+                  }
+                } else {
+                  if (sampleLogged < maxSamples) {
+                    try {
+                      const parsed = JSON.parse(jsonStr);
+                      const keys = Object.keys(parsed);
+                      this.logger.debug(`[OpenClawAgentAdapter] JSON at ${i}-${j} has keys: ${keys.join(', ')}`);
+                    } catch (parseTry) {
+                      // Skip non-parseable JSON blocks
+                    }
+                    sampleLogged++;
+                  }
+                }
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    this.logger.warn(`[OpenClawAgentAdapter] No valid JSON found in text`);
+    return null;
+  }
+
+  /**
    * Parse OpenClaw CLI response
+   * Handles multiple response formats from OpenClaw agent:
+   * 1. Direct JSON: { summary, comments }
+   * 2. Nested result: { result: { payloads: [{ text: "..." }] } }
+   * 3. Nested result string: { result: "{ summary, comments }" }
+   * 4. Fallback: extract JSON from raw text via brace counting
+   *
    * @param {string} stdout - Command output
    * @param {string} owner - Repository owner
    * @param {string} repo - Repository name
    * @param {PullRequest} pr - Pull request object
+   * @param {string} [stderr] - Command stderr output (for fallback extraction)
    * @returns {ReviewResult} Parsed review result
    * @private
    */
-  _parseOpenClawResponse(stdout, owner, repo, pr) {
+  _parseOpenClawResponse(stdout, owner, repo, pr, stderr) {
+    let result;
+
     try {
-      const trimmed = stdout.trim();
+      const trimmed = (stdout || '').trim();
       let openClawResponse = JSON.parse(trimmed);
 
-      // Handle nested result structure
-      if (openClawResponse.result) {
-        if (typeof openClawResponse.result === 'string') {
-          openClawResponse = JSON.parse(openClawResponse.result);
+      this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] Parsed OpenClaw response, keys: ${Object.keys(openClawResponse).join(', ')}`);
+
+      // Format 1: OpenClaw response with nested payloads structure
+      // { result: { payloads: [{ text: '{"summary":"...", "comments":[...]}' }] } }
+      if (openClawResponse.result && openClawResponse.result.payloads && openClawResponse.result.payloads.length > 0) {
+        this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] Detected OpenClaw response structure with payloads (${openClawResponse.result.payloads.length} payloads)`);
+
+        const payloadText = openClawResponse.result.payloads[0].text;
+
+        if (payloadText) {
+          this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] Payload text found (${payloadText.length} chars)`);
+
+          // Remove markdown code blocks if present
+          let reviewJsonText = payloadText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+          try {
+            result = JSON.parse(reviewJsonText);
+            this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] Successfully parsed nested review JSON, comments: ${result.comments?.length || 0}`);
+          } catch (innerErr) {
+            this.logger.error(`[OpenClawAgentAdapter:${owner}/${repo}] Failed to parse nested review JSON: ${innerErr.message}`);
+            throw innerErr;
+          }
         } else {
-          openClawResponse = openClawResponse.result;
+          throw new Error('Payload text is empty');
         }
+
+      // Format 2: Nested result as string
+      } else if (openClawResponse.result && typeof openClawResponse.result === 'string') {
+        this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] Detected nested result string`);
+        result = JSON.parse(openClawResponse.result);
+
+      // Format 3: Direct review response { summary, comments }
+      } else if (openClawResponse.summary && openClawResponse.comments) {
+        this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] Detected direct review response format`);
+        result = openClawResponse;
+
+      // Format 4: Nested result as object (without payloads) but has summary+comments
+      } else if (openClawResponse.result && openClawResponse.result.summary && openClawResponse.result.comments) {
+        this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] Detected nested result object with summary+comments`);
+        result = openClawResponse.result;
+
+      } else {
+        this.logger.warn(`[OpenClawAgentAdapter:${owner}/${repo}] Unknown response format. Keys: ${Object.keys(openClawResponse).join(', ')}`);
+        throw new Error(`Unknown response format. Keys: ${Object.keys(openClawResponse).join(', ')}`);
       }
 
-      // Check if agent called the tool directly
-      const agentCalledToolDirectly = openClawResponse.tool_calls?.some(
-        call => call.function?.name === 'create_pull_request_review'
-      );
-
-      // Extract and transform comments
-      // Agent may return 'start_line'/'end_line' instead of 'line'
-      let comments = [];
-      if (openClawResponse.comments && Array.isArray(openClawResponse.comments)) {
-        comments = openClawResponse.comments.map(comment => ({
-          ...comment,
-          line: comment.start_line || comment.line
-        }));
-      }
-
-      return {
-        success: true,
-        summary: openClawResponse.summary || openClawResponse.response || 'Review completed',
-        comments: comments,
-        level: 'medium',
-        agentCalledToolDirectly: agentCalledToolDirectly,
-        agentRawOutput: stdout
-      };
     } catch (parseErr) {
-      this.logger.error(`[OpenClawAgentAdapter:${owner}/${repo}] Failed to parse OpenClaw response: ${parseErr.message}`);
-      this.logger.debug(`[OpenClawAgentAdapter:${owner}/${repo}] Raw output: ${stdout}`);
+      // If output is not JSON or unknown format, try to extract JSON from text
+      this.logger.error(`[OpenClawAgentAdapter:${owner}/${repo}] Failed to parse JSON: ${parseErr.message}`);
 
-      // Return a basic result on parse failure
-      return {
-        success: false,
-        error: `Failed to parse OpenClaw response: ${parseErr.message}`,
-        summary: 'Review completed (parse error)',
-        comments: [],
-        level: 'medium',
-        agentCalledToolDirectly: false,
-        agentRawOutput: stdout
-      };
+      // Try cleanStdout first, then raw stdout, then stderr
+      let jsonStr = this._extractJSON(stdout);
+
+      if (!jsonStr && stderr && stderr.length > 0) {
+        this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] JSON not found in stdout, trying stderr...`);
+        jsonStr = this._extractJSON(stderr);
+      }
+
+      if (!jsonStr && stdout && stderr) {
+        this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] JSON not found separately, trying combined output...`);
+        jsonStr = this._extractJSON(stdout + '\n' + stderr);
+      }
+
+      if (jsonStr) {
+        this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] Extracted JSON string (${jsonStr.length} chars), parsing...`);
+        try {
+          result = JSON.parse(jsonStr);
+          this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] Successfully parsed extracted JSON, comments: ${result.comments?.length || 0}`);
+        } catch (extractErr) {
+          this.logger.error(`[OpenClawAgentAdapter:${owner}/${repo}] Failed to parse extracted JSON: ${extractErr.message}`);
+          return {
+            success: false,
+            error: `Failed to parse OpenClaw response: ${extractErr.message}`,
+            summary: 'Review completed (parse error)',
+            comments: [],
+            level: 'medium',
+            agentCalledToolDirectly: false,
+            agentRawOutput: stdout
+          };
+        }
+      } else {
+        // Fallback: no JSON found anywhere
+        this.logger.warn(`[OpenClawAgentAdapter:${owner}/${repo}] No JSON found in any output, using text fallback`);
+        return {
+          success: false,
+          error: `Failed to parse OpenClaw response: ${parseErr.message}`,
+          summary: (stdout || '').substring(0, 500) || 'Review completed (parse error)',
+          comments: [],
+          level: 'medium',
+          agentCalledToolDirectly: false,
+          agentRawOutput: stdout
+        };
+      }
     }
+
+    // Check if agent called create_pull_request_review directly
+    // Check via tool_calls array (structured detection)
+    let agentCalledToolDirectly = result.tool_calls?.some(
+      call => call.function?.name === 'create_pull_request_review'
+    ) || false;
+
+    // Also check via regex patterns in output (heuristic detection, like feature branch)
+    if (!agentCalledToolDirectly) {
+      const agentOutput = (stdout || '').substring(0, 2000);
+      const directToolCallPatterns = [
+        /\breview\s+(?:created|submitted|approved)\b/i,
+        /\bpull\s+request\s+review\s+#?\d+\b/i,
+        /\bsuccessfully\s+created\s+(?:a\s+)?review\b/i
+      ];
+      agentCalledToolDirectly = directToolCallPatterns.some(pattern => pattern.test(agentOutput));
+
+      if (agentCalledToolDirectly) {
+        this.logger.warn(`[OpenClawAgentAdapter:${owner}/${repo}] Agent may have called create_pull_request_review directly (detected via output patterns)`);
+      }
+    }
+
+    // Transform comments: map start_line to line (MCP expects 'line' field)
+    const transformedComments = (result.comments || []).map(comment => ({
+      ...comment,
+      line: comment.start_line || comment.line
+    }));
+
+    return {
+      success: true,
+      summary: result.summary || result.response || 'Review completed',
+      comments: transformedComments,
+      level: 'medium',
+      agentCalledToolDirectly: agentCalledToolDirectly,
+      agentRawOutput: (stdout || '').substring(0, 1000)
+    };
   }
 
   /**
