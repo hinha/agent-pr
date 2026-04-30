@@ -269,6 +269,7 @@ class OpenClawAgentAdapter extends IAgentService {
       }
 
       return {
+        success: true,
         summary: openClawResponse.summary || openClawResponse.response || 'Review completed',
         comments: comments,
         level: 'medium',
@@ -281,6 +282,8 @@ class OpenClawAgentAdapter extends IAgentService {
 
       // Return a basic result on parse failure
       return {
+        success: false,
+        error: `Failed to parse OpenClaw response: ${parseErr.message}`,
         summary: 'Review completed (parse error)',
         comments: [],
         level: 'medium',
