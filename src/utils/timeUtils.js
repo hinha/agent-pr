@@ -125,5 +125,7 @@ function getSnoozeReason(snoozeConfig) {
 module.exports = {
   isSnoozeTime,
   shouldSnooze,
-  getSnoozeReason
+  getSnoozeReason,
+  getCurrentTimestampWIB,
+  getCurrentHourWIB
 };
