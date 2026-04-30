@@ -205,7 +205,8 @@ class FileSystemStateRepository extends IStateRepository {
    */
   async saveReviewState(owner, repo, prId, reviewState) {
     await this.initialize();
-    this.cache.reviewState.set(prId, reviewState);
+    // Convert prId to number for consistency (cache uses numeric keys)
+    this.cache.reviewState.set(parseInt(prId, 10), reviewState);
     await this._persistState();
   }
 
@@ -219,7 +220,8 @@ class FileSystemStateRepository extends IStateRepository {
    */
   async getReviewState(owner, repo, prId) {
     await this.initialize();
-    return this.cache.reviewState.get(prId) || null;
+    // Convert prId to number for consistency (cache uses numeric keys)
+    return this.cache.reviewState.get(parseInt(prId, 10)) || null;
   }
 
   /**
@@ -232,7 +234,9 @@ class FileSystemStateRepository extends IStateRepository {
    */
   async clearReviewState(owner, repo, prId) {
     await this.initialize();
-    this.cache.reviewState.delete(prId);
+    // Convert prId to number for consistency (cache uses numeric keys)
+    const numericPrId = parseInt(prId, 10);
+    this.cache.reviewState.delete(numericPrId);
     this.cache.outdatedNotified.delete(prId);
     await this._persistState();
   }
@@ -320,9 +324,9 @@ class FileSystemStateRepository extends IStateRepository {
       const reviewStatePath = path.join(this.storagePath, this.files.reviewState);
       const reviewStateData = await this._readJSONFile(reviewStatePath);
       if (reviewStateData && typeof reviewStateData === 'object') {
-        // Load reviews
+        // Load reviews - convert string keys to numeric for consistency
         if (reviewStateData.reviews && typeof reviewStateData.reviews === 'object') {
-          this.cache.reviewState = new Map(Object.entries(reviewStateData.reviews));
+          this.cache.reviewState = new Map(Object.entries(reviewStateData.reviews).map(([k, v]) => [parseInt(k, 10), v]));
         }
         // Load outdated notified
         if (reviewStateData.outdatedNotified && typeof reviewStateData.outdatedNotified === 'object') {
@@ -337,10 +341,14 @@ class FileSystemStateRepository extends IStateRepository {
           const stateData = this.cache.reviewState.get(prId);
           if (!stateData || stateData.notificationCount === undefined || stateData.notificationCount < count) {
             if (!stateData) {
-              stateData = { state: 'pending', notificationCount: count, lastUpdated: new Date().toISOString() };
-              this.cache.reviewState.set(prId, stateData);
+              // Create new state entry for PR that doesn't exist in review_state.json
+              const newStateData = { state: 'pending', notificationCount: count, lastUpdated: new Date().toISOString() };
+              this.cache.reviewState.set(prId, newStateData);
+              this.logger.debug(`[FileSystemStateRepository:${this.owner}/${this.repo}] Created review state for PR #${prId} with notificationCount=${count}`);
             } else {
+              // Update existing state entry with notification count from notification_counts.json
               stateData.notificationCount = count;
+              this.logger.debug(`[FileSystemStateRepository:${this.owner}/${this.repo}] Updated PR #${prId} notificationCount to ${count}`);
             }
           }
         }

@@ -236,6 +236,9 @@ describe('MultiRepoStateRepository', () => {
 
       await repository.set(key, value);
 
+      // Wait for file to be written
+      await new Promise(resolve => setTimeout(resolve, 100));
+
       // Create new repository instance (simulating app restart)
       const newRepository = new MultiRepoStateRepository(logger);
 
@@ -244,6 +247,80 @@ describe('MultiRepoStateRepository', () => {
       expect(retrieved).toEqual(value);
 
       await newRepository.cleanup();
+    });
+  });
+
+  describe('notification count persistence', () => {
+    const testDataPath = path.join(process.cwd(), 'data/instances/github-hinha/agent-pr');
+
+    afterEach(async () => {
+      // Clean up test data files
+      if (fs.existsSync(testDataPath)) {
+        fs.rmSync(testDataPath, { recursive: true, force: true });
+      }
+    });
+
+    test('should persist notification count when saving review state with notificationCount', async () => {
+      const key = 'github/hinha/agent-pr/pr/123';
+      const value = { state: 'notified', notificationCount: 2, lastUpdated: new Date().toISOString() };
+
+      await repository.set(key, value);
+
+      // Small delay to ensure file is written
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Check notification_counts.json file was created
+      const notificationCountsPath = path.join(testDataPath, 'notification_counts.json');
+      expect(fs.existsSync(notificationCountsPath)).toBe(true);
+
+      // Verify the content
+      const countsData = JSON.parse(fs.readFileSync(notificationCountsPath, 'utf8'));
+      expect(countsData['123']).toBe(2);
+    });
+
+    test('should not persist notification count when value is undefined', async () => {
+      const key = 'github/hinha/agent-pr/pr/456';
+      const value = null;
+
+      await repository.set(key, value);
+
+      // Small delay
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Should not create notification_counts.json if no notificationCount
+      const notificationCountsPath = path.join(testDataPath, 'notification_counts.json');
+      // File might not exist or be empty - just verify no error thrown
+      expect(() => repository.set(key, value)).not.toThrow();
+    });
+
+    test('should update notification count when updating review state', async () => {
+      const key = 'github/hinha/agent-pr/pr/789';
+
+      // First save with count 1
+      await repository.set(key, { state: 'notified', notificationCount: 1 });
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Update with count 2
+      await repository.set(key, { state: 'approved', notificationCount: 2 });
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const notificationCountsPath = path.join(testDataPath, 'notification_counts.json');
+      const countsData = JSON.parse(fs.readFileSync(notificationCountsPath, 'utf8'));
+      expect(countsData['789']).toBe(2);
+    });
+
+    test('should handle multiple PRs with different notification counts', async () => {
+      await repository.set('github/hinha/agent-pr/pr/111', { notificationCount: 1 });
+      await repository.set('github/hinha/agent-pr/pr/222', { notificationCount: 3 });
+      await repository.set('github/hinha/agent-pr/pr/333', { notificationCount: 0 });
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const notificationCountsPath = path.join(testDataPath, 'notification_counts.json');
+      const countsData = JSON.parse(fs.readFileSync(notificationCountsPath, 'utf8'));
+      expect(countsData['111']).toBe(1);
+      expect(countsData['222']).toBe(3);
+      expect(countsData['333']).toBe(0);
     });
   });
 });

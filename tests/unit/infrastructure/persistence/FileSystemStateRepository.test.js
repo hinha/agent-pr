@@ -225,4 +225,170 @@ describe('FileSystemStateRepository', () => {
       expect(repository.loaded).toBe(false);
     });
   });
+
+  describe('notification count sync', () => {
+    test('should sync notification counts from notification_counts.json to review_state.json during load', async () => {
+      const mockCountsData = { '123': 2, '456': 1 };
+      // review_state.json has structure: { reviews: { ... }, outdatedNotified: { ... } }
+      const mockReviewStateData = {
+        reviews: {
+          '123': { state: 'notified', lastUpdated: new Date().toISOString() }
+        }
+      };
+
+      fs.readFile.mockImplementation((filePath) => {
+        if (filePath.includes('notification_counts.json')) {
+          return Promise.resolve(JSON.stringify(mockCountsData));
+        } else if (filePath.includes('review_state.json')) {
+          return Promise.resolve(JSON.stringify(mockReviewStateData));
+        } else if (filePath.includes('processed_prs.json')) {
+          return Promise.reject({ code: 'ENOENT' });
+        }
+        return Promise.reject({ code: 'ENOENT' });
+      });
+
+      await repository.initialize();
+
+      // Debug: check what's in the cache
+      // console.log('notificationCounts size:', repository.cache.notificationCounts.size);
+      // console.log('notificationCounts:', Array.from(repository.cache.notificationCounts.entries()));
+      // console.log('reviewState size:', repository.cache.reviewState.size);
+      // console.log('reviewState:', Array.from(repository.cache.reviewState.entries()));
+
+      // PR 123 should have notificationCount synced from notification_counts.json
+      // Note: cache.reviewState stores numeric keys
+      const reviewState123 = repository.cache.reviewState.get(123);
+      expect(reviewState123).toBeDefined();
+      expect(reviewState123.notificationCount).toBe(2);
+
+      // PR 456 should have review_state entry created with notificationCount
+      const reviewState456 = repository.cache.reviewState.get(456);
+      expect(reviewState456).toBeDefined();
+      expect(reviewState456.notificationCount).toBe(1);
+      expect(reviewState456.state).toBe('pending');
+    });
+
+    test('should not overwrite higher notificationCount in review_state.json', async () => {
+      const mockCountsData = { '123': 1 };
+      const mockReviewStateData = {
+        reviews: {
+          '123': { state: 'notified', notificationCount: 3, lastUpdated: new Date().toISOString() }
+        }
+      };
+
+      fs.readFile.mockImplementation((filePath) => {
+        if (filePath.includes('notification_counts.json')) {
+          return Promise.resolve(JSON.stringify(mockCountsData));
+        } else if (filePath.includes('review_state.json')) {
+          return Promise.resolve(JSON.stringify(mockReviewStateData));
+        } else if (filePath.includes('processed_prs.json')) {
+          return Promise.reject({ code: 'ENOENT' });
+        }
+        return Promise.reject({ code: 'ENOENT' });
+      });
+
+      await repository.initialize();
+
+      // Should keep the higher count from review_state.json
+      const reviewState123 = repository.cache.reviewState.get(123);
+      expect(reviewState123).toBeDefined();
+      expect(reviewState123.notificationCount).toBe(3);
+    });
+
+    test('should set missing notificationCount in review_state.json from notification_counts.json', async () => {
+      const mockCountsData = { '123': 2 };
+      const mockReviewStateData = {
+        reviews: {
+          '123': { state: 'notified', lastUpdated: new Date().toISOString() }
+        }
+      };
+
+      fs.readFile.mockImplementation((filePath) => {
+        if (filePath.includes('notification_counts.json')) {
+          return Promise.resolve(JSON.stringify(mockCountsData));
+        } else if (filePath.includes('review_state.json')) {
+          return Promise.resolve(JSON.stringify(mockReviewStateData));
+        } else if (filePath.includes('processed_prs.json')) {
+          return Promise.reject({ code: 'ENOENT' });
+        }
+        return Promise.reject({ code: 'ENOENT' });
+      });
+
+      await repository.initialize();
+
+      // Should set notificationCount from notification_counts.json
+      const reviewState123 = repository.cache.reviewState.get(123);
+      expect(reviewState123).toBeDefined();
+      expect(reviewState123.notificationCount).toBe(2);
+    });
+  });
+
+  describe('_persistNotificationCount', () => {
+    test('should persist notification count to notification_counts.json', async () => {
+      await repository.initialize();
+
+      await repository._persistNotificationCount(123, 2);
+
+      expect(fs.writeFile).toHaveBeenCalled();
+      const writeCall = fs.writeFile.mock.calls.find(call =>
+        call[0].includes('notification_counts.json')
+      );
+      expect(writeCall).toBeDefined();
+      expect(JSON.parse(writeCall[1])).toEqual({ '123': 2 });
+    });
+
+    test('should update in-memory cache after persisting', async () => {
+      await repository.initialize();
+
+      await repository._persistNotificationCount(123, 3);
+
+      expect(repository.cache.notificationCounts.get(123)).toBe(3);
+    });
+
+    test('should merge with existing notification counts', async () => {
+      const existingCounts = { '100': 1, '200': 2 };
+      fs.readFile.mockImplementation((filePath) => {
+        if (filePath.includes('notification_counts.json')) {
+          return Promise.resolve(JSON.stringify(existingCounts));
+        }
+        return Promise.reject({ code: 'ENOENT' });
+      });
+
+      await repository.initialize();
+
+      await repository._persistNotificationCount(300, 3);
+
+      const writeCall = fs.writeFile.mock.calls.find(call =>
+        call[0].includes('notification_counts.json')
+      );
+      const persistedData = JSON.parse(writeCall[1]);
+      expect(persistedData).toEqual({ '100': 1, '200': 2, '300': 3 });
+    });
+
+    test('should handle non-existing notification_counts.json file', async () => {
+      fs.readFile.mockImplementation((filePath) => {
+        if (filePath.includes('notification_counts.json')) {
+          return Promise.reject({ code: 'ENOENT' });
+        }
+        return Promise.reject({ code: 'ENOENT' });
+      });
+
+      await repository.initialize();
+
+      await repository._persistNotificationCount(123, 1);
+
+      const writeCall = fs.writeFile.mock.calls.find(call =>
+        call[0].includes('notification_counts.json')
+      );
+      expect(writeCall).toBeDefined();
+      expect(JSON.parse(writeCall[1])).toEqual({ '123': 1 });
+    });
+
+    test('should handle write errors gracefully', async () => {
+      await repository.initialize();
+      fs.writeFile.mockRejectedValue(new Error('Write failed'));
+
+      await expect(repository._persistNotificationCount(123, 1)).rejects.toThrow('Write failed');
+    });
+  });
 });
