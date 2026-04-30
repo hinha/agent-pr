@@ -63,8 +63,8 @@ class MultiRepoStateRepository {
 
   /**
    * Get or create FileSystemStateRepository for a specific repository
-   * @param {string} owner - Repository owner
-   * @param {string} repoName - Repository name
+   * @param {string} owner - Repository owner (e.g., 'hinha')
+   * @param {string} repoName - Repository name (e.g., 'gosm')
    * @returns {FileSystemStateRepository} Repository instance
    * @private
    */
@@ -73,9 +73,10 @@ class MultiRepoStateRepository {
 
     let repository = this.repositories.get(cacheKey);
     if (!repository) {
+      this.logger.info(`[MultiRepoStateRepository] Creating FileSystemStateRepository for owner=${owner}, repo=${repoName}`);
       repository = new FileSystemStateRepository(owner, repoName, this.logger);
       this.repositories.set(cacheKey, repository);
-      this.logger.debug(`[MultiRepoStateRepository] Created repository for ${owner}/${repoName}`);
+      this.logger.debug(`[MultiRepoStateRepository] Created repository for ${owner}/${repoName}, cacheKey=${cacheKey}`);
     }
 
     return repository;

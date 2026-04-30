@@ -160,11 +160,35 @@ class CheckOutdatedReviewsUseCase {
    */
   async _wasAlreadyNotified(notificationKey, prId, reviewId) {
     // Parse notification key: instanceKey/repoName/outdated/reviewId
+    // Example: github/hinha/gosm/outdated/123456
     const parts = notificationKey.split('/');
-    const instanceKey = parts[0]; // e.g., github/hinha
-    const repoName = parts[1];     // e.g., gosm
 
-    // Extract owner from instanceKey
+    // Find the 'outdated' marker to determine where repo name ends
+    const outdatedIndex = parts.indexOf('outdated');
+    if (outdatedIndex === -1) {
+      this.logger.warn(`[CheckOutdatedReviewsUseCase] Invalid notification key format: ${notificationKey}`);
+      return false;
+    }
+
+    // instanceKey/repoName are before 'outdated'
+    // parts[0] might be 'github' if the key doesn't have the full instance path
+    // We need to reconstruct the instance key from parts before 'outdated'
+    const partsBeforeOutdated = parts.slice(0, outdatedIndex);
+
+    // The format should be: github/{owner}/{repo}/outdated/{reviewId}
+    // So partsBeforeOutdated = ['github', 'hinha', 'gosm']
+    // instanceKey = 'github/hinha' (parts 0-1)
+    // repoName = 'gosm' (part 2)
+
+    if (partsBeforeOutdated.length < 3) {
+      this.logger.warn(`[CheckOutdatedReviewsUseCase] Invalid notification key format: ${notificationKey}`);
+      return false;
+    }
+
+    const instanceKey = `${partsBeforeOutdated[0]}/${partsBeforeOutdated[1]}`; // e.g., github/hinha
+    const repoName = partsBeforeOutdated[2]; // e.g., gosm
+
+    // Extract owner from instanceKey (e.g., 'hinha' from 'github/hinha')
     const owner = instanceKey.includes('/') ? instanceKey.split('/')[1] : instanceKey;
 
     // Get the FileSystemStateRepository for this specific repo
@@ -185,9 +209,26 @@ class CheckOutdatedReviewsUseCase {
    */
   async _markAsNotified(notificationKey, prId, reviewId) {
     // Parse notification key: instanceKey/repoName/outdated/reviewId
+    // Example: github/hinha/gosm/outdated/123456
     const parts = notificationKey.split('/');
-    const instanceKey = parts[0]; // e.g., github/hinha
-    const repoName = parts[1];     // e.g., gosm
+
+    // Find the 'outdated' marker to determine where repo name ends
+    const outdatedIndex = parts.indexOf('outdated');
+    if (outdatedIndex === -1) {
+      this.logger.warn(`[CheckOutdatedReviewsUseCase] Invalid notification key format: ${notificationKey}`);
+      return;
+    }
+
+    // instanceKey/repoName are before 'outdated'
+    const partsBeforeOutdated = parts.slice(0, outdatedIndex);
+
+    if (partsBeforeOutdated.length < 3) {
+      this.logger.warn(`[CheckOutdatedReviewsUseCase] Invalid notification key format: ${notificationKey}`);
+      return;
+    }
+
+    const instanceKey = `${partsBeforeOutdated[0]}/${partsBeforeOutdated[1]}`; // e.g., github/hinha
+    const repoName = partsBeforeOutdated[2]; // e.g., gosm
 
     // Extract owner from instanceKey
     const owner = instanceKey.includes('/') ? instanceKey.split('/')[1] : instanceKey;
@@ -235,13 +276,12 @@ class CheckOutdatedReviewsUseCase {
       // Clear from persistent storage if PR ID is provided
       if (prId && this.stateMachine?.stateRepository) {
         // Get the FileSystemStateRepository for this specific repo
-        const fsRepo = this.stateMachine.stateRepository.getRepository(
-          instance.owner,
-          repo.name
-        );
+        // Use the actual instance.owner, not the instance.key
+        const owner = instance.owner; // This should be just 'hinha', not 'github/hinha'
+        const fsRepo = this.stateMachine.stateRepository.getRepository(owner, repo.name);
 
         // Use the new clearOutdatedNotified method
-        await fsRepo.clearOutdatedNotified(instance.owner, repo.name, prId.toString());
+        await fsRepo.clearOutdatedNotified(owner, repo.name, prId.toString());
 
         this.logger.info(
           `[CheckOutdatedReviewsUseCase] Cleared outdated notification for PR #${prId}, review ${reviewId}`
