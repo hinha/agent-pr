@@ -348,20 +348,31 @@ class MCPGitHubAdapter extends IGitHubService {
       this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] All comments were filtered out, posting review with summary only`);
     }
 
-    // Determine event based on severity levels
+    // Determine event based on normalized severities
     let event = 'COMMENT';
     const hasHigh = stats.severityBreakdown.HIGH > 0;
     const hasMedium = stats.severityBreakdown.MEDIUM > 0;
+    const hasLow = stats.severityBreakdown.LOW > 0;
 
     if (hasHigh) {
       event = 'REQUEST_CHANGES';
+      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Event set to REQUEST_CHANGES: ${stats.severityBreakdown.HIGH} HIGH severity comment(s) found`);
     } else if (hasMedium) {
       event = 'COMMENT';
+      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Event set to COMMENT: ${stats.severityBreakdown.MEDIUM} MEDIUM severity comment(s) found`);
+    } else if (hasLow) {
+      event = 'COMMENT';
+      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Event set to COMMENT: ${stats.severityBreakdown.LOW} LOW severity comment(s) found`);
+    } else {
+      event = 'COMMENT';
+      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Event set to COMMENT: no severity-specific comments found`);
     }
 
-    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Event set to ${event}: ${JSON.stringify(stats.severityBreakdown)}`);
+    // Update reviewResult with valid comments for further processing
+    reviewResult.comments = validComments;
 
     // Fetch PR files with patches to calculate positions
+    // GitHub API requires position for review comments in /reviews endpoint
     let positionMaps = new Map();
     try {
       this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Fetching PR files with patches for position calculation`);
@@ -376,37 +387,63 @@ class MCPGitHubAdapter extends IGitHubService {
         if (file.filename && file.patch) {
           const positionMap = this._buildPositionMap(file.patch);
           positionMaps.set(file.filename, positionMap);
+          this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Built position map for ${file.filename} (${positionMap.size} lines)`);
         }
       }
+      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Built position maps for ${positionMaps.size} file(s)`);
     } catch (error) {
       this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Failed to fetch PR files for position calculation: ${error.message}`);
+      this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Comments will be omitted without position mapping`);
     }
 
     // Build comments with positions
     const comments = [];
-    for (const c of validComments) {
+    let skippedCount = 0;
+
+    for (const c of reviewResult.comments) {
+      // Get position from the diff
+      // For /reviews endpoint, GitHub requires 'position' (not line+side)
       const positionMap = positionMaps.get(c.file);
       const position = positionMap ? positionMap.get(c.line) : null;
 
       if (position === null || position === undefined) {
         this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] No position found for ${c.file}:${c.line}, skipping comment`);
+        skippedCount++;
         continue;
       }
 
+      this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Comment ${c.file}:${c.line} -> position: ${position}`);
+
+      // Build comment body
       let commentBody = `[${c.severity}] ${c.message}`;
+
+      // If there's suggested code, append it with markdown code block
       if (c.suggestedCode) {
         const language = this._detectLanguage(c.file);
         commentBody += `\n\nFix:\n\`\`\`${language}\n${c.suggestedCode}\n\`\`\``;
       }
 
-      comments.push({
+      const comment = {
         path: c.file,
         position: position,
         body: commentBody
-      });
+      };
+      comments.push(comment);
+      this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Added comment for ${c.file}:${c.line}`);
     }
 
-    // Create review
+    if (skippedCount > 0) {
+      this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Skipped ${skippedCount} comment(s) due to missing position`);
+    }
+
+    // Count comments and log summary
+    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] PR headSha: ${pr.headSha}, total comments to submit: ${comments.length}`);
+    if (comments.length > 0) {
+      const commentSummary = comments.map(c => `${c.path}:${c.position}`).join(', ');
+      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Comments: ${commentSummary}`);
+    }
+
+    // Create review with all comments in one batch (no batching)
     const reviewBody = reviewResult.summary || reviewResult.body || 'Review completed';
     const reviewArgs = {
       owner: this.owner,
@@ -419,6 +456,9 @@ class MCPGitHubAdapter extends IGitHubService {
     };
 
     this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Creating review with ${comments.length} comment(s)`);
+    if (comments.length > 0) {
+      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] First comment JSON: ${JSON.stringify(comments[0])}`);
+    }
 
     let result;
     try {
@@ -443,6 +483,9 @@ class MCPGitHubAdapter extends IGitHubService {
     }
 
     this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Review created: ID=${result.id}`);
+    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] ✅ Created ${comments.length} line comment(s) - check GitHub PR Files tab`);
+    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] ⚠️  Check GitHub PR: https://github.com/${this.owner}/${repo}/pull/${pr.number}/files`);
+
     return result;
   }
 
