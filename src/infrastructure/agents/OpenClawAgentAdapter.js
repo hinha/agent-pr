@@ -262,10 +262,14 @@ class OpenClawAgentAdapter extends IAgentService {
         call => call.function?.name === 'create_pull_request_review'
       );
 
-      // Extract comments
+      // Extract and transform comments
+      // Agent may return 'start_line'/'end_line' instead of 'line'
       let comments = [];
       if (openClawResponse.comments && Array.isArray(openClawResponse.comments)) {
-        comments = openClawResponse.comments;
+        comments = openClawResponse.comments.map(comment => ({
+          ...comment,
+          line: comment.start_line || comment.line
+        }));
       }
 
       return {

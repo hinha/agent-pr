@@ -407,11 +407,12 @@ class MCPGitHubAdapter extends IGitHubService {
     }
 
     // Create review
+    const reviewBody = reviewResult.summary || reviewResult.body || 'Review completed';
     const reviewArgs = {
       owner: this.owner,
       repo: repo,
       pull_number: pr.number,
-      body: reviewResult.summary,
+      body: reviewBody,
       event: event,
       commit_id: pr.headSha,
       comments: comments

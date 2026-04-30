@@ -142,45 +142,23 @@ class ReviewPRUseCase {
 
   /**
    * Submit review to GitHub
+   * Pass reviewResult directly to createReviewWithComments which handles
+   * event determination, comment validation/formatting, and position mapping.
    * @private
    */
   async _submitReview(repoName, pr, reviewResult, instance, githubAdapter) {
-    const { comments, summary, requiresChanges } = reviewResult;
-
-    // Determine review state
-    let reviewState = 'COMMENTED';
-    if (requiresChanges) {
-      reviewState = 'CHANGES_REQUESTED';
-    } else if (comments.length === 0) {
-      reviewState = 'APPROVED';
-    } else if (this._hasOnlyComments(comments)) {
-      reviewState = 'COMMENTED';
-    }
-
-    // Submit review
+    // Pass reviewResult directly — createReviewWithComments handles:
+    // - Event determination based on severity (COMMENT / REQUEST_CHANGES)
+    // - Comment validation and sanitization
+    // - Position calculation from diff patches
+    // - Fallback for own-PR reviews
     const review = await githubAdapter.createReviewWithComments(
       repoName,
       pr,
-      {
-        body: summary,
-        comments: this._formatComments(comments),
-        event: reviewState.toLowerCase()
-      }
+      reviewResult
     );
 
     return review;
-  }
-
-  /**
-   * Format comments for GitHub API
-   * @private
-   */
-  _formatComments(comments) {
-    return comments.map(comment => ({
-      path: comment.file,
-      position: comment.line,
-      body: comment.message
-    }));
   }
 
   /**
@@ -192,15 +170,6 @@ class ReviewPRUseCase {
       return PRState.REJECTED;
     }
     return PRState.APPROVED;
-  }
-
-  /**
-   * Check if review has only comments (no approval/rejection)
-   * @private
-   */
-  _hasOnlyComments(comments) {
-    return comments.length > 0 &&
-           comments.every(c => c.severity === 'LOW');
   }
 
   /**
