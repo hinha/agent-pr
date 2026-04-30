@@ -26,7 +26,7 @@ class IStateRepository {
    * const processed = await stateRepo.isProcessed('myorg', 'my-repo', 123);
    * if (processed) console.log('PR already processed');
    */
-  async isProcessed(owner, repo, prId) {
+  async isProcessed(_owner, _repo, _prId) {
     throw new Error('Method isProcessed must be implemented');
   }
 
@@ -41,7 +41,7 @@ class IStateRepository {
    * @example
    * await stateRepo.markProcessed('myorg', 'my-repo', 123);
    */
-  async markProcessed(owner, repo, prId) {
+  async markProcessed(_owner, _repo, _prId) {
     throw new Error('Method markProcessed must be implemented');
   }
 
@@ -57,7 +57,7 @@ class IStateRepository {
    * const count = await stateRepo.getNotificationCount('myorg', 'my-repo', 123);
    * console.log(`Notified ${count} times`);
    */
-  async getNotificationCount(owner, repo, prId) {
+  async getNotificationCount(_owner, _repo, _prId) {
     throw new Error('Method getNotificationCount must be implemented');
   }
 
@@ -73,7 +73,7 @@ class IStateRepository {
    * const newCount = await stateRepo.incrementNotificationCount('myorg', 'my-repo', 123);
    * console.log(`Now notified ${newCount} times`);
    */
-  async incrementNotificationCount(owner, repo, prId) {
+  async incrementNotificationCount(_owner, _repo, _prId) {
     throw new Error('Method incrementNotificationCount must be implemented');
   }
 
@@ -88,7 +88,7 @@ class IStateRepository {
    * const processed = await stateRepo.getProcessedPRs('myorg', 'my-repo');
    * console.log(`Processed ${processed.length} PRs`);
    */
-  async getProcessedPRs(owner, repo) {
+  async getProcessedPRs(_owner, _repo) {
     throw new Error('Method getProcessedPRs must be implemented');
   }
 
@@ -102,7 +102,7 @@ class IStateRepository {
    * @example
    * await stateRepo.clearProcessedPRs('myorg', 'my-repo');
    */
-  async clearProcessedPRs(owner, repo) {
+  async clearProcessedPRs(_owner, _repo) {
     throw new Error('Method clearProcessedPRs must be implemented');
   }
 
@@ -126,7 +126,7 @@ class IStateRepository {
    * @param {string} repo - Repository name
    * @returns {Promise<void>}
    */
-  async initialize(owner, repo) {
+  async initialize(_owner, _repo) {
     throw new Error('Method initialize must be implemented');
   }
 

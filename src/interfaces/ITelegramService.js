@@ -30,7 +30,7 @@ class ITelegramService {
    *   threadId: 789
    * });
    */
-  async sendPRNotification(notification) {
+  async sendPRNotification(_notification) {
     throw new Error('Method sendPRNotification must be implemented');
   }
 
@@ -50,7 +50,7 @@ class ITelegramService {
    *   threadId: 789
    * });
    */
-  async sendOutdatedReviewNotification(notification) {
+  async sendOutdatedReviewNotification(_notification) {
     throw new Error('Method sendOutdatedReviewNotification must be implemented');
   }
 
@@ -66,7 +66,7 @@ class ITelegramService {
    *   await githubService.approvePR(data.repo, data.prNumber, 'Approved');
    * });
    */
-  registerCallbackHandler(action, handler) {
+  registerCallbackHandler(_action, _handler) {
     throw new Error('Method registerCallbackHandler must be implemented');
   }
 

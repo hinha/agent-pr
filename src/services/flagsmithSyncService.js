@@ -194,7 +194,7 @@ class FlagsmithSyncService {
   /**
    * Handle sync error with adaptive backoff
    */
-  _handleSyncError(err) {
+  _handleSyncError(_err) {
     this.consecutiveErrors++;
     this.lastSyncTime = new Date();
 

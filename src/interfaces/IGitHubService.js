@@ -25,7 +25,7 @@ class IGitHubService {
    * const prs = await githubService.getOpenPRs('my-repo');
    * console.log(`Found ${prs.length} open PRs`);
    */
-  async getOpenPRs(repo) {
+  async getOpenPRs(_repo) {
     throw new Error('Method getOpenPRs must be implemented');
   }
 
@@ -41,7 +41,7 @@ class IGitHubService {
    * const details = await githubService.getPRDetails('my-repo', 123);
    * console.log(`PR has ${details.filesChanged} files changed`);
    */
-  async getPRDetails(repo, prNumber) {
+  async getPRDetails(_repo, _prNumber) {
     throw new Error('Method getPRDetails must be implemented');
   }
 
@@ -60,7 +60,7 @@ class IGitHubService {
    *   comments: [{ file: 'src/app.js', line: 10, message: 'Bug here', severity: 'HIGH' }]
    * });
    */
-  async createReviewWithComments(repo, pr, reviewResult) {
+  async createReviewWithComments(_repo, _pr, _reviewResult) {
     throw new Error('Method createReviewWithComments must be implemented');
   }
 
@@ -76,7 +76,7 @@ class IGitHubService {
    * @example
    * await githubService.approvePR('my-repo', 123, 'LGTM!');
    */
-  async approvePR(repo, prNumber, body) {
+  async approvePR(_repo, _prNumber, _body) {
     throw new Error('Method approvePR must be implemented');
   }
 
@@ -92,7 +92,7 @@ class IGitHubService {
    * @example
    * await githubService.requestChanges('my-repo', 123, 'Please fix these issues');
    */
-  async requestChanges(repo, prNumber, body) {
+  async requestChanges(_repo, _prNumber, _body) {
     throw new Error('Method requestChanges must be implemented');
   }
 
@@ -107,7 +107,7 @@ class IGitHubService {
    * @example
    * await githubService.closePR('my-repo', 123);
    */
-  async closePR(repo, prNumber) {
+  async closePR(_repo, _prNumber) {
     throw new Error('Method closePR must be implemented');
   }
 
@@ -119,7 +119,7 @@ class IGitHubService {
    * @returns {Promise<Array<Review>>} Array of reviews
    * @throws {MCPError} When MCP operation fails
    */
-  async getPRReviews(repo, prNumber) {
+  async getPRReviews(_repo, _prNumber) {
     throw new Error('Method getPRReviews must be implemented');
   }
 
@@ -131,7 +131,7 @@ class IGitHubService {
    * @returns {Promise<Array<Comment>>} Array of comments
    * @throws {MCPError} When MCP operation fails
    */
-  async getPRComments(repo, prNumber) {
+  async getPRComments(_repo, _prNumber) {
     throw new Error('Method getPRComments must be implemented');
   }
 

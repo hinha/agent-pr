@@ -237,7 +237,7 @@ function matchArchitectureType(filePath) {
   const path = filePath.toLowerCase();
   const matchedTypes = new Set();
 
-  for (const [key, pattern] of Object.entries(ARCHITECTURE_PATTERNS)) {
+  for (const [, pattern] of Object.entries(ARCHITECTURE_PATTERNS)) {
     for (const indicator of pattern.indicators) {
       const indicatorLower = indicator.toLowerCase();
       if (path.includes(indicatorLower) || path.endsWith(indicatorLower)) {
@@ -761,7 +761,7 @@ function determineImpactArea(files) {
 /**
  * Get recommended review based on risk level and impact area
  */
-function getRecommendedReview(riskLevel, impactArea, pr, files) {
+function getRecommendedReview(riskLevel, impactArea, pr, _files) {
   // Check if PR is a draft or WIP
   const title = (pr.title || '').toLowerCase();
   const description = (pr.description || '').toLowerCase();
@@ -801,7 +801,7 @@ function getRecommendedReview(riskLevel, impactArea, pr, files) {
 /**
  * Detect suspicious patterns in the PR
  */
-function detectSuspiciousPatterns(files, pr) {
+function detectSuspiciousPatterns(files, _pr) {
   const patterns = [];
 
   // Database migration

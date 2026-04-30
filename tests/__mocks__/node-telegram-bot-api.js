@@ -23,27 +23,27 @@ class MockTelegramBot {
   });
 
   // Mock answerCallbackQuery method
-  answerCallbackQuery = jest.fn().mockImplementation((callbackQueryId, options = {}) => {
+  answerCallbackQuery = jest.fn().mockImplementation((callbackQueryId, _options = {}) => {
     return Promise.resolve(true);
   });
 
   // Mock editMessageText method
-  editMessageText = jest.fn().mockImplementation((text, options = {}) => {
+  editMessageText = jest.fn().mockImplementation((text, _options = {}) => {
     return Promise.resolve(true);
   });
 
   // Mock editMessageReplyMarkup method
-  editMessageReplyMarkup = jest.fn().mockImplementation((replyMarkup, options = {}) => {
+  editMessageReplyMarkup = jest.fn().mockImplementation((replyMarkup, _options = {}) => {
     return Promise.resolve(true);
   });
 
   // Mock deleteMessage method
-  deleteMessage = jest.fn().mockImplementation((chatId, messageId) => {
+  deleteMessage = jest.fn().mockImplementation((_chatId, _messageId) => {
     return Promise.resolve(true);
   });
 
   // Mock deleteWebhook method
-  deleteWebhook = jest.fn().mockImplementation((options = {}) => {
+  deleteWebhook = jest.fn().mockImplementation((_options = {}) => {
     return Promise.resolve(true);
   });
 
@@ -59,7 +59,7 @@ class MockTelegramBot {
   });
 
   // Mock off method for event handlers
-  off = jest.fn().mockImplementation((event, handler) => {
+  off = jest.fn().mockImplementation((event, _handler) => {
     this.eventHandlers.delete(event);
     return this;
   });

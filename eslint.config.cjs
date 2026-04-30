@@ -40,7 +40,7 @@ module.exports = [
       'linebreak-style': ['error', 'unix'],
       'quotes': ['error', 'single'],
       'semi': ['error', 'always'],
-      'no-unused-vars': ['warn', { 'argsIgnorePattern': '^_' }],
+      'no-unused-vars': ['warn', { 'argsIgnorePattern': '^_', 'varsIgnorePattern': '^_', 'caughtErrorsIgnorePattern': '^_' }],
       'no-console': 'off',
       'no-undef': 'off'
     },

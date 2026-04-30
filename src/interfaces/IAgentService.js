@@ -29,7 +29,7 @@ class IAgentService {
    * const result = await agentService.reviewPR('myorg', 'my-repo', pr, files, 'high');
    * console.log(`Found ${result.comments.length} issues`);
    */
-  async reviewPR(owner, repo, pr, files, level) {
+  async reviewPR(_owner, _repo, _pr, _files, _level) {
     throw new Error('Method reviewPR must be implemented');
   }
 
@@ -47,7 +47,7 @@ class IAgentService {
    * const summary = await agentService.summarizePR('myorg', 'my-repo', pr, files);
    * console.log(`Summary: ${summary}`);
    */
-  async summarizePR(owner, repo, pr, files) {
+  async summarizePR(_owner, _repo, _pr, _files) {
     throw new Error('Method summarizePR must be implemented');
   }
 

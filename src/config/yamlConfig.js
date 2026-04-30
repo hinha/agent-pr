@@ -94,7 +94,7 @@ function buildInstances(config) {
 
   for (const key of Object.keys(config)) {
     if (key.startsWith('github/')) {
-      const [_, owner] = key.split('/');
+      const [, owner] = key.split('/');
 
       instances[key] = {
         key: key,
@@ -281,7 +281,7 @@ const configProxy = new Proxy({}, {
     const currentConfig = getConfig();
     return prop in currentConfig;
   },
-  ownKeys(target) {
+  ownKeys(_target) {
     const functions = {
       loadYamlConfig,
       reloadConfig,

@@ -216,7 +216,7 @@ class Bootstrap {
         // Answer the callback to prevent it from hanging
         try {
           await bot.answerCallbackQuery(query.id, { text: 'An error occurred', show_alert: true });
-        } catch (answerError) {
+        } catch (_answerError) {
           // Ignore answer errors
         }
       }
