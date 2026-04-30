@@ -196,7 +196,8 @@ class PRStateMachine {
       if (parsedKey) {
         const fsRepo = this.stateRepository.getRepository(parsedKey.owner, parsedKey.repoName);
         if (fsRepo && fsRepo.cache && fsRepo.cache.notificationCounts) {
-          const count = fsRepo.cache.notificationCounts.get(prNumber);
+          // Use numeric key for cache lookup (cache stores numeric keys)
+          const count = fsRepo.cache.notificationCounts.get(parseInt(prNumber, 10));
           if (count !== undefined) {
             return count;
           }
