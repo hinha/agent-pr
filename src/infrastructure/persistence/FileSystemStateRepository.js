@@ -56,21 +56,30 @@ class FileSystemStateRepository extends IStateRepository {
    * @returns {Promise<void>}
    */
   async initialize() {
-    if (this.loaded) return;
+    if (this.loaded) {
+      this.logger.debug(`[FileSystemStateRepository:${this.owner}/${this.repo}] Already initialized`);
+      return;
+    }
 
-    this.logger.debug(`[FileSystemStateRepository:${this.owner}/${this.repo}] Initializing...`);
+    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] Initializing...`);
+    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] Storage path: ${this.storagePath}`);
 
     try {
       // Ensure storage directory exists
+      this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] Creating storage directory...`);
       await fs.mkdir(this.storagePath, { recursive: true });
+      this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] ✓ Storage directory created`);
 
       // Load state from files
+      this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] Loading existing state...`);
       await this._loadState();
+      this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] ✓ State loaded: ${this.cache.processedPRs.size} processed PRs, ${this.cache.notificationCounts.size} notification counts`);
 
       this.loaded = true;
-      this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] Initialized`);
+      this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] ✓ Initialization complete`);
     } catch (error) {
       this.logger.error(`[FileSystemStateRepository:${this.owner}/${this.repo}] Failed to initialize: ${error.message}`);
+      this.logger.error(`[FileSystemStateRepository:${this.owner}/${this.repo}] Error stack: ${error.stack}`);
       throw error;
     }
   }
@@ -95,12 +104,15 @@ class FileSystemStateRepository extends IStateRepository {
    * @returns {Promise<void>}
    */
   async markProcessed(owner, repo, prId) {
+    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] markProcessed() called for PR #${prId}`);
     await this.initialize();
 
     this.cache.processedPRs.add(prId);
     this.cache.processedTimestamps.set(prId, Date.now());
 
+    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] Saving state for PR #${prId}...`);
     await this._persistState();
+    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] ✓ State saved for PR #${prId}`);
   }
 
   /**
@@ -123,13 +135,16 @@ class FileSystemStateRepository extends IStateRepository {
    * @returns {Promise<number>} New notification count
    */
   async incrementNotificationCount(owner, repo, prId) {
+    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] incrementNotificationCount() called for PR #${prId}`);
     await this.initialize();
 
     const currentCount = this.cache.notificationCounts.get(prId) || 0;
     const newCount = currentCount + 1;
     this.cache.notificationCounts.set(prId, newCount);
 
+    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] Saving notification count for PR #${prId}: ${currentCount} -> ${newCount}`);
     await this._persistState();
+    this.logger.info(`[FileSystemStateRepository:${this.owner}/${this.repo}] ✓ Notification count saved for PR #${prId}`);
 
     return newCount;
   }

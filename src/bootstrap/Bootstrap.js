@@ -31,10 +31,25 @@ class Bootstrap {
    * @returns {Promise<void>}
    */
   async start() {
-    const logger = this.container.get('logger');
-    const config = this.container.get('config');
+    // Use console for initial logs since logger might not be available yet
+    console.log('[Bootstrap] ===== STARTING APPLICATION =====');
+    console.log('[Bootstrap] Current time:', new Date().toISOString());
+
+    let logger = null;
+    let config = null;
 
     try {
+      // Step 1: Get logger
+      console.log('[Bootstrap] Step 1: Getting logger from container...');
+      logger = this.container.get('logger');
+      this.logger = logger; // Ensure logger is set for use in error handlers
+      logger.info('[Bootstrap] ✓ Logger obtained successfully');
+
+      // Step 2: Get config
+      console.log('[Bootstrap] Step 2: Getting config from container...');
+      config = this.container.get('config');
+      logger.info('[Bootstrap] ✓ Config obtained successfully');
+
       // Get version info
       const versionInfo = getVersionInfo();
 
@@ -46,39 +61,61 @@ class Bootstrap {
       logger.info(`   📅 Started: ${new Date().toISOString()}`);
       logger.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-      // Set up error handlers for process stability
+      // Step 3: Set up error handlers for process stability
+      logger.info('[Bootstrap] Step 3: Setting up error handlers...');
       this._setupErrorHandlers(logger);
+      logger.info('[Bootstrap] ✓ Error handlers set up');
 
-      // Initialize Telegram bot
+      // Step 4: Initialize Telegram bot
+      logger.info('[Bootstrap] Step 4: Getting Telegram adapter...');
       const telegramAdapter = this.container.get('telegramAdapter');
+      logger.info('[Bootstrap] ✓ Telegram adapter obtained');
+
+      logger.info('[Bootstrap] Step 5: Starting Telegram bot...');
       await telegramAdapter.start();
       logger.info('📱 Telegram bot started');
 
-      // Register Telegram callback handler
+      // Step 6: Register Telegram callback handler
+      logger.info('[Bootstrap] Step 6: Setting up Telegram callbacks...');
       this._setupTelegramCallbacks(logger, config);
+      logger.info('[Bootstrap] ✓ Telegram callbacks set up');
 
-      // Start PR processing orchestrator
+      // Step 7: Start PR processing orchestrator
+      logger.info('[Bootstrap] Step 7: Getting PR processing orchestrator...');
       const orchestrator = this.container.get('prProcessingOrchestrator');
+      logger.info('[Bootstrap] ✓ Orchestrator obtained');
+
+      logger.info('[Bootstrap] Step 8: Starting PR processing orchestrator...');
+      logger.info(`[Bootstrap] Orchestrator state: running=${orchestrator.isRunning}`);
       await orchestrator.start();
       logger.info('✅ PR processing orchestrator started');
 
-      // Initialize Flagsmith sync if configured
+      // Step 9: Initialize Flagsmith sync if configured
+      logger.info('[Bootstrap] Step 9: Checking Flagsmith configuration...');
       if (config.app?.flagsmith?.enabled) {
+        logger.info('[Bootstrap] Flagsmith is enabled, initializing...');
         const flagsmithSyncService = this.container.get('flagsmithSyncService');
         await flagsmithSyncService.init(config);
         if (config.app.flagsmith.syncIntervalMs) {
           flagsmithSyncService.start(config.app.flagsmith.syncIntervalMs);
         }
         logger.info('🔽 Flagsmith sync started');
+      } else {
+        logger.info('[Bootstrap] Flagsmith is not enabled, skipping');
       }
 
-      // Start memory monitoring
+      // Step 10: Start memory monitoring
+      logger.info('[Bootstrap] Step 10: Starting memory monitor...');
       this._startMemoryMonitor(logger, config);
+      logger.info('[Bootstrap] ✓ Memory monitor started');
 
-      // Set up graceful shutdown handlers
+      // Step 11: Set up graceful shutdown handlers
+      logger.info('[Bootstrap] Step 11: Setting up shutdown handlers...');
       this._setupShutdownHandlers();
+      logger.info('[Bootstrap] ✓ Shutdown handlers set up');
 
-      // Emit application started event
+      // Step 12: Emit application started event
+      logger.info('[Bootstrap] Step 12: Emitting application.started event...');
       const eventBus = this.container.get('eventBus');
       await eventBus.emitAsync('application.started', {
         startTime: new Date(),
@@ -87,6 +124,7 @@ class Bootstrap {
           checkInterval: config.app.checkIntervalMs
         }
       });
+      logger.info('[Bootstrap] ✓ Application.started event emitted');
 
       logger.info('✅ Application started successfully');
       logger.info(`📊 Monitoring ${Object.keys(config.instances || {}).length} instance(s)`);
@@ -97,8 +135,18 @@ class Bootstrap {
         logger.info(`   - ${instanceKey}: ${repoCount} repo(s)`);
       }
 
+      logger.info('[Bootstrap] ===== APPLICATION STARTUP COMPLETE =====');
+
     } catch (error) {
-      logger.error(`❌ Failed to start application: ${error.message}`);
+      console.error('[Bootstrap] ===== CRITICAL ERROR DURING STARTUP =====');
+      console.error('[Bootstrap] Error:', error.message);
+      console.error('[Bootstrap] Stack trace:', error.stack);
+      if (logger) {
+        logger.error(`❌ Failed to start application: ${error.message}`);
+        logger.error(`Stack trace: ${error.stack}`);
+        logger.error(`Error name: ${error.name}`);
+        logger.error(`Error code: ${error.code}`);
+      }
       throw error;
     }
   }

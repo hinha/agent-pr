@@ -51,33 +51,62 @@ class PRProcessingOrchestrator {
    * @returns {Promise<void>}
    */
   async start() {
+    this.logger.info('[PRProcessingOrchestrator] ===== START() CALLED =====');
+    this.logger.info(`[PRProcessingOrchestrator] Current state: isRunning=${this.isRunning}`);
+
     if (this.isRunning) {
-      this.logger.warn('[PRProcessingOrchestrator] Already running');
+      this.logger.warn('[PRProcessingOrchestrator] Already running, returning');
       return;
     }
 
-    this.isRunning = true;
-    this.stats.startTime = new Date();
+    try {
+      this.isRunning = true;
+      this.stats.startTime = new Date();
 
-    this.logger.info(
-      `[PRProcessingOrchestrator] Starting (poll interval: ${this.pollInterval}ms)`
-    );
+      this.logger.info(
+        `[PRProcessingOrchestrator] Starting (poll interval: ${this.pollInterval}ms)`
+      );
 
-    // Initial poll
-    await this._poll();
+      // Verify dependencies
+      this.logger.info('[PRProcessingOrchestrator] Verifying dependencies...');
+      this.logger.info(`[PRProcessingOrchestrator] useCases: ${Object.keys(this.useCases || {}).join(', ')}`);
+      this.logger.info(`[PRProcessingOrchestrator] config.instances: ${Object.keys(this.config?.instances || {}).join(', ')}`);
+      this.logger.info(`[PRProcessingOrchestrator] eventBus: ${!!this.eventBus}`);
+      this.logger.info('[PRProcessingOrchestrator] ✓ Dependencies verified');
 
-    // Start periodic polling
-    this.pollTimer = setInterval(() => {
-      this._poll().catch(error => {
-        this.logger.error('[PRProcessingOrchestrator] Poll error:', error);
+      // Initial poll
+      this.logger.info('[PRProcessingOrchestrator] About to run initial poll...');
+      await this._poll();
+      this.logger.info('[PRProcessingOrchestrator] ✓ Initial poll completed');
+
+      // Start periodic polling
+      this.logger.info('[PRProcessingOrchestrator] Setting up polling interval...');
+      this.pollTimer = setInterval(() => {
+        this._poll().catch(error => {
+          this.logger.error('[PRProcessingOrchestrator] Poll error:', error);
+        });
+      }, this.pollInterval);
+
+      this.logger.info(`[PRProcessingOrchestrator] ✓ Polling interval set (${this.pollInterval}ms)`);
+
+      // Emit started event
+      this.logger.info('[PRProcessingOrchestrator] Emitting orchestrator.started event...');
+      await this.eventBus.emitAsync('orchestrator.started', {
+        startTime: this.stats.startTime,
+        pollInterval: this.pollInterval
       });
-    }, this.pollInterval);
+      this.logger.info('[PRProcessingOrchestrator] ✓ orchestrator.started event emitted');
 
-    // Emit started event
-    await this.eventBus.emitAsync('orchestrator.started', {
-      startTime: this.stats.startTime,
-      pollInterval: this.pollInterval
-    });
+      this.logger.info('[PRProcessingOrchestrator] ===== STARTUP COMPLETE =====');
+    } catch (error) {
+      this.logger.error('[PRProcessingOrchestrator] ===== ERROR DURING START() =====');
+      this.logger.error(`[PRProcessingOrchestrator] Error: ${error.message}`);
+      this.logger.error(`[PRProcessingOrchestrator] Stack: ${error.stack}`);
+      this.logger.error(`[PRProcessingOrchestrator] Error name: ${error.name}`);
+      this.logger.error(`[PRProcessingOrchestrator] Error code: ${error.code}`);
+      this.isRunning = false;
+      throw error;
+    }
   }
 
   /**
@@ -128,7 +157,10 @@ class PRProcessingOrchestrator {
    * @private
    */
   async _poll() {
+    this.logger.info('[PRProcessingOrchestrator] ===== _poll() CALLED =====');
+
     if (this._isPolling || this.isShuttingDown) {
+      this.logger.info(`[PRProcessingOrchestrator] Skipping poll: _isPolling=${this._isPolling}, isShuttingDown=${this.isShuttingDown}`);
       return;
     }
 
@@ -136,50 +168,62 @@ class PRProcessingOrchestrator {
     const pollStartTime = Date.now();
 
     try {
-      this.logger.debug('[PRProcessingOrchestrator] Starting poll cycle');
+      this.logger.info('[PRProcessingOrchestrator] Starting poll cycle');
       this.stats.lastPollTime = new Date();
 
       // Process all instances
       const instances = this.config.instances || {};
+      const instanceKeys = Object.keys(instances);
+      this.logger.info(`[PRProcessingOrchestrator] Processing ${instanceKeys.length} instance(s): ${instanceKeys.join(', ')}`);
+
       const results = [];
 
       for (const instance of Object.values(instances)) {
         try {
+          this.logger.info(`[PRProcessingOrchestrator] Processing instance ${instance.key}...`);
           const instanceResult = await this._processInstance(instance);
+          this.logger.info(`[PRProcessingOrchestrator] Instance ${instance.key} processing complete: ${instanceResult.length} results`);
           results.push(...instanceResult);
         } catch (error) {
           this.logger.error(
             `[PRProcessingOrchestrator] Error processing instance ${instance.key}:`,
             error
           );
+          this.logger.error(`[PRProcessingOrchestrator] Error stack: ${error.stack}`);
           this.stats.totalErrors++;
         }
       }
 
       const pollDuration = Date.now() - pollStartTime;
-      this.logger.debug(
+      this.logger.info(
         `[PRProcessingOrchestrator] Poll cycle completed ` +
         `(${results.length} PRs processed, ${pollDuration}ms)`
       );
 
       // Emit poll completed event
+      this.logger.info('[PRProcessingOrchestrator] Emitting orchestrator.poll_completed event...');
       await this.eventBus.emitAsync('orchestrator.poll_completed', {
         duration: pollDuration,
         results,
         stats: this.stats
       });
+      this.logger.info('[PRProcessingOrchestrator] ✓ orchestrator.poll_completed event emitted');
 
     } catch (error) {
-      this.logger.error('[PRProcessingOrchestrator] Poll cycle error:', error);
+      this.logger.error('[PRProcessingOrchestrator] ===== POLL CYCLE ERROR =====');
+      this.logger.error(`[PRProcessingOrchestrator] Error: ${error.message}`);
+      this.logger.error(`[PRProcessingOrchestrator] Stack: ${error.stack}`);
       this.stats.totalErrors++;
 
       await this.eventBus.emitAsync('error.occurred', {
         useCase: 'PRProcessingOrchestrator',
-        error: error.message
+        error: error.message,
+        stack: error.stack
       });
 
     } finally {
       this._isPolling = false;
+      this.logger.info('[PRProcessingOrchestrator] ===== _poll() COMPLETE =====');
     }
   }
 
@@ -188,31 +232,50 @@ class PRProcessingOrchestrator {
    * @private
    */
   async _processInstance(instance) {
+    this.logger.info(`[PRProcessingOrchestrator] ===== _processInstance() CALLED for ${instance.key} =====`);
+
     const results = [];
     const repos = Object.entries(instance.repos || {});
 
-    this.logger.debug(`[PRProcessingOrchestrator] Processing instance ${instance.key}`);
+    this.logger.info(`[PRProcessingOrchestrator] Instance ${instance.key} has ${repos.length} repo(s)`);
+    this.logger.info(`[PRProcessingOrchestrator] Repos: ${repos.map(([name]) => name).join(', ')}`);
 
-    const githubAdapter = this.useCases.githubService.create(instance.key);
+    try {
+      this.logger.info(`[PRProcessingOrchestrator] Creating GitHub adapter for ${instance.key}...`);
+      const githubAdapter = this.useCases.githubService.create(instance.key);
+      this.logger.info(`[PRProcessingOrchestrator] ✓ GitHub adapter created`);
 
-    for (const [repoName, repoConfig] of repos) {
-      try {
-        const repo = {
-          name: repoName,
-          threadId: repoConfig.thread_id,
-          instanceKey: instance.key,
-          config: repoConfig
-        };
+      for (const [repoName, repoConfig] of repos) {
+        try {
+          this.logger.info(`[PRProcessingOrchestrator] Processing repo ${repoName}...`);
 
-        const repoResults = await this._processRepository(instance, repo, githubAdapter);
-        results.push(...repoResults);
+          const repo = {
+            name: repoName,
+            threadId: repoConfig.thread_id,
+            instanceKey: instance.key,
+            config: repoConfig
+          };
 
-      } catch (error) {
-        this.logger.error(
-          `[PRProcessingOrchestrator] Error processing repo ${repoName}:`,
-          error
-        );
+          this.logger.info(`[PRProcessingOrchestrator] Calling _processRepository for ${repoName}...`);
+          const repoResults = await this._processRepository(instance, repo, githubAdapter);
+          this.logger.info(`[PRProcessingOrchestrator] ✓ Repo ${repoName} processed: ${repoResults.length} results`);
+          results.push(...repoResults);
+
+        } catch (error) {
+          this.logger.error(
+            `[PRProcessingOrchestrator] Error processing repo ${repoName}:`,
+            error
+          );
+          this.logger.error(`[PRProcessingOrchestrator] Error stack: ${error.stack}`);
+        }
       }
+
+      this.logger.info(`[PRProcessingOrchestrator] Instance ${instance.key} processing complete: ${results.length} total results`);
+    } catch (error) {
+      this.logger.error(`[PRProcessingOrchestrator] ===== ERROR IN _processInstance() for ${instance.key} =====`);
+      this.logger.error(`[PRProcessingOrchestrator] Error: ${error.message}`);
+      this.logger.error(`[PRProcessingOrchestrator] Stack: ${error.stack}`);
+      throw error;
     }
 
     return results;
