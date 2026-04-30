@@ -45,7 +45,7 @@ class FileSystemStateRepository extends IStateRepository {
       notificationCounts: new Map(),
       processedTimestamps: new Map(),
       reviewState: new Map(), // prId -> { reviewId, headSha, submittedAt, dismissed }
-      outdatedNotified: new Map() // prId -> reviewId (tracks which outdated reviews were notified)
+      outdatedNotified: new Map() // prId -> Set<reviewId> (tracks which outdated reviews were notified)
     };
 
     this.loaded = false;
@@ -111,11 +111,40 @@ class FileSystemStateRepository extends IStateRepository {
    */
   async getNotificationCount(owner, repo, prId) {
     await this.initialize();
-    return this.cache.notificationCounts.get(prId) || 0;
+    // Read directly from file to ensure we get the actual persisted value
+    return await this._readNotificationCountFromFile(prId);
+  }
+
+  /**
+   * Read notification count directly from file (bypasses cache)
+   * This ensures we always get the persisted value, not stale cache
+   *
+   * @param {number|string} prId - Pull request ID
+   * @returns {Promise<number>} Notification count from file
+   * @private
+   */
+  async _readNotificationCountFromFile(prId) {
+    try {
+      const countsPath = path.join(this.storagePath, this.files.notificationCounts);
+      const data = await this._readJSONFile(countsPath);
+
+      if (data && typeof data === 'object') {
+        // Try both numeric and string keys
+        const count = data[prId] !== undefined ? data[prId] : data[String(prId)];
+        return count !== undefined ? parseInt(count, 10) : 0;
+      }
+      return 0;
+    } catch (error) {
+      // File doesn't exist or error reading
+      return 0;
+    }
   }
 
   /**
    * Increment notification count for a PR
+   * Note: This method is NOT used - notification count is managed by PRStateMachine
+   * which persists through reviewState. Kept for backward compatibility.
+   *
    * @param {string} owner - Repository owner (unused)
    * @param {string} repo - Repository name (unused)
    * @param {number} prId - Pull request ID
@@ -124,11 +153,12 @@ class FileSystemStateRepository extends IStateRepository {
   async incrementNotificationCount(owner, repo, prId) {
     await this.initialize();
 
-    const currentCount = this.cache.notificationCounts.get(prId) || 0;
+    // Read current count from file
+    const currentCount = await this._readNotificationCountFromFile(prId);
     const newCount = currentCount + 1;
-    this.cache.notificationCounts.set(prId, newCount);
 
-    await this._persistState();
+    // Persist to file directly
+    await this._persistNotificationCount(prId, newCount);
 
     return newCount;
   }
@@ -154,7 +184,7 @@ class FileSystemStateRepository extends IStateRepository {
     await this.initialize();
 
     this.cache.processedPRs.clear();
-    this.cache.notificationCounts.clear();
+    // Do NOT clear notificationCounts from cache - it's not used anymore
     this.cache.processedTimestamps.clear();
 
     await this._persistState();
@@ -162,15 +192,28 @@ class FileSystemStateRepository extends IStateRepository {
 
   /**
    * Get repository statistics
+   * Note: totalNotifications is read directly from file, not cache
    * @returns {Promise<RepositoryStats>} Statistics object
    */
   async getStats() {
     await this.initialize();
 
+    // Calculate total notifications by reading from file
+    let totalNotifications = 0;
+    try {
+      const countsPath = path.join(this.storagePath, this.files.notificationCounts);
+      const countsData = await this._readJSONFile(countsPath);
+      if (countsData && typeof countsData === 'object') {
+        totalNotifications = Object.values(countsData).reduce((sum, count) => sum + (parseInt(count, 10) || 0), 0);
+      }
+    } catch (error) {
+      // Ignore errors, default to 0
+    }
+
     return {
       totalRepos: 1,
       totalProcessedPRs: this.cache.processedPRs.size,
-      totalNotifications: Array.from(this.cache.notificationCounts.values()).reduce((sum, count) => sum + count, 0)
+      totalNotifications
     };
   }
 
@@ -181,7 +224,7 @@ class FileSystemStateRepository extends IStateRepository {
   async cleanup() {
     this.logger.debug(`[FileSystemStateRepository:${this.owner}/${this.repo}] Cleaning up...`);
     this.cache.processedPRs.clear();
-    this.cache.notificationCounts.clear();
+    // Do NOT clear notificationCounts from cache - it's not used anymore
     this.cache.processedTimestamps.clear();
     this.cache.reviewState.clear();
     this.cache.outdatedNotified.clear();
@@ -252,7 +295,14 @@ class FileSystemStateRepository extends IStateRepository {
    */
   async markOutdatedNotified(owner, repo, prId, reviewId) {
     await this.initialize();
-    this.cache.outdatedNotified.set(prId, reviewId);
+    // Get or create Set for this PR
+    let reviewIdSet = this.cache.outdatedNotified.get(prId);
+    if (!reviewIdSet) {
+      reviewIdSet = new Set();
+      this.cache.outdatedNotified.set(prId, reviewIdSet);
+    }
+    // Add reviewId to the Set
+    reviewIdSet.add(reviewId);
     await this._persistState();
   }
 
@@ -267,8 +317,8 @@ class FileSystemStateRepository extends IStateRepository {
    */
   async isOutdatedNotified(owner, repo, prId, reviewId) {
     await this.initialize();
-    const notifiedReviewId = this.cache.outdatedNotified.get(prId);
-    return notifiedReviewId === reviewId;
+    const reviewIdSet = this.cache.outdatedNotified.get(prId);
+    return reviewIdSet ? reviewIdSet.has(reviewId) : false;
   }
 
   /**
@@ -306,12 +356,8 @@ class FileSystemStateRepository extends IStateRepository {
         this.cache.processedPRs = new Set(processedData.processed);
       }
 
-      // Load notification counts
-      const countsPath = path.join(this.storagePath, this.files.notificationCounts);
-      const countsData = await this._readJSONFile(countsPath);
-      if (countsData && typeof countsData === 'object') {
-        this.cache.notificationCounts = new Map(Object.entries(countsData).map(([k, v]) => [parseInt(k, 10), v]));
-      }
+      // Do NOT load notification counts into cache - read directly from file when needed
+      // This ensures the file is the single source of truth
 
       // Load processed timestamps
       const timestampsPath = path.join(this.storagePath, this.files.processedTimestamps);
@@ -328,33 +374,18 @@ class FileSystemStateRepository extends IStateRepository {
         if (reviewStateData.reviews && typeof reviewStateData.reviews === 'object') {
           this.cache.reviewState = new Map(Object.entries(reviewStateData.reviews).map(([k, v]) => [parseInt(k, 10), v]));
         }
-        // Load outdated notified
+        // Load outdated notified - each value is an array that should be converted to Set
         if (reviewStateData.outdatedNotified && typeof reviewStateData.outdatedNotified === 'object') {
-          this.cache.outdatedNotified = new Map(Object.entries(reviewStateData.outdatedNotified));
-        }
-      }
-
-      // Sync notification counts from notification_counts.json to review_state.json
-      // This ensures notification_counts.json is the source of truth
-      if (this.cache.notificationCounts.size > 0) {
-        for (const [prId, count] of this.cache.notificationCounts.entries()) {
-          const stateData = this.cache.reviewState.get(prId);
-          if (!stateData || stateData.notificationCount === undefined || stateData.notificationCount < count) {
-            if (!stateData) {
-              // Create new state entry for PR that doesn't exist in review_state.json
-              const newStateData = { state: 'pending', notificationCount: count, lastUpdated: new Date().toISOString() };
-              this.cache.reviewState.set(prId, newStateData);
-              this.logger.debug(`[FileSystemStateRepository:${this.owner}/${this.repo}] Created review state for PR #${prId} with notificationCount=${count}`);
-            } else {
-              // Update existing state entry with notification count from notification_counts.json
-              stateData.notificationCount = count;
-              this.logger.debug(`[FileSystemStateRepository:${this.owner}/${this.repo}] Updated PR #${prId} notificationCount to ${count}`);
-            }
+          const outdatedMap = new Map();
+          for (const [prId, reviewIds] of Object.entries(reviewStateData.outdatedNotified)) {
+            // Convert array to Set
+            outdatedMap.set(prId, new Set(reviewIds || []));
           }
+          this.cache.outdatedNotified = outdatedMap;
         }
       }
 
-      this.logger.debug(`[FileSystemStateRepository:${this.owner}/${this.repo}] State loaded: ${this.cache.processedPRs.size} processed PRs, ${this.cache.notificationCounts.size} notification counts, ${this.cache.reviewState.size} review states`);
+      this.logger.debug(`[FileSystemStateRepository:${this.owner}/${this.repo}] State loaded: ${this.cache.processedPRs.size} processed PRs, ${this.cache.reviewState.size} review states`);
     } catch (error) {
       this.logger.warn(`[FileSystemStateRepository:${this.owner}/${this.repo}] Failed to load state: ${error.message}`);
     }
@@ -374,13 +405,8 @@ class FileSystemStateRepository extends IStateRepository {
         updated: new Date().toISOString()
       });
 
-      // Save notification counts
-      const countsPath = path.join(this.storagePath, this.files.notificationCounts);
-      const countsObj = {};
-      for (const [prId, count] of this.cache.notificationCounts.entries()) {
-        countsObj[prId] = count;
-      }
-      await this._writeJSONFile(countsPath, countsObj);
+      // Notification counts are saved by _persistNotificationCount() directly
+      // Do NOT write from cache here since cache is no longer used for notification counts
 
       // Save processed timestamps
       const timestampsPath = path.join(this.storagePath, this.files.processedTimestamps);
@@ -392,9 +418,14 @@ class FileSystemStateRepository extends IStateRepository {
 
       // Save review state
       const reviewStatePath = path.join(this.storagePath, this.files.reviewState);
+      // Convert Sets to arrays for JSON serialization
+      const outdatedNotifiedObj = {};
+      for (const [prId, reviewIdSet] of this.cache.outdatedNotified.entries()) {
+        outdatedNotifiedObj[prId] = Array.from(reviewIdSet);
+      }
       const reviewStateObj = {
         reviews: Object.fromEntries(this.cache.reviewState),
-        outdatedNotified: Object.fromEntries(this.cache.outdatedNotified)
+        outdatedNotified: outdatedNotifiedObj
       };
       await this._writeJSONFile(reviewStatePath, reviewStateObj);
 
@@ -425,6 +456,8 @@ class FileSystemStateRepository extends IStateRepository {
 
   /**
    * Persist notification count to notification_counts.json
+   * Note: Does NOT update cache - reads are done directly from file
+   *
    * @param {number} prId - Pull request ID
    * @param {number} count - Notification count
    * @returns {Promise<void>}
@@ -449,8 +482,8 @@ class FileSystemStateRepository extends IStateRepository {
       // Write back to file
       await this._writeJSONFile(countsPath, countsObj);
 
-      // Also update in-memory cache
-      this.cache.notificationCounts.set(prId, count);
+      // Do NOT update cache - reads are done directly from file now
+      // this.cache.notificationCounts.set(prId, count);
     } catch (error) {
       this.logger.error(`[FileSystemStateRepository:${this.owner}/${this.repo}] Failed to persist notification count for PR #${prId}: ${error.message}`);
       throw error;

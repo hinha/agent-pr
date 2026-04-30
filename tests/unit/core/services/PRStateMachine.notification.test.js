@@ -59,6 +59,19 @@ class MockStateRepository {
       this.repositories.set(key, {
         cache: {
           notificationCounts: new Map()
+        },
+        _readNotificationCountFromFile: async (prId) => {
+          // Simulate reading from file - return value from this.data
+          const fileKey = `${key}-notification-counts`;
+          const counts = this.data.get(fileKey) || {};
+          return counts[prId] !== undefined ? parseInt(counts[prId], 10) : 0;
+        },
+        _persistNotificationCount: async (prId, count) => {
+          // Simulate writing to file
+          const fileKey = `${key}-notification-counts`;
+          const counts = this.data.get(fileKey) || {};
+          counts[prId] = count;
+          this.data.set(fileKey, counts);
         }
       });
     }
@@ -118,8 +131,8 @@ describe('PRStateMachine - Notification Count Lookup Fix', () => {
       });
     });
 
-    describe('fallback to repository cache', () => {
-      test('should return count from cache when stateData lacks notificationCount', async () => {
+    describe('fallback to file storage', () => {
+      test('should return count from file when stateData lacks notificationCount', async () => {
         const key = 'github/hinha/agent-pr/agent-pr/pr/789';
 
         // Set state data without notificationCount
@@ -128,9 +141,9 @@ describe('PRStateMachine - Notification Count Lookup Fix', () => {
           lastUpdated: new Date().toISOString()
         });
 
-        // Set notification count in repository cache (use numeric key for consistency)
+        // Set notification count in file storage (via _persistNotificationCount)
         const fsRepo = mockRepository.getRepository('hinha', 'agent-pr');
-        fsRepo.cache.notificationCounts.set(789, 3);
+        await fsRepo._persistNotificationCount(789, 3);
 
         const count = await stateMachine.getNotificationCount(
           'github/hinha/agent-pr',
@@ -141,12 +154,12 @@ describe('PRStateMachine - Notification Count Lookup Fix', () => {
         expect(count).toBe(3);
       });
 
-      test('should return count from cache when stateData does not exist', async () => {
+      test('should return count from file when stateData does not exist', async () => {
         const key = 'github/hinha/agent-pr/agent-pr/pr/999';
 
-        // Set notification count in repository cache (use numeric key)
+        // Set notification count in file storage
         const fsRepo = mockRepository.getRepository('hinha', 'agent-pr');
-        fsRepo.cache.notificationCounts.set(999, 2);
+        await fsRepo._persistNotificationCount(999, 2);
 
         const count = await stateMachine.getNotificationCount(
           'github/hinha/agent-pr',
@@ -157,7 +170,7 @@ describe('PRStateMachine - Notification Count Lookup Fix', () => {
         expect(count).toBe(2);
       });
 
-      test('should prefer stateData notificationCount over cache', async () => {
+      test('should prefer stateData notificationCount over file', async () => {
         const key = 'github/hinha/agent-pr/agent-pr/pr/111';
 
         // Set state data with notificationCount
@@ -167,9 +180,9 @@ describe('PRStateMachine - Notification Count Lookup Fix', () => {
           lastUpdated: new Date().toISOString()
         });
 
-        // Set different notification count in repository cache (use numeric key)
+        // Set different notification count in file storage
         const fsRepo = mockRepository.getRepository('hinha', 'agent-pr');
-        fsRepo.cache.notificationCounts.set(111, 10);
+        await fsRepo._persistNotificationCount(111, 10);
 
         const count = await stateMachine.getNotificationCount(
           'github/hinha/agent-pr',
@@ -177,7 +190,7 @@ describe('PRStateMachine - Notification Count Lookup Fix', () => {
           111
         );
 
-        // Should return count from state data (5), not from cache (10)
+        // Should return count from state data (5), not from file (10)
         expect(count).toBe(5);
       });
     });

@@ -189,15 +189,15 @@ class PRStateMachine {
       return stateData.notificationCount;
     }
 
-    // Fallback: try to get from the repository's notificationCounts cache
-    // This handles cases where notification_counts.json exists but review_state.json doesn't have the count yet
+    // Fallback: read directly from notification_counts.json file
+    // This ensures we always get the persisted count, not stale cache
     try {
       const parsedKey = this.stateRepository._parseKey(key);
       if (parsedKey) {
         const fsRepo = this.stateRepository.getRepository(parsedKey.owner, parsedKey.repoName);
-        if (fsRepo && fsRepo.cache && fsRepo.cache.notificationCounts) {
-          // Use numeric key for cache lookup (cache stores numeric keys)
-          const count = fsRepo.cache.notificationCounts.get(parseInt(prNumber, 10));
+        if (fsRepo) {
+          // Read directly from file to ensure we get the actual persisted value
+          const count = await fsRepo._readNotificationCountFromFile(prNumber);
           if (count !== undefined) {
             return count;
           }

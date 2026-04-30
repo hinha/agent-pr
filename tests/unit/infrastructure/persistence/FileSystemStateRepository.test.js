@@ -124,7 +124,7 @@ describe('FileSystemStateRepository', () => {
 
       expect(await repository.isProcessed(owner, repo, 123)).toBe(true);
       expect(fs.writeFile).toHaveBeenCalled();
-      expect(fs.writeFile).toHaveBeenCalledTimes(4); // processed, counts, timestamps, review_state
+      expect(fs.writeFile).toHaveBeenCalledTimes(3); // processed, timestamps, review_state (counts not written here anymore)
     });
   });
 
@@ -141,6 +141,17 @@ describe('FileSystemStateRepository', () => {
       await repository.incrementNotificationCount(owner, repo, 123);
       await repository.incrementNotificationCount(owner, repo, 123);
 
+      // Mock fs.readFile to return the persisted notification count
+      fs.readFile.mockImplementation((filePath) => {
+        if (filePath.includes('notification_counts.json')) {
+          return Promise.resolve(JSON.stringify({ '123': 2 }));
+        }
+        if (filePath.includes('processed_prs.json')) {
+          return Promise.reject({ code: 'ENOENT' });
+        }
+        return Promise.reject({ code: 'ENOENT' });
+      });
+
       const count = await repository.getNotificationCount(owner, repo, 123);
       expect(count).toBe(2);
     });
@@ -149,6 +160,30 @@ describe('FileSystemStateRepository', () => {
   describe('incrementNotificationCount', () => {
     test('should increment notification count', async () => {
       await repository.initialize();
+
+      // Track notification counts to simulate file storage
+      let notificationCounts = {};
+
+      // Mock fs.writeFile to track notification counts
+      fs.writeFile.mockImplementation((filePath, data) => {
+        if (filePath.includes('notification_counts.json')) {
+          notificationCounts = JSON.parse(data);
+        }
+        return Promise.resolve();
+      });
+
+      // Mock fs.readFile to return tracked notification counts
+      fs.readFile.mockImplementation((filePath) => {
+        if (filePath.includes('notification_counts.json')) {
+          return Object.keys(notificationCounts).length > 0
+            ? Promise.resolve(JSON.stringify(notificationCounts))
+            : Promise.reject({ code: 'ENOENT' });
+        }
+        if (filePath.includes('processed_prs.json')) {
+          return Promise.reject({ code: 'ENOENT' });
+        }
+        return Promise.reject({ code: 'ENOENT' });
+      });
 
       const count1 = await repository.incrementNotificationCount(owner, repo, 123);
       expect(count1).toBe(1);
@@ -206,6 +241,20 @@ describe('FileSystemStateRepository', () => {
       await repository.incrementNotificationCount(owner, repo, 123);
       await repository.incrementNotificationCount(owner, repo, 456);
 
+      // Mock fs.readFile to return the persisted notification counts
+      fs.readFile.mockImplementation((filePath) => {
+        if (filePath.includes('notification_counts.json')) {
+          return Promise.resolve(JSON.stringify({ '123': 2, '456': 1 }));
+        }
+        if (filePath.includes('processed_prs.json')) {
+          return Promise.resolve(JSON.stringify({
+            processed: [123, 456],
+            updated: new Date().toISOString()
+          }));
+        }
+        return Promise.reject({ code: 'ENOENT' });
+      });
+
       const stats = await repository.getStats();
 
       expect(stats.totalRepos).toBe(1);
@@ -226,8 +275,8 @@ describe('FileSystemStateRepository', () => {
     });
   });
 
-  describe('notification count sync', () => {
-    test('should sync notification counts from notification_counts.json to review_state.json during load', async () => {
+  describe('notification count - file-based storage', () => {
+    test('should NOT sync notification counts to review_state.json during load', async () => {
       const mockCountsData = { '123': 2, '456': 1 };
       // review_state.json has structure: { reviews: { ... }, outdatedNotified: { ... } }
       const mockReviewStateData = {
@@ -249,26 +298,17 @@ describe('FileSystemStateRepository', () => {
 
       await repository.initialize();
 
-      // Debug: check what's in the cache
-      // console.log('notificationCounts size:', repository.cache.notificationCounts.size);
-      // console.log('notificationCounts:', Array.from(repository.cache.notificationCounts.entries()));
-      // console.log('reviewState size:', repository.cache.reviewState.size);
-      // console.log('reviewState:', Array.from(repository.cache.reviewState.entries()));
-
-      // PR 123 should have notificationCount synced from notification_counts.json
-      // Note: cache.reviewState stores numeric keys
+      // PR 123 should NOT have notificationCount synced - it should be undefined
       const reviewState123 = repository.cache.reviewState.get(123);
       expect(reviewState123).toBeDefined();
-      expect(reviewState123.notificationCount).toBe(2);
+      expect(reviewState123.notificationCount).toBeUndefined();
 
-      // PR 456 should have review_state entry created with notificationCount
+      // PR 456 should NOT have review_state entry created
       const reviewState456 = repository.cache.reviewState.get(456);
-      expect(reviewState456).toBeDefined();
-      expect(reviewState456.notificationCount).toBe(1);
-      expect(reviewState456.state).toBe('pending');
+      expect(reviewState456).toBeUndefined();
     });
 
-    test('should not overwrite higher notificationCount in review_state.json', async () => {
+    test('should not overwrite notificationCount in review_state.json', async () => {
       const mockCountsData = { '123': 1 };
       const mockReviewStateData = {
         reviews: {
@@ -289,13 +329,13 @@ describe('FileSystemStateRepository', () => {
 
       await repository.initialize();
 
-      // Should keep the higher count from review_state.json
+      // Should keep the notificationCount from review_state.json (no sync is done)
       const reviewState123 = repository.cache.reviewState.get(123);
       expect(reviewState123).toBeDefined();
-      expect(reviewState123.notificationCount).toBe(3);
+      expect(reviewState123.notificationCount).toBe(3); // From review_state.json, not from notification_counts.json
     });
 
-    test('should set missing notificationCount in review_state.json from notification_counts.json', async () => {
+    test('should not sync notification counts to review_state.json during load', async () => {
       const mockCountsData = { '123': 2 };
       const mockReviewStateData = {
         reviews: {
@@ -316,10 +356,10 @@ describe('FileSystemStateRepository', () => {
 
       await repository.initialize();
 
-      // Should set notificationCount from notification_counts.json
+      // Should NOT sync - review_state.json should remain as is
       const reviewState123 = repository.cache.reviewState.get(123);
       expect(reviewState123).toBeDefined();
-      expect(reviewState123.notificationCount).toBe(2);
+      expect(reviewState123.notificationCount).toBeUndefined(); // No sync anymore
     });
   });
 
@@ -337,12 +377,13 @@ describe('FileSystemStateRepository', () => {
       expect(JSON.parse(writeCall[1])).toEqual({ '123': 2 });
     });
 
-    test('should update in-memory cache after persisting', async () => {
+    test('should NOT update in-memory cache after persisting (file is source of truth)', async () => {
       await repository.initialize();
 
       await repository._persistNotificationCount(123, 3);
 
-      expect(repository.cache.notificationCounts.get(123)).toBe(3);
+      // Cache should NOT be updated - reads are done directly from file
+      expect(repository.cache.notificationCounts.get(123)).toBeUndefined();
     });
 
     test('should merge with existing notification counts', async () => {
@@ -389,6 +430,112 @@ describe('FileSystemStateRepository', () => {
       fs.writeFile.mockRejectedValue(new Error('Write failed'));
 
       await expect(repository._persistNotificationCount(123, 1)).rejects.toThrow('Write failed');
+    });
+  });
+
+  describe('outdated review notification tracking', () => {
+    test('should mark outdated review as notified', async () => {
+      await repository.initialize();
+      await repository.markOutdatedNotified(owner, repo, '9', 'review-123');
+
+      const isNotified = await repository.isOutdatedNotified(owner, repo, '9', 'review-123');
+      expect(isNotified).toBe(true);
+    });
+
+    test('should return false for non-notified outdated review', async () => {
+      await repository.initialize();
+
+      const isNotified = await repository.isOutdatedNotified(owner, repo, '9', 'review-123');
+      expect(isNotified).toBe(false);
+    });
+
+    test('should track multiple outdated reviews for same PR', async () => {
+      await repository.initialize();
+
+      // Mark 7 different reviews for PR #9 as notified
+      await repository.markOutdatedNotified(owner, repo, '9', 'review-1');
+      await repository.markOutdatedNotified(owner, repo, '9', 'review-2');
+      await repository.markOutdatedNotified(owner, repo, '9', 'review-3');
+      await repository.markOutdatedNotified(owner, repo, '9', 'review-4');
+      await repository.markOutdatedNotified(owner, repo, '9', 'review-5');
+      await repository.markOutdatedNotified(owner, repo, '9', 'review-6');
+      await repository.markOutdatedNotified(owner, repo, '9', 'review-7');
+
+      // All should be marked as notified
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-1')).toBe(true);
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-2')).toBe(true);
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-3')).toBe(true);
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-4')).toBe(true);
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-5')).toBe(true);
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-6')).toBe(true);
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-7')).toBe(true);
+
+      // Different review should not be marked
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-8')).toBe(false);
+    });
+
+    test('should persist outdated notified to JSON as array', async () => {
+      await repository.initialize();
+
+      await repository.markOutdatedNotified(owner, repo, '9', 'review-1');
+      await repository.markOutdatedNotified(owner, repo, '9', 'review-2');
+
+      expect(fs.writeFile).toHaveBeenCalled();
+      // Get the LAST write call (after second markOutdatedNotified)
+      const writeCalls = fs.writeFile.mock.calls.filter(call =>
+        call[0].includes('review_state.json')
+      );
+      expect(writeCalls.length).toBeGreaterThan(0);
+
+      const writeCall = writeCalls[writeCalls.length - 1]; // Get last call
+      const persistedData = JSON.parse(writeCall[1]);
+      // Should be an array, not a single value
+      expect(persistedData.outdatedNotified['9']).toEqual(['review-1', 'review-2']);
+    });
+
+    test('should load outdated notified from JSON array', async () => {
+      const mockReviewStateData = {
+        reviews: {},
+        outdatedNotified: {
+          '9': ['review-1', 'review-2', 'review-3']
+        }
+      };
+
+      fs.readFile.mockImplementation((filePath) => {
+        if (filePath.includes('review_state.json')) {
+          return Promise.resolve(JSON.stringify(mockReviewStateData));
+        }
+        return Promise.reject({ code: 'ENOENT' });
+      });
+
+      await repository.initialize();
+
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-1')).toBe(true);
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-2')).toBe(true);
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-3')).toBe(true);
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-4')).toBe(false);
+    });
+
+    test('should clear outdated notification for PR', async () => {
+      await repository.initialize();
+
+      await repository.markOutdatedNotified(owner, repo, '9', 'review-1');
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-1')).toBe(true);
+
+      await repository.clearOutdatedNotified(owner, repo, '9');
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-1')).toBe(false);
+    });
+
+    test('should track outdated reviews for multiple PRs separately', async () => {
+      await repository.initialize();
+
+      await repository.markOutdatedNotified(owner, repo, '9', 'review-1');
+      await repository.markOutdatedNotified(owner, repo, '10', 'review-2');
+
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-1')).toBe(true);
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-2')).toBe(false);
+      expect(await repository.isOutdatedNotified(owner, repo, '10', 'review-1')).toBe(false);
+      expect(await repository.isOutdatedNotified(owner, repo, '10', 'review-2')).toBe(true);
     });
   });
 });
