@@ -616,6 +616,45 @@ class MCPGitHubAdapter extends IGitHubService {
   }
 
   /**
+   * Get recent commits for a pull request
+   * @param {string} repo - Repository name
+   * @param {number} prNumber - Pull request number
+   * @param {number} [limit=3] - Maximum commits to return (most recent first)
+   * @returns {Promise<Array<Commit>>}
+   */
+  async getPRCommits(repo, prNumber, limit = 3) {
+    this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Fetching commits for PR #${prNumber}`);
+
+    try {
+      const rawCommits = await this._callMCP('get_pull_request_commits', {
+        owner: this.owner,
+        repo: repo,
+        pull_number: prNumber
+      });
+
+      const commits = (rawCommits || [])
+        .reverse() // Most recent first
+        .slice(0, limit)
+        .map(c => ({
+          sha: c.sha?.substring(0, 7),
+          message: c.commit?.message?.split('\n')[0] || c.commit?.message || '',
+          author: c.commit?.author?.name || c.author?.login || 'unknown',
+          date: c.commit?.author?.date || c.commit?.committer?.date || ''
+        }));
+
+      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Found ${commits.length} recent commits for PR #${prNumber}`);
+      return commits;
+    } catch (err) {
+      if (err.message && err.message.includes('Unknown tool')) {
+        this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}] get_pull_request_commits tool not available`);
+      } else {
+        this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Failed to fetch commits for PR #${prNumber}: ${err.message}`);
+      }
+      return [];
+    }
+  }
+
+  /**
    * Clean up resources
    * @returns {void}
    */

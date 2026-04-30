@@ -37,7 +37,7 @@ class OpenClawAgentAdapter extends IAgentService {
    * @param {string} level - Review level (low, medium, high)
    * @returns {Promise<ReviewResult>} Review result with comments
    */
-  async reviewPR(owner, repo, pr, files, level, previousComments = []) {
+  async reviewPR(owner, repo, pr, files, level, previousComments = [], lastCommits = []) {
     const levelConfig = this.config.reviewLevels[level];
     if (!levelConfig) {
       throw new Error(`Invalid review level: ${level}`);
@@ -51,7 +51,7 @@ class OpenClawAgentAdapter extends IAgentService {
     this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] Starting ${level} level review for PR #${pr.number}`);
 
     return this.retryHelper.retry(async () => {
-      const reviewPrompt = this._buildReviewPrompt(owner, repo, pr, level, levelConfig, files, previousComments);
+      const reviewPrompt = this._buildReviewPrompt(owner, repo, pr, level, levelConfig, files, previousComments, lastCommits);
       const agentName = instance.agent.reviewAgent;
       const command = `openclaw agent --agent ${agentName} --json --message "${this._escapeShellString(reviewPrompt)}" --timeout ${instance.agent.reviewTimeoutSeconds}`;
 
@@ -176,7 +176,7 @@ class OpenClawAgentAdapter extends IAgentService {
    * @returns {string} Review prompt
    * @private
    */
-  _buildReviewPrompt(owner, repo, pr, level, levelConfig, files, previousComments = []) {
+  _buildReviewPrompt(owner, repo, pr, level, levelConfig, files, previousComments = [], lastCommits = []) {
     const focusAreas = levelConfig.focusAreas.join(', ');
 
     // Load prompt template from file (like feature branch)
@@ -222,6 +222,23 @@ class OpenClawAgentAdapter extends IAgentService {
       previousCommentsBlock = '(Tidak ada komentar review sebelumnya)';
     }
 
+    // Build last commits block
+    let lastCommitsBlock = '';
+    if (lastCommits && lastCommits.length > 0) {
+      const formattedCommits = lastCommits
+        .map(c => `- [${c.sha}] ${c.message} (oleh ${c.author})`)
+        .join('\n');
+
+      lastCommitsBlock =
+        'COMMIT TERAKHIR DI PR INI (perubahan yang baru saja dilakukan developer):\n' +
+        'Gunakan informasi ini untuk memahami apa yang sudah diperbaiki. Jika commit terakhir sudah memperbaiki issue yang sama dengan komentar sebelumnya, JANGAN ulangi komentar tersebut.\n' +
+        'Gunakan MCP ' + mcpName + ' untuk melihat detail diff commit jika perlu (tool get_commit dengan sha lengkap).\n' +
+        formattedCommits;
+      this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] Including ${lastCommits.length} last commits in prompt`);
+    } else {
+      lastCommitsBlock = '(Tidak ada commit info)';
+    }
+
     return template
       .replace('{{PR_NUMBER}}', pr.number)
       .replace('{{LEVEL}}', level.toUpperCase())
@@ -233,7 +250,8 @@ class OpenClawAgentAdapter extends IAgentService {
       .replace('{{TARGET_BRANCH}}', pr.baseBranch || 'main')
       .replace('{{PR_URL}}', pr.url)
       .replace('{{MCP_NAME}}', mcpName)
-      .replace('{{PREVIOUS_COMMENTS}}', previousCommentsBlock);
+      .replace('{{PREVIOUS_COMMENTS}}', previousCommentsBlock)
+      .replace('{{LAST_COMMITS}}', lastCommitsBlock);
   }
 
   /**

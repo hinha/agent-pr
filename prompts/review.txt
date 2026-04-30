@@ -22,6 +22,8 @@ INSTRUKSI:
 
 {{PREVIOUS_COMMENTS}}
 
+{{LAST_COMMITS}}
+
 OUTPUT FORMAT (JSON):
 {
   "summary": "Ringkasan review secara keseluruhan",

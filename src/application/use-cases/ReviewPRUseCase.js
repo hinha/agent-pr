@@ -72,6 +72,19 @@ class ReviewPRUseCase {
         );
       }
 
+      // Step 1c: Fetch recent commits to understand what developer fixed
+      let lastCommits = [];
+      try {
+        lastCommits = await githubAdapter.getPRCommits(repoName, prNumber, 3);
+        this.logger.info(
+          `[ReviewPRUseCase] Found ${lastCommits.length} recent commits on PR #${prNumber}`
+        );
+      } catch (err) {
+        this.logger.warn(
+          `[ReviewPRUseCase] Could not fetch commits for PR #${prNumber}: ${err.message}`
+        );
+      }
+
       // Step 2: Run AI analysis
       const reviewResult = await this.agentService.reviewPR(
         instance.owner,
@@ -79,7 +92,8 @@ class ReviewPRUseCase {
         pr,
         files,
         level,
-        previousComments
+        previousComments,
+        lastCommits
       );
 
       if (!reviewResult.success) {
