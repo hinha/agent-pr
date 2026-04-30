@@ -268,6 +268,25 @@ class FileSystemStateRepository extends IStateRepository {
     return notifiedReviewId === reviewId;
   }
 
+  /**
+   * Clear outdated review notification for a PR
+   *
+   * @param {string} owner - Repository owner (unused, using instance owner)
+   * @param {string} repo - Repository name (unused, using instance repo)
+   * @param {string} prId - Pull request ID
+   * @returns {Promise<void>}
+   */
+  async clearOutdatedNotified(owner, repo, prId) {
+    await this.initialize();
+
+    this.cache.outdatedNotified.delete(prId);
+    await this._persistState();
+
+    this.logger.debug(
+      `[FileSystemStateRepository:${this.owner}/${this.repo}] Cleared outdated notification for PR #${prId}`
+    );
+  }
+
   // ===== Private Methods =====
 
   /**

@@ -161,11 +161,18 @@ class CheckOutdatedReviewsUseCase {
   async _wasAlreadyNotified(notificationKey, prId, reviewId) {
     // Parse notification key: instanceKey/repoName/outdated/reviewId
     const parts = notificationKey.split('/');
-    const repoName = parts[1];
+    const instanceKey = parts[0]; // e.g., github/hinha
+    const repoName = parts[1];     // e.g., gosm
+
+    // Extract owner from instanceKey
+    const owner = instanceKey.includes('/') ? instanceKey.split('/')[1] : instanceKey;
+
+    // Get the FileSystemStateRepository for this specific repo
+    const fsRepo = this.stateMachine.stateRepository.getRepository(owner, repoName);
 
     // Use persistent storage to check if already notified
-    return await this.stateMachine.stateRepository.isOutdatedNotified(
-      parts[0].replace('github/', ''),
+    return await fsRepo.isOutdatedNotified(
+      owner,
       repoName,
       prId.toString(),
       reviewId
@@ -179,12 +186,18 @@ class CheckOutdatedReviewsUseCase {
   async _markAsNotified(notificationKey, prId, reviewId) {
     // Parse notification key: instanceKey/repoName/outdated/reviewId
     const parts = notificationKey.split('/');
-    const instanceKey = parts[0].replace('github/', '');
-    const repoName = parts[1];
+    const instanceKey = parts[0]; // e.g., github/hinha
+    const repoName = parts[1];     // e.g., gosm
+
+    // Extract owner from instanceKey
+    const owner = instanceKey.includes('/') ? instanceKey.split('/')[1] : instanceKey;
+
+    // Get the FileSystemStateRepository for this specific repo
+    const fsRepo = this.stateMachine.stateRepository.getRepository(owner, repoName);
 
     // Use persistent storage to mark as notified
-    await this.stateMachine.stateRepository.markOutdatedNotified(
-      instanceKey,
+    await fsRepo.markOutdatedNotified(
+      owner,
       repoName,
       prId.toString(),
       reviewId
@@ -221,18 +234,18 @@ class CheckOutdatedReviewsUseCase {
     try {
       // Clear from persistent storage if PR ID is provided
       if (prId && this.stateMachine?.stateRepository) {
-        const stateRepo = this.stateMachine.stateRepository;
+        // Get the FileSystemStateRepository for this specific repo
+        const fsRepo = this.stateMachine.stateRepository.getRepository(
+          instance.owner,
+          repo.name
+        );
 
-        // Note: FileSystemStateRepository doesn't have a direct clearOutdatedNotified method
-        // We need to access the cache directly or add a method to the repository
-        if (stateRepo.cache && stateRepo.cache.outdatedNotified) {
-          stateRepo.cache.outdatedNotified.delete(prId.toString());
-          await stateRepo._persistState();
+        // Use the new clearOutdatedNotified method
+        await fsRepo.clearOutdatedNotified(instance.owner, repo.name, prId.toString());
 
-          this.logger.info(
-            `[CheckOutdatedReviewsUseCase] Cleared outdated notification for PR #${prId}, review ${reviewId}`
-          );
-        }
+        this.logger.info(
+          `[CheckOutdatedReviewsUseCase] Cleared outdated notification for PR #${prId}, review ${reviewId}`
+        );
       }
 
       this.logger.debug(
