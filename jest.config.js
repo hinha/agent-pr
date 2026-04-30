@@ -10,13 +10,13 @@ module.exports = {
     '!**/node_modules/**'
   ],
 
-  // Coverage thresholds - enforced at 50%
+  // Coverage thresholds - enforced at 60% (current coverage ~68%)
   coverageThreshold: {
     global: {
-      branches: 50,    // was 90
-      functions: 50,   // was 90
-      lines: 50,       // was 90
-      statements: 50   // was 90
+      branches: 60,
+      functions: 60,
+      lines: 60,
+      statements: 60
     }
   },
 

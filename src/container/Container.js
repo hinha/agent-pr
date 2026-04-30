@@ -104,13 +104,13 @@ class Container {
       });
     }).singleton();
 
-    // State Machine with simple key-value store
+    // State Machine with multi-repo file persistence
     this.registerFunction('stateMachine', (cradle) => {
       const PRStateMachine = require('../core/services/PRStateMachine');
-      const SimpleKeyMapStateRepository = require('../infrastructure/persistence/SimpleKeyMapStateRepository');
+      const MultiRepoStateRepository = require('../infrastructure/persistence/MultiRepoStateRepository');
 
       return new PRStateMachine(
-        new SimpleKeyMapStateRepository(),
+        new MultiRepoStateRepository(cradle.logger),
         { logger: cradle.logger, maxNotifications: 3 }
       );
     }).singleton();
@@ -252,11 +252,11 @@ class Container {
     // State Coordination Service
     this.registerFunction('stateCoordinationService', (cradle) => {
       const StateCoordinationService = require('../application/services/StateCoordinationService');
-      const SimpleKeyMapStateRepository = require('../infrastructure/persistence/SimpleKeyMapStateRepository');
+      const MultiRepoStateRepository = require('../infrastructure/persistence/MultiRepoStateRepository');
 
       return new StateCoordinationService(
         cradle.stateMachine,
-        new SimpleKeyMapStateRepository(),
+        new MultiRepoStateRepository(cradle.logger),
         cradle.eventBus,
         { logger: cradle.logger }
       );
@@ -265,11 +265,11 @@ class Container {
     // Unified State Service (consolidates all state management)
     this.registerFunction('unifiedStateService', (cradle) => {
       const UnifiedStateService = require('../application/services/UnifiedStateService');
-      const SimpleKeyMapStateRepository = require('../infrastructure/persistence/SimpleKeyMapStateRepository');
+      const MultiRepoStateRepository = require('../infrastructure/persistence/MultiRepoStateRepository');
 
       return new UnifiedStateService(
         cradle.stateMachine,
-        new SimpleKeyMapStateRepository(),
+        new MultiRepoStateRepository(cradle.logger),
         cradle.eventBus,
         cradle.logger
       );
