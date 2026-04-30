@@ -57,7 +57,7 @@ class UnifiedStateService {
       'processed'
     );
 
-    await this.eventBus.emitAsync('state.'pr.processed'', {
+    await this.eventBus.emitAsync('state.pr.processed', {
       instanceKey,
       repoName,
       prNumber

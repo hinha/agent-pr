@@ -252,11 +252,11 @@ class Container {
     // State Coordination Service
     this.registerFunction('stateCoordinationService', (cradle) => {
       const StateCoordinationService = require('../application/services/StateCoordinationService');
-      const FileSystemStateRepository = require('../infrastructure/persistence/FileSystemStateRepository');
+      const SimpleKeyMapStateRepository = require('../infrastructure/persistence/SimpleKeyMapStateRepository');
 
       return new StateCoordinationService(
         cradle.stateMachine,
-        new FileSystemStateRepository(cradle.logger),
+        new SimpleKeyMapStateRepository(),
         cradle.eventBus,
         { logger: cradle.logger }
       );
@@ -265,11 +265,11 @@ class Container {
     // Unified State Service (consolidates all state management)
     this.registerFunction('unifiedStateService', (cradle) => {
       const UnifiedStateService = require('../application/services/UnifiedStateService');
-      const FileSystemStateRepository = require('../infrastructure/persistence/FileSystemStateRepository');
+      const SimpleKeyMapStateRepository = require('../infrastructure/persistence/SimpleKeyMapStateRepository');
 
       return new UnifiedStateService(
         cradle.stateMachine,
-        new FileSystemStateRepository(cradle.logger),
+        new SimpleKeyMapStateRepository(),
         cradle.eventBus,
         cradle.logger
       );

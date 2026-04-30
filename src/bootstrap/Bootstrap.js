@@ -147,15 +147,15 @@ class Bootstrap {
       flagsmithSyncService.stop();
       logger.info('   ✓ Flagsmith sync stopped');
 
-      // Clear EventBus to remove all listeners
+      // Emit application stopped event (before clearing listeners)
       const eventBus = this.container.get('eventBus');
-      eventBus.clear();
-      logger.info('   ✓ EventBus cleared');
 
-      // Emit application stopped event
       await eventBus.emitAsync('application.stopped', {
         stopTime: new Date()
       });
+
+      eventBus.clear();
+      logger.info('   ✓ EventBus cleared');
 
       logger.info('✅ Application shutdown complete');
 
