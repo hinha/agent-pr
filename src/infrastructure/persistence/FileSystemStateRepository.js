@@ -301,8 +301,8 @@ class FileSystemStateRepository extends IStateRepository {
       reviewIdSet = new Set();
       this.cache.outdatedNotified.set(prId, reviewIdSet);
     }
-    // Add reviewId to the Set
-    reviewIdSet.add(reviewId);
+    // Add reviewId to the Set (normalize to string for consistency)
+    reviewIdSet.add(String(reviewId));
     await this._persistState();
   }
 
@@ -318,7 +318,8 @@ class FileSystemStateRepository extends IStateRepository {
   async isOutdatedNotified(owner, repo, prId, reviewId) {
     await this.initialize();
     const reviewIdSet = this.cache.outdatedNotified.get(prId);
-    return reviewIdSet ? reviewIdSet.has(reviewId) : false;
+    // Normalize to string for consistent comparison
+    return reviewIdSet ? reviewIdSet.has(String(reviewId)) : false;
   }
 
   /**
@@ -378,8 +379,18 @@ class FileSystemStateRepository extends IStateRepository {
         if (reviewStateData.outdatedNotified && typeof reviewStateData.outdatedNotified === 'object') {
           const outdatedMap = new Map();
           for (const [prId, reviewIds] of Object.entries(reviewStateData.outdatedNotified)) {
-            // Convert array to Set
-            outdatedMap.set(prId, new Set(reviewIds || []));
+            // Handle both old format (single reviewId) and new format (array of reviewIds)
+            let reviewIdsArray;
+            if (Array.isArray(reviewIds)) {
+              reviewIdsArray = reviewIds;
+            } else if (reviewIds !== null && reviewIds !== undefined) {
+              // Old format: single reviewId value (number or string)
+              reviewIdsArray = [reviewIds];
+            } else {
+              reviewIdsArray = [];
+            }
+            // Normalize all reviewIds to strings for consistent comparison
+            outdatedMap.set(prId, new Set(reviewIdsArray.map(id => String(id))));
           }
           this.cache.outdatedNotified = outdatedMap;
         }

@@ -186,25 +186,37 @@ describe('PRStateMachine', () => {
     });
 
     test('should increment notification count when transitioning to NOTIFIED', async () => {
-      await stateMachine.transition(
+      const result1 = await stateMachine.transition(
         'github/hinha/agent-pr',
         'agent-pr',
         123,
         PRState.NOTIFIED
       );
 
-      const result = await stateMachine.transition(
+      expect(result1.notificationCount).toBe(1);
+
+      // Self-transition (re-notification) should also increment
+      const result2 = await stateMachine.transition(
         'github/hinha/agent-pr',
         'agent-pr',
         123,
         PRState.NOTIFIED
       );
 
-      // Self-transition doesn't increment, so count stays at 1
-      expect(result.notificationCount).toBe(1);
+      expect(result2.notificationCount).toBe(2);
+
+      // Another re-notification
+      const result3 = await stateMachine.transition(
+        'github/hinha/agent-pr',
+        'agent-pr',
+        123,
+        PRState.NOTIFIED
+      );
+
+      expect(result3.notificationCount).toBe(3);
     });
 
-    test('should not increment notification count for self-transition to NOTIFIED', async () => {
+    test('should increment notification count for self-transition to NOTIFIED (re-notification)', async () => {
       await stateMachine.transition(
         'github/hinha/agent-pr',
         'agent-pr',
@@ -219,8 +231,8 @@ describe('PRStateMachine', () => {
         PRState.NOTIFIED
       );
 
-      // Self-transition, count stays at 1
-      expect(result.notificationCount).toBe(1);
+      // Self-transition (re-notification) increments count
+      expect(result.notificationCount).toBe(2);
     });
 
     test('should persist state with metadata', async () => {

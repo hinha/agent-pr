@@ -537,5 +537,65 @@ describe('FileSystemStateRepository', () => {
       expect(await repository.isOutdatedNotified(owner, repo, '10', 'review-1')).toBe(false);
       expect(await repository.isOutdatedNotified(owner, repo, '10', 'review-2')).toBe(true);
     });
+
+    test('should handle old format (single reviewId as number) for backward compatibility', async () => {
+      // Old format: single reviewId (number) instead of array
+      const mockReviewStateData = {
+        reviews: {},
+        outdatedNotified: {
+          '9': 4138295901,  // Old format: single number (reviewId)
+          '10': 'review-1'  // Old format: single string (reviewId)
+        }
+      };
+
+      fs.readFile.mockImplementation((filePath) => {
+        if (filePath.includes('review_state.json')) {
+          return Promise.resolve(JSON.stringify(mockReviewStateData));
+        }
+        return Promise.reject({ code: 'ENOENT' });
+      });
+
+      await repository.initialize();
+
+      // Should convert old single-value format to Set internally
+      expect(await repository.isOutdatedNotified(owner, repo, '9', '4138295901')).toBe(true);
+      expect(await repository.isOutdatedNotified(owner, repo, '10', 'review-1')).toBe(true);
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'other-review')).toBe(false);
+    });
+
+    test('should migrate old format to new array format when persisting', async () => {
+      // Load old format
+      const mockReviewStateData = {
+        reviews: {},
+        outdatedNotified: {
+          '9': 4138295901  // Old format: single number
+        }
+      };
+
+      fs.readFile.mockImplementation((filePath) => {
+        if (filePath.includes('review_state.json')) {
+          return Promise.resolve(JSON.stringify(mockReviewStateData));
+        }
+        return Promise.reject({ code: 'ENOENT' });
+      });
+
+      await repository.initialize();
+
+      // Add a new review as string (this should trigger persist with new format)
+      await repository.markOutdatedNotified(owner, repo, '9', 'review-2');
+
+      // Check that persisted format is array
+      const writeCalls = fs.writeFile.mock.calls.filter(call =>
+        call[0].includes('review_state.json')
+      );
+      // Get the last write call (after markOutdatedNotified)
+      const writeCall = writeCalls[writeCalls.length - 1];
+      expect(writeCall).toBeDefined();
+      const persistedData = JSON.parse(writeCall[1]);
+      // Should be array format now (all converted to strings)
+      expect(Array.isArray(persistedData.outdatedNotified['9'])).toBe(true);
+      expect(persistedData.outdatedNotified['9']).toContain('4138295901');  // Number converted to string
+      expect(persistedData.outdatedNotified['9']).toContain('review-2');
+    });
   });
 });

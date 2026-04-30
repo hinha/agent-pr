@@ -121,7 +121,8 @@ class PRStateMachine {
     let newCount = currentCount;
 
     // Update notification count for notifying states
-    if (NOTIFICATION_COUNTING_STATES.includes(newState) && currentState !== newState) {
+    // For NOTIFIED state, always increment (including self-transitions for re-notification)
+    if (NOTIFICATION_COUNTING_STATES.includes(newState)) {
       newCount = currentCount + 1;
     }
 
