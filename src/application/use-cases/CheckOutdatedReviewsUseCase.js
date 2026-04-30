@@ -66,7 +66,7 @@ class CheckOutdatedReviewsUseCase {
       for (const { pr, review, outdatedCommit, currentCommit } of outdatedReviews) {
         // Check if we already notified about this outdated review
         const notificationKey = `${instanceKey}/${repoName}/outdated/${review.id}`;
-        const alreadyNotified = await this._wasAlreadyNotified(notificationKey);
+        const alreadyNotified = await this._wasAlreadyNotified(notificationKey, pr.id, review.id);
 
         if (!alreadyNotified) {
           const result = await this.notificationService.sendOutdatedReviewNotification(
@@ -84,7 +84,11 @@ class CheckOutdatedReviewsUseCase {
           });
 
           // Mark as notified
-          await this._markAsNotified(notificationKey);
+          await this._markAsNotified(notificationKey, pr.id, review.id);
+        } else {
+          this.logger.debug(
+            `[CheckOutdatedReviewsUseCase] Skipping already notified outdated review ${review.id} for PR #${pr.number}`
+          );
         }
       }
 
@@ -154,27 +158,41 @@ class CheckOutdatedReviewsUseCase {
    * Check if we already sent a notification for this outdated review
    * @private
    */
-  async _wasAlreadyNotified(key) {
-    // This would use the state repository to check
-    // For now, we'll use a simple in-memory approach
-    // In production, this should persist to avoid duplicate notifications
-    return this._outdatedNotifications?.has(key) || false;
+  async _wasAlreadyNotified(notificationKey, prId, reviewId) {
+    // Parse notification key: instanceKey/repoName/outdated/reviewId
+    const parts = notificationKey.split('/');
+    const repoName = parts[1];
+
+    // Use persistent storage to check if already notified
+    return await this.stateMachine.stateRepository.isOutdatedNotified(
+      parts[0].replace('github/', ''),
+      repoName,
+      prId.toString(),
+      reviewId
+    );
   }
 
   /**
    * Mark that we sent a notification for this outdated review
    * @private
    */
-  async _markAsNotified(key) {
-    if (!this._outdatedNotifications) {
-      this._outdatedNotifications = new Set();
-    }
-    this._outdatedNotifications.add(key);
+  async _markAsNotified(notificationKey, prId, reviewId) {
+    // Parse notification key: instanceKey/repoName/outdated/reviewId
+    const parts = notificationKey.split('/');
+    const instanceKey = parts[0].replace('github/', '');
+    const repoName = parts[1];
 
-    // Set expiry for the notification record (e.g., 24 hours)
-    setTimeout(() => {
-      this._outdatedNotifications.delete(key);
-    }, 24 * 60 * 60 * 1000);
+    // Use persistent storage to mark as notified
+    await this.stateMachine.stateRepository.markOutdatedNotified(
+      instanceKey,
+      repoName,
+      prId.toString(),
+      reviewId
+    );
+
+    this.logger.debug(
+      `[CheckOutdatedReviewsUseCase] Marked outdated review ${reviewId} for PR #${prId} as notified`
+    );
   }
 
   /**
@@ -196,15 +214,25 @@ class CheckOutdatedReviewsUseCase {
    * @param {Object} instance - Instance configuration
    * @param {Object} repo - Repository configuration
    * @param {string} reviewId - Review ID to dismiss
+   * @param {string} prId - PR ID (optional, needed to clear from persistent storage)
    * @returns {Promise<Object>} Dismissal result
    */
-  async dismissOutdatedReview(instance, repo, reviewId) {
-    const notificationKey = `${instance.key}/${repo.name}/outdated/${reviewId}`;
-
+  async dismissOutdatedReview(instance, repo, reviewId, prId = null) {
     try {
-      // Remove from notification tracking
-      if (this._outdatedNotifications) {
-        this._outdatedNotifications.delete(notificationKey);
+      // Clear from persistent storage if PR ID is provided
+      if (prId && this.stateMachine?.stateRepository) {
+        const stateRepo = this.stateMachine.stateRepository;
+
+        // Note: FileSystemStateRepository doesn't have a direct clearOutdatedNotified method
+        // We need to access the cache directly or add a method to the repository
+        if (stateRepo.cache && stateRepo.cache.outdatedNotified) {
+          stateRepo.cache.outdatedNotified.delete(prId.toString());
+          await stateRepo._persistState();
+
+          this.logger.info(
+            `[CheckOutdatedReviewsUseCase] Cleared outdated notification for PR #${prId}, review ${reviewId}`
+          );
+        }
       }
 
       this.logger.debug(

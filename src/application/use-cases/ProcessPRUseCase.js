@@ -183,6 +183,11 @@ class ProcessPRUseCase {
     const maxAgeMs = instanceConfig.maxAgeMs || (instanceConfig.maxAgeHours || 48) * 60 * 60 * 1000;
     const prAgeMs = typeof pr.getAgeInMs === 'function' ? pr.getAgeInMs() : (Date.now() - new Date(pr.createdAt).getTime());
 
+    // Log for debugging age check
+    this.logger.info(
+      `[ProcessPRUseCase] PR #${prNumber} age check: prAgeMs=${prAgeMs} (${Math.floor(prAgeMs / (60 * 60 * 1000))}h), maxAgeMs=${maxAgeMs} (${Math.floor(maxAgeMs / (60 * 60 * 1000))}h)`
+    );
+
     if (prAgeMs > maxAgeMs) {
       return {
         shouldProcess: false,

@@ -245,7 +245,7 @@ class PRProcessingOrchestrator {
           );
 
           if (!shouldProcess.shouldProcess) {
-            this.logger.debug(
+            this.logger.info(
               `[PRProcessingOrchestrator] PR #${pr.number} skipped: ${shouldProcess.reason}`
             );
             continue;
