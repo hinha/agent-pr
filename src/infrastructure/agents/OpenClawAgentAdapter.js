@@ -37,7 +37,7 @@ class OpenClawAgentAdapter extends IAgentService {
    * @param {string} level - Review level (low, medium, high)
    * @returns {Promise<ReviewResult>} Review result with comments
    */
-  async reviewPR(owner, repo, pr, files, level) {
+  async reviewPR(owner, repo, pr, files, level, previousComments = []) {
     const levelConfig = this.config.reviewLevels[level];
     if (!levelConfig) {
       throw new Error(`Invalid review level: ${level}`);
@@ -51,7 +51,7 @@ class OpenClawAgentAdapter extends IAgentService {
     this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] Starting ${level} level review for PR #${pr.number}`);
 
     return this.retryHelper.retry(async () => {
-      const reviewPrompt = this._buildReviewPrompt(owner, repo, pr, level, levelConfig, files);
+      const reviewPrompt = this._buildReviewPrompt(owner, repo, pr, level, levelConfig, files, previousComments);
       const agentName = instance.agent.reviewAgent;
       const command = `openclaw agent --agent ${agentName} --json --message "${this._escapeShellString(reviewPrompt)}" --timeout ${instance.agent.reviewTimeoutSeconds}`;
 
@@ -176,7 +176,7 @@ class OpenClawAgentAdapter extends IAgentService {
    * @returns {string} Review prompt
    * @private
    */
-  _buildReviewPrompt(owner, repo, pr, level, levelConfig, files) {
+  _buildReviewPrompt(owner, repo, pr, level, levelConfig, files, previousComments = []) {
     const focusAreas = levelConfig.focusAreas.join(', ');
 
     // Load prompt template from file (like feature branch)
@@ -205,6 +205,23 @@ class OpenClawAgentAdapter extends IAgentService {
     const instance = this._getInstanceByOwner(owner);
     const mcpName = instance?.mcpName || 'github';
 
+    // Build previous comments block
+    let previousCommentsBlock = '';
+    if (previousComments && previousComments.length > 0) {
+      const formattedComments = previousComments
+        .map(c => `- File: ${c.path || 'unknown'}, Line: ${c.line || '?'} - "${c.body?.substring(0, 200) || ''}"`)
+        .join('\n');
+
+      previousCommentsBlock =
+        'KOMENTAR REVIEW SEBELUMNYA (sudah pernah diberikan di PR ini):\n' +
+        'PENTING: JANGAN ulangi komentar yang sama pada file dan baris yang sama kecuali issue belum diperbaiki.\n' +
+        'Jika developer sudah memperbaiki issue yang disebutkan di komentar sebelumnya, SKIP komentar tersebut.\n' +
+        formattedComments;
+      this.logger.info(`[OpenClawAgentAdapter:${owner}/${repo}] Including ${previousComments.length} previous comments in prompt`);
+    } else {
+      previousCommentsBlock = '(Tidak ada komentar review sebelumnya)';
+    }
+
     return template
       .replace('{{PR_NUMBER}}', pr.number)
       .replace('{{LEVEL}}', level.toUpperCase())
@@ -215,7 +232,8 @@ class OpenClawAgentAdapter extends IAgentService {
       .replace('{{SOURCE_BRANCH}}', pr.headBranch || 'unknown')
       .replace('{{TARGET_BRANCH}}', pr.baseBranch || 'main')
       .replace('{{PR_URL}}', pr.url)
-      .replace('{{MCP_NAME}}', mcpName);
+      .replace('{{MCP_NAME}}', mcpName)
+      .replace('{{PREVIOUS_COMMENTS}}', previousCommentsBlock);
   }
 
   /**

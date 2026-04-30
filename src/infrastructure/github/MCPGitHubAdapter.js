@@ -598,6 +598,8 @@ class MCPGitHubAdapter extends IGitHubService {
 
       return rawComments.map(c => ({
         id: c.id,
+        path: c.path,
+        line: c.line || c.original_line,
         body: c.body,
         user: c.user?.login,
         created_at: c.created_at,

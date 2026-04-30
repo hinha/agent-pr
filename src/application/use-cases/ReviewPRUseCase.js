@@ -59,13 +59,27 @@ class ReviewPRUseCase {
         `[ReviewPRUseCase] PR #${prNumber} has ${files.length} files, ${totalChanges} changes`
       );
 
+      // Step 1b: Fetch previous review comments to avoid duplication
+      let previousComments = [];
+      try {
+        previousComments = await githubAdapter.getPRComments(repoName, prNumber);
+        this.logger.info(
+          `[ReviewPRUseCase] Found ${previousComments.length} previous comments on PR #${prNumber}`
+        );
+      } catch (err) {
+        this.logger.warn(
+          `[ReviewPRUseCase] Could not fetch previous comments for PR #${prNumber}: ${err.message}`
+        );
+      }
+
       // Step 2: Run AI analysis
       const reviewResult = await this.agentService.reviewPR(
         instance.owner,
         repoName,
         pr,
         files,
-        level
+        level,
+        previousComments
       );
 
       if (!reviewResult.success) {
