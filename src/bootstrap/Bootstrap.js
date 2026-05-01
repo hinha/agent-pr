@@ -23,6 +23,7 @@ class Bootstrap {
     this.memoryMonitor = null;
     this.isShuttingDown = false;
     this._callbackQueryHandler = null; // Store for cleanup
+    this._messageHandler = null; // Store for cleanup
   }
 
   /**
@@ -183,8 +184,12 @@ class Bootstrap {
       if (this._callbackQueryHandler) {
         telegramAdapter.off('callback_query', this._callbackQueryHandler);
         this._callbackQueryHandler = null;
-        logger.info('   ✓ Telegram callback handlers removed');
       }
+      if (this._messageHandler) {
+        telegramAdapter.off('message', this._messageHandler);
+        this._messageHandler = null;
+      }
+      logger.info('   ✓ Telegram handlers removed');
 
       // Stop Telegram bot
       await telegramAdapter.stop();
@@ -233,13 +238,14 @@ class Bootstrap {
   _setupTelegramCallbacks(logger, config) {
     const telegramAdapter = this.container.get('telegramAdapter');
     const callbackHandler = this.container.get('callbackHandler');
+    const commandHandler = this.container.get('commandHandler');
     const skipManager = this.container.get('skipManager');
     const stateRepositoryFactory = this.container.get('stateRepositoryFactory');
     const checkOutdatedReviewsUseCase = this.container.get('checkOutdatedReviewsUseCase');
 
     logger.info(`[Bootstrap] Setting up Telegram callbacks (isPollingOwner: ${telegramAdapter.isPollingOwner})`);
 
-    // Get bot and chatId for CallbackHandler
+    // Get bot and chatId for handlers
     const bot = telegramAdapter.getBot();
     const chatId = telegramAdapter.chatId;
 
@@ -250,7 +256,7 @@ class Bootstrap {
     callbackHandler.stateRepositoryFactory = stateRepositoryFactory;
     callbackHandler.checkOutdatedReviewsUseCase = checkOutdatedReviewsUseCase;
 
-    // Store handler for cleanup
+    // Store handlers for cleanup
     this._callbackQueryHandler = async (query) => {
       try {
         logger.info(`[Bootstrap] Processing callback: ${query.data}`);
@@ -270,8 +276,18 @@ class Bootstrap {
       }
     };
 
-    // Register callback handler
+    this._messageHandler = async (message) => {
+      try {
+        logger.info(`[Bootstrap] Processing message: ${message.text}`);
+        await commandHandler.handleCommand(message, config);
+      } catch (error) {
+        logger.error(`Error handling message: ${error.message}`);
+      }
+    };
+
+    // Register handlers
     telegramAdapter.on('callback_query', this._callbackQueryHandler);
+    telegramAdapter.on('message', this._messageHandler);
   }
 
   /**

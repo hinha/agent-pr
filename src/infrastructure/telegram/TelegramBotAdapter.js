@@ -62,6 +62,10 @@ class TelegramBotAdapter extends ITelegramService {
       this.logger.info(`[TelegramBotAdapter] Received callback_query: ${query.data}`);
       this.emit('callback_query', query);
     });
+    this.bot.on('message', (message) => {
+      this.logger.info(`[TelegramBotAdapter] Received message: ${message.text}`);
+      this.emit('message', message);
+    });
 
     // Store lock fd for cleanup
     if (this.isPollingOwner) {

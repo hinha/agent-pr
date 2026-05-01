@@ -191,6 +191,22 @@ class FileSystemStateRepository extends IStateRepository {
   }
 
   /**
+   * Clear a specific PR from processed list
+   * @param {string} owner - Repository owner (unused)
+   * @param {string} repo - Repository name (unused)
+   * @param {number} prId - PR ID to remove
+   * @returns {Promise<void>}
+   */
+  async clearProcessed(owner, repo, prId) {
+    await this.initialize();
+
+    this.cache.processedPRs.delete(prId);
+    this.cache.processedTimestamps.delete(prId);
+
+    await this._persistState();
+  }
+
+  /**
    * Get repository statistics
    * Note: totalNotifications is read directly from file, not cache
    * @returns {Promise<RepositoryStats>} Statistics object

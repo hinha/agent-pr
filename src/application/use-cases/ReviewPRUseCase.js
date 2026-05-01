@@ -245,6 +245,18 @@ class ReviewPRUseCase {
           PRState.APPROVED,
           { reviewId: review.id }
         );
+
+        // Auto-mark as processed to prevent re-processing
+        await this.stateMachine.markAsProcessed(
+          instanceKey,
+          repoName,
+          prNumber,
+          { reason: 'Approved via Telegram bot', reviewId: review.id }
+        );
+
+        this.logger.info(
+          `[ReviewPRUseCase] PR #${prNumber} approved and marked as processed`
+        );
       } else {
         this.logger.info(
           `[ReviewPRUseCase] PR #${prNumber} already in terminal state (${currentState}), skipping state transition`
@@ -357,14 +369,33 @@ class ReviewPRUseCase {
 
       await githubAdapter.closePR(repoName, prNumber);
 
-      // Update state
-      await this.stateMachine.transition(
-        instanceKey,
-        repoName,
-        prNumber,
-        PRState.CLOSED,
-        {}
-      );
+      // Update state - skip if already in terminal state
+      const currentState = await this.stateMachine.getState(instanceKey, repoName, prNumber);
+      if (!this.stateMachine.isTerminalState(currentState)) {
+        await this.stateMachine.transition(
+          instanceKey,
+          repoName,
+          prNumber,
+          PRState.CLOSED,
+          {}
+        );
+
+        // Auto-mark as processed to prevent re-processing
+        await this.stateMachine.markAsProcessed(
+          instanceKey,
+          repoName,
+          prNumber,
+          { reason: 'Closed via Telegram bot' }
+        );
+
+        this.logger.info(
+          `[ReviewPRUseCase] PR #${prNumber} closed and marked as processed`
+        );
+      } else {
+        this.logger.info(
+          `[ReviewPRUseCase] PR #${prNumber} already in terminal state (${currentState}), skipping state transition`
+        );
+      }
 
       // Emit event
       await this.eventBus.emitAsync('pr.closed', {

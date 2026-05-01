@@ -68,7 +68,7 @@ describe('Bootstrap', () => {
       expect(bootstrapSource).toContain('telegramAdapter.off');
       expect(bootstrapSource).toContain('_callbackQueryHandler');
       expect(bootstrapSource).toContain('_callbackQueryHandler = null');
-      expect(bootstrapSource).toContain('✓ Telegram callback handlers removed');
+      expect(bootstrapSource).toContain('✓ Telegram handlers removed');
     });
 
     test('should check for callback handler before removing', () => {

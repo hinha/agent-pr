@@ -44,7 +44,10 @@ const BINDINGS = {
 
   STATE_REPOSITORY: 'stateRepository',
   SKIP_REPOSITORY: 'skipRepository',
-  REVIEW_REPOSITORY: 'reviewRepository'
+  REVIEW_REPOSITORY: 'reviewRepository',
+
+  COMMAND_HANDLER: 'commandHandler',
+  CALLBACK_HANDLER: 'callbackHandler'
 };
 
 module.exports = BINDINGS;

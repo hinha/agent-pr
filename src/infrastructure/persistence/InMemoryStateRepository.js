@@ -129,6 +129,22 @@ class InMemoryStateRepository extends IStateRepository {
   }
 
   /**
+   * Clear a specific PR from processed list
+   * @param {string} owner - Repository owner (unused)
+   * @param {string} repo - Repository name (unused)
+   * @param {number} prId - PR ID to remove
+   * @returns {Promise<void>}
+   */
+  async clearProcessed(owner, repo, prId) {
+    await this.initialize();
+
+    this.storage.processedPRs.delete(prId);
+    this.storage.processedTimestamps.delete(prId);
+
+    this.logger.debug(`[InMemoryStateRepository:${this.owner}/${this.repo}] Cleared processed for PR #${prId}`);
+  }
+
+  /**
    * Get repository statistics
    * @returns {Promise<RepositoryStats>} Statistics object
    */

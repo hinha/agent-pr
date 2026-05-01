@@ -302,6 +302,22 @@ class Container {
       );
     }).singleton();
 
+    // Command Handler (Telegram text commands)
+    this.registerFunction('commandHandler', (cradle) => {
+      const CommandHandler = require('../infrastructure/telegram/CommandHandler');
+
+      return new CommandHandler(
+        cradle.stateMachine,
+        cradle.stateRepositoryFactory,
+        {
+          logger: cradle.logger,
+          config: cradle.config,
+          bot: cradle.telegramAdapter.getBot(),
+          chatId: cradle.telegramAdapter.chatId
+        }
+      );
+    }).singleton();
+
     // Skip Manager
     this.registerFunction('skipManager', (cradle) => {
       const SkipManager = require('../infrastructure/persistence/SkipManager');

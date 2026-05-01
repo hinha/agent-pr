@@ -107,6 +107,21 @@ class IStateRepository {
   }
 
   /**
+   * Clear a specific PR from processed list
+   *
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   * @param {number} prId - PR ID to remove
+   * @returns {Promise<void>}
+   *
+   * @example
+   * await stateRepo.clearProcessed('myorg', 'my-repo', 123);
+   */
+  async clearProcessed(_owner, _repo, _prId) {
+    throw new Error('Method clearProcessed must be implemented');
+  }
+
+  /**
    * Get repository statistics
    *
    * @returns {Promise<RepositoryStats>} Statistics object

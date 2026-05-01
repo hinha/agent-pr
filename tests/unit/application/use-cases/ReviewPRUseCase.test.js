@@ -49,7 +49,8 @@ describe('ReviewPRUseCase', () => {
     mockStateMachine = {
       transition: jest.fn().mockResolvedValue({ currentState: PRState.APPROVED }),
       getState: jest.fn().mockResolvedValue(PRState.PENDING),
-      isTerminalState: jest.fn((state) => state === PRState.PROCESSED)
+      isTerminalState: jest.fn((state) => state === PRState.PROCESSED),
+      markAsProcessed: jest.fn().mockResolvedValue({ currentState: PRState.PROCESSED })
     };
 
     mockEventBus = {
