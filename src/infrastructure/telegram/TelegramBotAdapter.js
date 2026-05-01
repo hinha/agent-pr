@@ -424,14 +424,24 @@ class TelegramBotAdapter extends ITelegramService {
 
     const riskEmojiForLevel = riskEmoji[summary.riskLevel] || '⚪';
 
-    return (
+    const createdAt = pr.createdAt
+      ? new Date(pr.createdAt).toLocaleString('en-GB', { timeZone: 'Asia/Jakarta', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+      : null;
+
+    let message =
       `🔔 <b>New PR: ${this._escapeHtml(pr.title)}</b>\n\n` +
       `📂 <b>Repository:</b> ${this._escapeHtml(pr.owner)} → ${this._escapeHtml(pr.repo)}\n` +
       `📊 <b>Risk:</b> ${riskEmojiForLevel} ${this._escapeHtml(summary.riskLevel)}\n` +
       `💥 <b>Impact:</b> ${this._escapeHtml(summary.impactArea)}\n` +
-      `📝 <b>Purpose:</b> ${this._escapeHtml(summary.purpose)}\n\n` +
-      `📁 <b>Files:</b> ${summary.filesChanged} | 📈 <b>Changes:</b> ${summary.diffSize}`
-    );
+      `📝 <b>Purpose:</b> ${this._escapeHtml(summary.purpose)}\n`;
+
+    if (createdAt) {
+      message += `📅 <b>Created:</b> ${createdAt} WIB\n`;
+    }
+
+    message += `\n📁 <b>Files:</b> ${summary.filesChanged} | 📈 <b>Changes:</b> ${summary.diffSize}`;
+
+    return message;
   }
 
   /**
@@ -466,11 +476,19 @@ class TelegramBotAdapter extends ITelegramService {
     const count = reviewCount || 1;
     const countLabel = count > 1 ? `${count} outdated reviews` : 'Outdated Review Detected';
 
+    const createdAt = pr.createdAt
+      ? new Date(pr.createdAt).toLocaleString('en-GB', { timeZone: 'Asia/Jakarta', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+      : null;
+
     let message =
       `⚠️ <b>${countLabel}</b>\n\n` +
       `📂 <b>Repo:</b> ${this._escapeHtml(owner)}/${this._escapeHtml(pr.repo)}\n` +
       `📌 <b>PR #${pr.number}:</b> ${this._escapeHtml(pr.title)}\n` +
       `👤 <b>Author:</b> ${this._escapeHtml(pr.author)}\n`;
+
+    if (createdAt) {
+      message += `📅 <b>Created:</b> ${createdAt} WIB\n`;
+    }
 
     if (reviewers && reviewers.length > 0) {
       const reviewerList = reviewers.map(r => this._escapeHtml(r)).join(', ');
