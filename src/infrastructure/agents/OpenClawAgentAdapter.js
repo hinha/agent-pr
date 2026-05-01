@@ -474,25 +474,11 @@ class OpenClawAgentAdapter extends IAgentService {
     }
 
     // Check if agent called create_pull_request_review directly
-    // Check via tool_calls array (structured detection)
-    let agentCalledToolDirectly = result.tool_calls?.some(
+    // Only use structured tool_calls detection — regex heuristic removed due to false positives
+    // that caused suggestedCode formatting to be skipped
+    const agentCalledToolDirectly = result.tool_calls?.some(
       call => call.function?.name === 'create_pull_request_review'
     ) || false;
-
-    // Also check via regex patterns in output (heuristic detection, like feature branch)
-    if (!agentCalledToolDirectly) {
-      const agentOutput = (stdout || '').substring(0, 2000);
-      const directToolCallPatterns = [
-        /\breview\s+(?:created|submitted|approved)\b/i,
-        /\bpull\s+request\s+review\s+#?\d+\b/i,
-        /\bsuccessfully\s+created\s+(?:a\s+)?review\b/i
-      ];
-      agentCalledToolDirectly = directToolCallPatterns.some(pattern => pattern.test(agentOutput));
-
-      if (agentCalledToolDirectly) {
-        this.logger.warn(`[OpenClawAgentAdapter:${owner}/${repo}] Agent may have called create_pull_request_review directly (detected via output patterns)`);
-      }
-    }
 
     // Transform comments: map start_line to line (MCP expects 'line' field)
     const transformedComments = (result.comments || []).map(comment => ({

@@ -215,14 +215,14 @@ describe('OpenClawAgentAdapter', () => {
       expect(result.agentCalledToolDirectly).toBe(true);
     });
 
-    test('should detect agentCalledToolDirectly via regex patterns in output', () => {
+    test('should NOT set agentCalledToolDirectly from natural language output (regex removed)', () => {
       const review = JSON.stringify({ summary: 'Done', comments: [] });
       const stdout = `I have successfully created a review for this PR.\n${review}`;
 
       const result = adapter._parseOpenClawResponse(stdout, 'testorg', 'repo', mockPR);
 
       expect(result.success).toBe(true);
-      expect(result.agentCalledToolDirectly).toBe(true);
+      expect(result.agentCalledToolDirectly).toBe(false);
     });
 
     test('should set agentCalledToolDirectly to false when no indicators', () => {
