@@ -550,6 +550,17 @@ class CallbackHandler {
     const githubAdapter = this.githubAdapter.create(instance.key);
     pr = await this._resolveFreshPR(pr, repo, githubAdapter);
 
+    // Immediately show processing confirmation and disable buttons
+    const timeoutString = instance.agent?.review_timeot_string || '20 menit';
+    await query.editMessageText(
+      `⏳ <b>${level.toUpperCase()} Review sedang berjalan...</b>\n\n` +
+      `📌 PR #${pr.number}: ${this._escapeHtml(pr.title)}\n` +
+      `📂 ${this._escapeHtml(`${instance.owner}/${repo.name}`)}\n\n` +
+      `⏱️ Estimasi waktu: ~${timeoutString}\n` +
+      `Silakan tunggu, hasil review akan muncul di sini.`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } }
+    );
+
     const result = await this.reviewPRUseCase.execute(instance, repo, pr, level, githubAdapter);
 
     if (result.success) {
@@ -685,6 +696,17 @@ class CallbackHandler {
 
     const githubAdapter = this.githubAdapter.create(instance.key);
     pr = await this._resolveFreshPR(pr, repo, githubAdapter);
+
+    // Immediately show processing confirmation and disable buttons
+    const timeoutString = instance.agent?.review_timeot_string || '20 menit';
+    await query.editMessageText(
+      `⏳ <b>${level.toUpperCase()} Re-review sedang berjalan...</b>\n\n` +
+      `📌 PR #${pr.number}: ${this._escapeHtml(pr.title)}\n` +
+      `📂 ${this._escapeHtml(`${instance.owner}/${repo.name}`)}\n\n` +
+      `⏱️ Estimasi waktu: ~${timeoutString}\n` +
+      `Silakan tunggu, hasil review akan muncul di sini.`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } }
+    );
 
     const result = await this.reviewPRUseCase.execute(instance, repo, pr, level, githubAdapter);
 

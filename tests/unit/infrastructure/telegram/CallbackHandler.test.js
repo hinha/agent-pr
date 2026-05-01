@@ -58,6 +58,9 @@ describe('CallbackHandler', () => {
           key: 'github/testorg',
           owner: 'testorg',
           mcpName: 'github-work',
+          agent: {
+            review_timeot_string: '20 menit'
+          },
           repos: {
             'test-repo': { name: 'test-repo', thread_id: 456 }
           }
@@ -66,6 +69,9 @@ describe('CallbackHandler', () => {
           key: 'github/otherorg',
           owner: 'otherorg',
           mcpName: 'github-other',
+          agent: {
+            review_timeot_string: '20 menit'
+          },
           repos: {
             'another-repo': { name: 'another-repo', thread_id: 789 }
           }
@@ -468,7 +474,15 @@ describe('CallbackHandler', () => {
 
       expect(result.success).toBe(true);
       expect(mockQuery.answer).toHaveBeenCalledWith('🚀 Running low review...');
-      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+      expect(mockQuery.editMessageText).toHaveBeenCalledTimes(2);
+      expect(mockQuery.editMessageText).toHaveBeenNthCalledWith(1,
+        expect.stringContaining('LOW Review sedang berjalan'),
+        expect.objectContaining({
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [] }
+        })
+      );
+      expect(mockQuery.editMessageText).toHaveBeenNthCalledWith(2,
         expect.stringContaining('LOW review completed')
       );
       expect(mockReviewPRUseCase.execute).toHaveBeenCalledWith(
@@ -492,6 +506,7 @@ describe('CallbackHandler', () => {
 
       expect(result.success).toBe(true);
       expect(mockQuery.answer).toHaveBeenCalledWith('🚀 Running medium review...');
+      expect(mockQuery.editMessageText).toHaveBeenCalledTimes(2);
       expect(mockReviewPRUseCase.execute).toHaveBeenCalledWith(
         expect.any(Object),
         expect.any(Object),
@@ -512,6 +527,7 @@ describe('CallbackHandler', () => {
 
       expect(result.success).toBe(true);
       expect(mockQuery.answer).toHaveBeenCalledWith('🚀 Running high review...');
+      expect(mockQuery.editMessageText).toHaveBeenCalledTimes(2);
       expect(mockReviewPRUseCase.execute).toHaveBeenCalledWith(
         expect.any(Object),
         expect.any(Object),
@@ -536,10 +552,11 @@ describe('CallbackHandler', () => {
       const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
 
       expect(result.success).toBe(false);
-      expect(mockQuery.editMessageText).toHaveBeenCalledWith('❌ Review failed: Review failed');
+      expect(mockQuery.editMessageText).toHaveBeenCalledTimes(2);
+      expect(mockQuery.editMessageText).toHaveBeenNthCalledWith(2, '❌ Review failed: Review failed');
     });
 
-    test('should show comment count in editMessageText', async () => {
+    test('should show comment count in final editMessageText', async () => {
       mockReviewPRUseCase.execute.mockResolvedValue({
         success: true,
         reviewResult: {
@@ -559,9 +576,82 @@ describe('CallbackHandler', () => {
 
       await handler.handleCallbackQuery(mockQuery, mockConfig);
 
-      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+      expect(mockQuery.editMessageText).toHaveBeenNthCalledWith(2,
         '✅ MEDIUM review completed\n3 comments added'
       );
+    });
+
+    test('should show processing confirmation with empty keyboard before review', async () => {
+      const mockQuery = {
+        data: 'review_level:0:0:33333:high',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      const firstCall = mockQuery.editMessageText.mock.calls[0];
+      expect(firstCall[0]).toContain('HIGH Review sedang berjalan');
+      expect(firstCall[0]).toContain('Estimasi waktu: ~20 menit');
+      expect(firstCall[1]).toEqual(
+        expect.objectContaining({
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [] }
+        })
+      );
+    });
+
+    test('should use custom timeout string from config', async () => {
+      const customConfig = {
+        instances: {
+          'github/testorg': {
+            key: 'github/testorg',
+            owner: 'testorg',
+            agent: {
+              review_timeot_string: '30 menit'
+            },
+            repos: {
+              'test-repo': { name: 'test-repo', thread_id: 456 }
+            }
+          }
+        }
+      };
+
+      const mockQuery = {
+        data: 'review_level:0:0:33333:low',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      await handler.handleCallbackQuery(mockQuery, customConfig);
+
+      const firstCall = mockQuery.editMessageText.mock.calls[0];
+      expect(firstCall[0]).toContain('Estimasi waktu: ~30 menit');
+    });
+
+    test('should use default timeout string when not configured', async () => {
+      const noAgentConfig = {
+        instances: {
+          'github/testorg': {
+            key: 'github/testorg',
+            owner: 'testorg',
+            repos: {
+              'test-repo': { name: 'test-repo', thread_id: 456 }
+            }
+          }
+        }
+      };
+
+      const mockQuery = {
+        data: 'review_level:0:0:33333:low',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      await handler.handleCallbackQuery(mockQuery, noAgentConfig);
+
+      const firstCall = mockQuery.editMessageText.mock.calls[0];
+      expect(firstCall[0]).toContain('Estimasi waktu: ~20 menit');
     });
   });
 
@@ -780,6 +870,119 @@ describe('CallbackHandler', () => {
         text: 'LOW',
         callback_data: expect.stringContaining('review_level:')
       });
+    });
+  });
+
+  describe('handleCallbackQuery - review_level_outdated', () => {
+    test('should show processing confirmation with empty keyboard before re-review', async () => {
+      const mockQuery = {
+        data: 'review_level_outdated:0:0:12345:review-789:high',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      handler.stateRepositoryFactory = {
+        create: jest.fn().mockReturnValue({
+          clearReviewState: jest.fn().mockResolvedValue()
+        })
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockQuery.editMessageText).toHaveBeenCalledTimes(2);
+
+      const firstCall = mockQuery.editMessageText.mock.calls[0];
+      expect(firstCall[0]).toContain('HIGH Re-review sedang berjalan');
+      expect(firstCall[0]).toContain('Estimasi waktu: ~20 menit');
+      expect(firstCall[1]).toEqual(
+        expect.objectContaining({
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [] }
+        })
+      );
+
+      const secondCall = mockQuery.editMessageText.mock.calls[1];
+      expect(secondCall[0]).toContain('HIGH re-review completed');
+    });
+
+    test('should handle review_level_outdated failure', async () => {
+      mockReviewPRUseCase.execute.mockResolvedValue({
+        success: false,
+        error: 'Re-review failed'
+      });
+
+      const mockQuery = {
+        data: 'review_level_outdated:0:0:12345:review-789:medium',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      handler.stateRepositoryFactory = {
+        create: jest.fn().mockReturnValue({
+          clearReviewState: jest.fn().mockResolvedValue()
+        })
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(false);
+      expect(mockQuery.editMessageText).toHaveBeenCalledTimes(2);
+      expect(mockQuery.editMessageText).toHaveBeenNthCalledWith(2, '❌ Review failed: Re-review failed');
+    });
+
+    test('should clear review state after successful outdated re-review', async () => {
+      const mockClearReviewState = jest.fn().mockResolvedValue();
+      handler.stateRepositoryFactory = {
+        create: jest.fn().mockReturnValue({
+          clearReviewState: mockClearReviewState
+        })
+      };
+
+      const mockQuery = {
+        data: 'review_level_outdated:0:0:12345:review-789:low',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(handler.stateRepositoryFactory.create).toHaveBeenCalledWith('testorg', 'test-repo');
+      expect(mockClearReviewState).toHaveBeenCalled();
+    });
+
+    test('should use custom timeout string for outdated re-review', async () => {
+      const customConfig = {
+        instances: {
+          'github/testorg': {
+            key: 'github/testorg',
+            owner: 'testorg',
+            agent: {
+              review_timeot_string: '30 menit'
+            },
+            repos: {
+              'test-repo': { name: 'test-repo', thread_id: 456 }
+            }
+          }
+        }
+      };
+
+      const mockQuery = {
+        data: 'review_level_outdated:0:0:12345:review-789:low',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      handler.stateRepositoryFactory = {
+        create: jest.fn().mockReturnValue({
+          clearReviewState: jest.fn().mockResolvedValue()
+        })
+      };
+
+      await handler.handleCallbackQuery(mockQuery, customConfig);
+
+      const firstCall = mockQuery.editMessageText.mock.calls[0];
+      expect(firstCall[0]).toContain('Estimasi waktu: ~30 menit');
     });
   });
 });

@@ -13,10 +13,10 @@ module.exports = {
   // Coverage thresholds - enforced at 60% (current coverage ~68%)
   coverageThreshold: {
     global: {
-      branches: 60,
-      functions: 60,
-      lines: 60,
-      statements: 60
+      branches: 76,
+      functions: 73,
+      lines: 70,
+      statements: 70
     }
   },
 
