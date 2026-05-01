@@ -95,20 +95,28 @@ class CommandHandler {
    * @private
    */
   _findRepoByThreadId(threadId, config) {
+    this.logger.debug(`[CommandHandler] Looking for repo with thread_id: ${threadId} (type: ${typeof threadId})`);
+    this.logger.debug(`[CommandHandler] Available instances: ${Object.keys(config.instances).join(', ')}`);
+
     if (!threadId || !config) {
+      this.logger.warn('[CommandHandler] No thread_id or no config provided');
       return { instance: null, repo: null };
     }
 
     for (const [instanceKey, instanceConfig] of Object.entries(config.instances)) {
+      this.logger.debug(`[CommandHandler] Checking instance: ${instanceKey}, has repos: ${instanceConfig.repos ? 'yes' : 'no'}`);
+
       if (!instanceConfig.repos) continue;
 
       for (const [repoName, repoConfig] of Object.entries(instanceConfig.repos)) {
-        if (repoConfig.thread_id === threadId) {
+        // Compare thread_id as strings to handle both number and string values from YAML
+        if (String(repoConfig.thread_id) === String(threadId)) {
+          this.logger.info(`[CommandHandler] Found repo: ${instanceKey}/${repoName} with matching thread_id: ${threadId}`);
           return {
             instance: {
               ...instanceConfig,
               key: instanceKey,
-              owner: instanceKey.split('/')[1]
+              owner: instanceConfig.owner || instanceKey.split('/')[1]
             },
             repo: {
               name: repoName,
@@ -119,6 +127,7 @@ class CommandHandler {
       }
     }
 
+    this.logger.warn(`[CommandHandler] No repo found for thread_id: ${threadId}`);
     return { instance: null, repo: null };
   }
 
