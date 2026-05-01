@@ -47,7 +47,9 @@ describe('ReviewPRUseCase', () => {
     };
 
     mockStateMachine = {
-      transition: jest.fn().mockResolvedValue({ currentState: PRState.APPROVED })
+      transition: jest.fn().mockResolvedValue({ currentState: PRState.APPROVED }),
+      getState: jest.fn().mockResolvedValue(PRState.PENDING),
+      isTerminalState: jest.fn((state) => state === PRState.PROCESSED)
     };
 
     mockEventBus = {
@@ -158,6 +160,22 @@ describe('ReviewPRUseCase', () => {
         PRState.APPROVED,
         expect.objectContaining({ level: 'medium' })
       );
+    });
+
+    test('should skip state transition when PR is already in terminal state', async () => {
+      mockAgentService.reviewPR.mockResolvedValue({
+        success: true,
+        summary: 'LGTM',
+        comments: [],
+        agentCalledToolDirectly: false
+      });
+
+      mockStateMachine.getState.mockResolvedValue(PRState.PROCESSED);
+
+      const result = await useCase.execute(instance, repo, pr, 'medium', mockGithubAdapter);
+
+      expect(result.success).toBe(true);
+      expect(mockStateMachine.transition).not.toHaveBeenCalled();
     });
 
     test('should emit review.created event', async () => {

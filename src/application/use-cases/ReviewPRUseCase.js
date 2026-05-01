@@ -116,13 +116,20 @@ class ReviewPRUseCase {
 
       // Step 4: Update state machine based on review result
       const newState = this._determineNewState(reviewResult);
-      await this.stateMachine.transition(
-        instanceKey,
-        repoName,
-        prNumber,
-        newState,
-        { reviewId: review.id, level }
-      );
+      const currentState = await this.stateMachine.getState(instanceKey, repoName, prNumber);
+      if (!this.stateMachine.isTerminalState(currentState)) {
+        await this.stateMachine.transition(
+          instanceKey,
+          repoName,
+          prNumber,
+          newState,
+          { reviewId: review.id, level }
+        );
+      } else {
+        this.logger.info(
+          `[ReviewPRUseCase] PR #${prNumber} already in terminal state (${currentState}), skipping state transition`
+        );
+      }
 
       // Step 5: Emit domain event
       await this.eventBus.emitAsync('review.created', {
@@ -223,14 +230,21 @@ class ReviewPRUseCase {
         'Approved via Telegram bot'
       );
 
-      // Update state
-      await this.stateMachine.transition(
-        instanceKey,
-        repoName,
-        prNumber,
-        PRState.APPROVED,
-        { reviewId: review.id }
-      );
+      // Update state - skip if already in terminal state (e.g. processed)
+      const currentState = await this.stateMachine.getState(instanceKey, repoName, prNumber);
+      if (!this.stateMachine.isTerminalState(currentState)) {
+        await this.stateMachine.transition(
+          instanceKey,
+          repoName,
+          prNumber,
+          PRState.APPROVED,
+          { reviewId: review.id }
+        );
+      } else {
+        this.logger.info(
+          `[ReviewPRUseCase] PR #${prNumber} already in terminal state (${currentState}), skipping state transition`
+        );
+      }
 
       // Emit event
       await this.eventBus.emitAsync('pr.approved', {

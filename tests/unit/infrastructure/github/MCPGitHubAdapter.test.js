@@ -32,7 +32,8 @@ describe('MCPGitHubAdapter', () => {
     };
 
     mockRetryHelper = {
-      retry: jest.fn((fn) => fn())
+      retry: jest.fn((fn) => fn()),
+      retryIf: jest.fn((fn, _shouldRetry) => fn())
     };
 
     // Mock spawn process
@@ -166,7 +167,7 @@ describe('MCPGitHubAdapter', () => {
       mockSpawnProcess.stderr.on.mockImplementation(() => {});
 
       let callCount = 0;
-      mockRetryHelper.retry.mockImplementation(async (fn) => {
+      mockRetryHelper.retryIf.mockImplementation(async (fn, _shouldRetry) => {
         callCount++;
         return await fn();
       });
@@ -177,7 +178,7 @@ describe('MCPGitHubAdapter', () => {
         // Expected to fail due to empty output
       }
 
-      expect(mockRetryHelper.retry).toHaveBeenCalled();
+      expect(mockRetryHelper.retryIf).toHaveBeenCalled();
     });
 
     test('should throw MCPError on spawn failure', (done) => {

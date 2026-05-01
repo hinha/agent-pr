@@ -31,7 +31,7 @@ describe('GitHubAdapterFactory', () => {
       }
     };
     loggerFactory = jest.fn((name) => ({ info: jest.fn(), error: jest.fn(), debug: jest.fn() }));
-    retryHelper = { retry: jest.fn() };
+    retryHelper = { retry: jest.fn(), retryIf: jest.fn() };
     factory = new GitHubAdapterFactory(config, loggerFactory, retryHelper);
   });
 

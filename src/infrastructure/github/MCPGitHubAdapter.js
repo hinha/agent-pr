@@ -44,7 +44,7 @@ class MCPGitHubAdapter extends IGitHubService {
    * @private
    */
   async _callMCP(method, args = {}) {
-    return this.retryHelper.retry(async () => {
+    return this.retryHelper.retryIf(async () => {
       const timeoutMs = 60000;
       const startTime = Date.now();
       this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Calling ${this.serverName}.${method}`);
@@ -123,6 +123,12 @@ class MCPGitHubAdapter extends IGitHubService {
           { stdout: result.stdout }
         );
       }
+    }, (err) => {
+      // Don't retry non-retryable errors like "Unknown tool"
+      if (err.message && err.message.includes('Unknown tool')) {
+        return false;
+      }
+      return true;
     }, {
       retries: 3,
       minTimeout: 2000,
@@ -626,14 +632,14 @@ class MCPGitHubAdapter extends IGitHubService {
     this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Fetching commits for PR #${prNumber}`);
 
     try {
-      const rawCommits = await this._callMCP('get_pull_request_commits', {
+      const rawCommits = await this._callMCP('list_commits', {
         owner: this.owner,
         repo: repo,
-        pull_number: prNumber
+        sha: `refs/pull/${prNumber}/head`,
+        per_page: limit
       });
 
       const commits = (rawCommits || [])
-        .reverse() // Most recent first
         .slice(0, limit)
         .map(c => ({
           sha: c.sha?.substring(0, 7),
@@ -645,11 +651,7 @@ class MCPGitHubAdapter extends IGitHubService {
       this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Found ${commits.length} recent commits for PR #${prNumber}`);
       return commits;
     } catch (err) {
-      if (err.message && err.message.includes('Unknown tool')) {
-        this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}] get_pull_request_commits tool not available`);
-      } else {
-        this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Failed to fetch commits for PR #${prNumber}: ${err.message}`);
-      }
+      this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Failed to fetch commits for PR #${prNumber}: ${err.message}`);
       return [];
     }
   }
