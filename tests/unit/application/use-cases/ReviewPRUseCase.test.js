@@ -192,8 +192,28 @@ describe('ReviewPRUseCase', () => {
 
       expect(result.success).toBe(true);
       expect(mockStateMachine.transition).not.toHaveBeenCalled();
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining('skipping state transition')
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        expect.stringContaining('skipping redundant transition')
+      );
+    });
+
+    test('should skip state transition when current state equals new state (rejected -> rejected)', async () => {
+      mockAgentService.reviewPR.mockResolvedValue({
+        success: true,
+        summary: 'Needs work',
+        comments: [],
+        requiresChanges: true,
+        agentCalledToolDirectly: false
+      });
+
+      mockStateMachine.getState.mockResolvedValue(PRState.REJECTED);
+
+      const result = await useCase.execute(instance, repo, pr, 'high', mockGithubAdapter);
+
+      expect(result.success).toBe(true);
+      expect(mockStateMachine.transition).not.toHaveBeenCalled();
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        expect.stringContaining('skipping redundant transition')
       );
     });
 
