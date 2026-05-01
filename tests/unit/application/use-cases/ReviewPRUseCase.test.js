@@ -178,6 +178,25 @@ describe('ReviewPRUseCase', () => {
       expect(mockStateMachine.transition).not.toHaveBeenCalled();
     });
 
+    test('should skip state transition when current state equals new state (approved -> approved)', async () => {
+      mockAgentService.reviewPR.mockResolvedValue({
+        success: true,
+        summary: 'LGTM',
+        comments: [],
+        agentCalledToolDirectly: false
+      });
+
+      mockStateMachine.getState.mockResolvedValue(PRState.APPROVED);
+
+      const result = await useCase.execute(instance, repo, pr, 'medium', mockGithubAdapter);
+
+      expect(result.success).toBe(true);
+      expect(mockStateMachine.transition).not.toHaveBeenCalled();
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('skipping state transition')
+      );
+    });
+
     test('should emit review.created event', async () => {
       mockAgentService.reviewPR.mockResolvedValue({
         success: true,

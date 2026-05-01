@@ -117,7 +117,7 @@ class ReviewPRUseCase {
       // Step 4: Update state machine based on review result
       const newState = this._determineNewState(reviewResult);
       const currentState = await this.stateMachine.getState(instanceKey, repoName, prNumber);
-      if (!this.stateMachine.isTerminalState(currentState)) {
+      if (!this.stateMachine.isTerminalState(currentState) && currentState !== newState) {
         await this.stateMachine.transition(
           instanceKey,
           repoName,
@@ -127,7 +127,8 @@ class ReviewPRUseCase {
         );
       } else {
         this.logger.info(
-          `[ReviewPRUseCase] PR #${prNumber} already in terminal state (${currentState}), skipping state transition`
+          `[ReviewPRUseCase] PR #${prNumber} skipping state transition ` +
+          `(current: ${currentState}, target: ${newState})`
         );
       }
 
