@@ -575,15 +575,21 @@ class CallbackHandler {
 
     // Use injected CheckOutdatedReviewsUseCase
     if (this.checkOutdatedReviewsUseCase) {
+      // Resolve fresh PR data to get current headSha
+      const githubAdapter = this.githubAdapter.create(instance.key);
+      const freshPR = await this._resolveFreshPR(pr, repo, githubAdapter);
+
       const result = await this.checkOutdatedReviewsUseCase.dismissOutdatedReview(
         instance,
         repo,
-        reviewId
+        reviewId,
+        freshPR.id?.toString(),
+        freshPR.headSha
       );
 
       if (result.success) {
         await query.editMessageText(
-          `✅ Dismissed outdated review notification for ${this._escapeHtml(`${instance.owner}/${repo.name}`)} PR #${pr.number}`
+          `✅ Dismissed outdated review notification for ${this._escapeHtml(`${instance.owner}/${repo.name}`)} PR #${freshPR.number}`
         );
       }
 

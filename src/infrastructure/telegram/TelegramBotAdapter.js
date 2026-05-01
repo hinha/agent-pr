@@ -443,11 +443,13 @@ class TelegramBotAdapter extends ITelegramService {
    * @param {string} [context.outdatedCommit] - SHA of the reviewed commit
    * @param {string} [context.currentCommit] - SHA of the current HEAD commit
    * @param {string} [context.owner] - Repository owner
+   * @param {number} [context.reviewCount] - Number of outdated reviews
+   * @param {Array<string>} [context.reviewers] - List of reviewer usernames
    * @returns {string} Formatted message
    * @private
    */
   _buildOutdatedReviewMessage(pr, context = {}) {
-    const { reviewState, reviewUser, outdatedCommit, currentCommit, owner } = context;
+    const { reviewState, reviewUser, outdatedCommit, currentCommit, owner, reviewCount, reviewers } = context;
 
     const shortSha = (sha) => sha ? sha.substring(0, 7) : 'unknown';
 
@@ -461,13 +463,19 @@ class TelegramBotAdapter extends ITelegramService {
     const stateLabel = reviewState || 'UNKNOWN';
     const emoji = stateEmoji[stateLabel] || '📝';
 
+    const count = reviewCount || 1;
+    const countLabel = count > 1 ? `${count} outdated reviews` : 'Outdated Review Detected';
+
     let message =
-      `⚠️ <b>Outdated Review Detected</b>\n\n` +
+      `⚠️ <b>${countLabel}</b>\n\n` +
       `📂 <b>Repo:</b> ${this._escapeHtml(owner)}/${this._escapeHtml(pr.repo)}\n` +
       `📌 <b>PR #${pr.number}:</b> ${this._escapeHtml(pr.title)}\n` +
       `👤 <b>Author:</b> ${this._escapeHtml(pr.author)}\n`;
 
-    if (reviewUser) {
+    if (reviewers && reviewers.length > 0) {
+      const reviewerList = reviewers.map(r => this._escapeHtml(r)).join(', ');
+      message += `🔍 <b>Reviewers:</b> ${reviewerList}\n`;
+    } else if (reviewUser) {
       message += `🔍 <b>Reviewed by:</b> ${this._escapeHtml(reviewUser)} ${emoji} ${this._escapeHtml(stateLabel)}\n`;
     }
 

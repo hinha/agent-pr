@@ -45,7 +45,7 @@ class FileSystemStateRepository extends IStateRepository {
       notificationCounts: new Map(),
       processedTimestamps: new Map(),
       reviewState: new Map(), // prId -> { reviewId, headSha, submittedAt, dismissed }
-      outdatedNotified: new Map() // prId -> Set<reviewId> (tracks which outdated reviews were notified)
+      outdatedNotified: new Map() // prId -> { dismissedHeadSha: string }
     };
 
     this.loaded = false;
@@ -285,41 +285,36 @@ class FileSystemStateRepository extends IStateRepository {
   }
 
   /**
-   * Mark that an outdated review notification was sent
+   * Mark that an outdated review notification was dismissed for a PR
    *
    * @param {string} owner - Repository owner (unused)
    * @param {string} repo - Repository name (unused)
    * @param {string} prId - Pull request ID
-   * @param {string} reviewId - Review ID that was notified as outdated
+   * @param {string} headSha - Current head SHA at time of dismiss
    * @returns {Promise<void>}
    */
-  async markOutdatedNotified(owner, repo, prId, reviewId) {
+  async markOutdatedNotified(owner, repo, prId, headSha) {
     await this.initialize();
-    // Get or create Set for this PR
-    let reviewIdSet = this.cache.outdatedNotified.get(prId);
-    if (!reviewIdSet) {
-      reviewIdSet = new Set();
-      this.cache.outdatedNotified.set(prId, reviewIdSet);
-    }
-    // Add reviewId to the Set (normalize to string for consistency)
-    reviewIdSet.add(String(reviewId));
+    this.cache.outdatedNotified.set(prId, { dismissedHeadSha: headSha });
     await this._persistState();
   }
 
   /**
-   * Check if an outdated review was already notified
+   * Check if an outdated review notification was dismissed for a specific head SHA
    *
    * @param {string} owner - Repository owner (unused)
    * @param {string} repo - Repository name (unused)
    * @param {string} prId - Pull request ID
-   * @param {string} reviewId - Review ID to check
-   * @returns {Promise<boolean>} True if already notified
+   * @param {string} headSha - Current head SHA to check against dismiss
+   * @returns {Promise<boolean>} True if dismissed for this head SHA
    */
-  async isOutdatedNotified(owner, repo, prId, reviewId) {
+  async isOutdatedNotified(owner, repo, prId, headSha) {
     await this.initialize();
-    const reviewIdSet = this.cache.outdatedNotified.get(prId);
-    // Normalize to string for consistent comparison
-    return reviewIdSet ? reviewIdSet.has(String(reviewId)) : false;
+    const dismissData = this.cache.outdatedNotified.get(prId);
+    if (!dismissData || !dismissData.dismissedHeadSha) {
+      return false;
+    }
+    return dismissData.dismissedHeadSha === headSha;
   }
 
   /**
@@ -375,22 +370,19 @@ class FileSystemStateRepository extends IStateRepository {
         if (reviewStateData.reviews && typeof reviewStateData.reviews === 'object') {
           this.cache.reviewState = new Map(Object.entries(reviewStateData.reviews).map(([k, v]) => [parseInt(k, 10), v]));
         }
-        // Load outdated notified - each value is an array that should be converted to Set
+        // Load outdated notified - format: { prId: { dismissedHeadSha: "..." } }
+        // Also handles backward compatibility with old formats:
+        // - Old format 1: { prId: ["reviewId1", "reviewId2"] } (array of review IDs)
+        // - Old format 2: { prId: reviewId } (single review ID)
         if (reviewStateData.outdatedNotified && typeof reviewStateData.outdatedNotified === 'object') {
           const outdatedMap = new Map();
-          for (const [prId, reviewIds] of Object.entries(reviewStateData.outdatedNotified)) {
-            // Handle both old format (single reviewId) and new format (array of reviewIds)
-            let reviewIdsArray;
-            if (Array.isArray(reviewIds)) {
-              reviewIdsArray = reviewIds;
-            } else if (reviewIds !== null && reviewIds !== undefined) {
-              // Old format: single reviewId value (number or string)
-              reviewIdsArray = [reviewIds];
-            } else {
-              reviewIdsArray = [];
+          for (const [prId, value] of Object.entries(reviewStateData.outdatedNotified)) {
+            if (value && typeof value === 'object' && !Array.isArray(value) && value.dismissedHeadSha) {
+              // New format: { dismissedHeadSha: "abc123" }
+              outdatedMap.set(prId, { dismissedHeadSha: value.dismissedHeadSha });
             }
-            // Normalize all reviewIds to strings for consistent comparison
-            outdatedMap.set(prId, new Set(reviewIdsArray.map(id => String(id))));
+            // Old formats (array or single value) are ignored - they will be replaced
+            // by new dismiss tracking on next check cycle
           }
           this.cache.outdatedNotified = outdatedMap;
         }
@@ -429,10 +421,9 @@ class FileSystemStateRepository extends IStateRepository {
 
       // Save review state
       const reviewStatePath = path.join(this.storagePath, this.files.reviewState);
-      // Convert Sets to arrays for JSON serialization
       const outdatedNotifiedObj = {};
-      for (const [prId, reviewIdSet] of this.cache.outdatedNotified.entries()) {
-        outdatedNotifiedObj[prId] = Array.from(reviewIdSet);
+      for (const [prId, dismissData] of this.cache.outdatedNotified.entries()) {
+        outdatedNotifiedObj[prId] = dismissData;
       }
       const reviewStateObj = {
         reviews: Object.fromEntries(this.cache.reviewState),

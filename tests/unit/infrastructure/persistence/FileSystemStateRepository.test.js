@@ -434,66 +434,91 @@ describe('FileSystemStateRepository', () => {
   });
 
   describe('outdated review notification tracking', () => {
-    test('should mark outdated review as notified', async () => {
+    test('should mark outdated review as dismissed for a headSha', async () => {
       await repository.initialize();
-      await repository.markOutdatedNotified(owner, repo, '9', 'review-123');
+      await repository.markOutdatedNotified(owner, repo, '9', 'abc123def');
 
-      const isNotified = await repository.isOutdatedNotified(owner, repo, '9', 'review-123');
-      expect(isNotified).toBe(true);
+      const isDismissed = await repository.isOutdatedNotified(owner, repo, '9', 'abc123def');
+      expect(isDismissed).toBe(true);
     });
 
-    test('should return false for non-notified outdated review', async () => {
+    test('should return false for non-dismissed headSha', async () => {
       await repository.initialize();
 
-      const isNotified = await repository.isOutdatedNotified(owner, repo, '9', 'review-123');
-      expect(isNotified).toBe(false);
+      const isDismissed = await repository.isOutdatedNotified(owner, repo, '9', 'abc123def');
+      expect(isDismissed).toBe(false);
     });
 
-    test('should track multiple outdated reviews for same PR', async () => {
+    test('should not match different headSha', async () => {
       await repository.initialize();
+      await repository.markOutdatedNotified(owner, repo, '9', 'abc123def');
 
-      // Mark 7 different reviews for PR #9 as notified
-      await repository.markOutdatedNotified(owner, repo, '9', 'review-1');
-      await repository.markOutdatedNotified(owner, repo, '9', 'review-2');
-      await repository.markOutdatedNotified(owner, repo, '9', 'review-3');
-      await repository.markOutdatedNotified(owner, repo, '9', 'review-4');
-      await repository.markOutdatedNotified(owner, repo, '9', 'review-5');
-      await repository.markOutdatedNotified(owner, repo, '9', 'review-6');
-      await repository.markOutdatedNotified(owner, repo, '9', 'review-7');
-
-      // All should be marked as notified
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-1')).toBe(true);
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-2')).toBe(true);
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-3')).toBe(true);
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-4')).toBe(true);
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-5')).toBe(true);
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-6')).toBe(true);
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-7')).toBe(true);
-
-      // Different review should not be marked
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-8')).toBe(false);
+      // Same PR but different headSha (new commits pushed)
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'abc123def')).toBe(true);
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'xyz789')).toBe(false);
     });
 
-    test('should persist outdated notified to JSON as array', async () => {
+    test('should persist outdated dismissed to JSON as object', async () => {
       await repository.initialize();
 
-      await repository.markOutdatedNotified(owner, repo, '9', 'review-1');
-      await repository.markOutdatedNotified(owner, repo, '9', 'review-2');
+      await repository.markOutdatedNotified(owner, repo, '9', 'abc123def');
 
       expect(fs.writeFile).toHaveBeenCalled();
-      // Get the LAST write call (after second markOutdatedNotified)
       const writeCalls = fs.writeFile.mock.calls.filter(call =>
         call[0].includes('review_state.json')
       );
       expect(writeCalls.length).toBeGreaterThan(0);
 
-      const writeCall = writeCalls[writeCalls.length - 1]; // Get last call
+      const writeCall = writeCalls[writeCalls.length - 1];
       const persistedData = JSON.parse(writeCall[1]);
-      // Should be an array, not a single value
-      expect(persistedData.outdatedNotified['9']).toEqual(['review-1', 'review-2']);
+      expect(persistedData.outdatedNotified['9']).toEqual({ dismissedHeadSha: 'abc123def' });
     });
 
-    test('should load outdated notified from JSON array', async () => {
+    test('should load outdated dismissed from JSON object', async () => {
+      const mockReviewStateData = {
+        reviews: {},
+        outdatedNotified: {
+          '9': { dismissedHeadSha: 'abc123def' }
+        }
+      };
+
+      fs.readFile.mockImplementation((filePath) => {
+        if (filePath.includes('review_state.json')) {
+          return Promise.resolve(JSON.stringify(mockReviewStateData));
+        }
+        return Promise.reject({ code: 'ENOENT' });
+      });
+
+      await repository.initialize();
+
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'abc123def')).toBe(true);
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'different-sha')).toBe(false);
+    });
+
+    test('should clear outdated dismiss for PR', async () => {
+      await repository.initialize();
+
+      await repository.markOutdatedNotified(owner, repo, '9', 'abc123def');
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'abc123def')).toBe(true);
+
+      await repository.clearOutdatedNotified(owner, repo, '9');
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'abc123def')).toBe(false);
+    });
+
+    test('should track dismiss for multiple PRs separately', async () => {
+      await repository.initialize();
+
+      await repository.markOutdatedNotified(owner, repo, '9', 'sha-abc');
+      await repository.markOutdatedNotified(owner, repo, '10', 'sha-xyz');
+
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'sha-abc')).toBe(true);
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'sha-xyz')).toBe(false);
+      expect(await repository.isOutdatedNotified(owner, repo, '10', 'sha-abc')).toBe(false);
+      expect(await repository.isOutdatedNotified(owner, repo, '10', 'sha-xyz')).toBe(true);
+    });
+
+    test('should ignore old array format on load (backward compatibility)', async () => {
+      // Old format: array of reviewIds - should be ignored
       const mockReviewStateData = {
         reviews: {},
         outdatedNotified: {
@@ -510,92 +535,45 @@ describe('FileSystemStateRepository', () => {
 
       await repository.initialize();
 
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-1')).toBe(true);
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-2')).toBe(true);
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-3')).toBe(true);
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-4')).toBe(false);
-    });
-
-    test('should clear outdated notification for PR', async () => {
-      await repository.initialize();
-
-      await repository.markOutdatedNotified(owner, repo, '9', 'review-1');
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-1')).toBe(true);
-
-      await repository.clearOutdatedNotified(owner, repo, '9');
+      // Old array format should be ignored - no dismissedHeadSha match
       expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-1')).toBe(false);
     });
 
-    test('should track outdated reviews for multiple PRs separately', async () => {
+    test('should ignore old single-value format on load (backward compatibility)', async () => {
+      // Old format: single reviewId (number or string)
+      const mockReviewStateData = {
+        reviews: {},
+        outdatedNotified: {
+          '9': 4138295901,  // Old format: single number
+          '10': 'review-1'  // Old format: single string
+        }
+      };
+
+      fs.readFile.mockImplementation((filePath) => {
+        if (filePath.includes('review_state.json')) {
+          return Promise.resolve(JSON.stringify(mockReviewStateData));
+        }
+        return Promise.reject({ code: 'ENOENT' });
+      });
+
       await repository.initialize();
 
-      await repository.markOutdatedNotified(owner, repo, '9', 'review-1');
-      await repository.markOutdatedNotified(owner, repo, '10', 'review-2');
-
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-1')).toBe(true);
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'review-2')).toBe(false);
+      // Old single-value format should be ignored
+      expect(await repository.isOutdatedNotified(owner, repo, '9', '4138295901')).toBe(false);
       expect(await repository.isOutdatedNotified(owner, repo, '10', 'review-1')).toBe(false);
-      expect(await repository.isOutdatedNotified(owner, repo, '10', 'review-2')).toBe(true);
     });
 
-    test('should handle old format (single reviewId as number) for backward compatibility', async () => {
-      // Old format: single reviewId (number) instead of array
-      const mockReviewStateData = {
-        reviews: {},
-        outdatedNotified: {
-          '9': 4138295901,  // Old format: single number (reviewId)
-          '10': 'review-1'  // Old format: single string (reviewId)
-        }
-      };
-
-      fs.readFile.mockImplementation((filePath) => {
-        if (filePath.includes('review_state.json')) {
-          return Promise.resolve(JSON.stringify(mockReviewStateData));
-        }
-        return Promise.reject({ code: 'ENOENT' });
-      });
-
+    test('should replace dismiss when marking again for new headSha', async () => {
       await repository.initialize();
 
-      // Should convert old single-value format to Set internally
-      expect(await repository.isOutdatedNotified(owner, repo, '9', '4138295901')).toBe(true);
-      expect(await repository.isOutdatedNotified(owner, repo, '10', 'review-1')).toBe(true);
-      expect(await repository.isOutdatedNotified(owner, repo, '9', 'other-review')).toBe(false);
-    });
+      await repository.markOutdatedNotified(owner, repo, '9', 'sha-old');
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'sha-old')).toBe(true);
 
-    test('should migrate old format to new array format when persisting', async () => {
-      // Load old format
-      const mockReviewStateData = {
-        reviews: {},
-        outdatedNotified: {
-          '9': 4138295901  // Old format: single number
-        }
-      };
-
-      fs.readFile.mockImplementation((filePath) => {
-        if (filePath.includes('review_state.json')) {
-          return Promise.resolve(JSON.stringify(mockReviewStateData));
-        }
-        return Promise.reject({ code: 'ENOENT' });
-      });
-
-      await repository.initialize();
-
-      // Add a new review as string (this should trigger persist with new format)
-      await repository.markOutdatedNotified(owner, repo, '9', 'review-2');
-
-      // Check that persisted format is array
-      const writeCalls = fs.writeFile.mock.calls.filter(call =>
-        call[0].includes('review_state.json')
-      );
-      // Get the last write call (after markOutdatedNotified)
-      const writeCall = writeCalls[writeCalls.length - 1];
-      expect(writeCall).toBeDefined();
-      const persistedData = JSON.parse(writeCall[1]);
-      // Should be array format now (all converted to strings)
-      expect(Array.isArray(persistedData.outdatedNotified['9'])).toBe(true);
-      expect(persistedData.outdatedNotified['9']).toContain('4138295901');  // Number converted to string
-      expect(persistedData.outdatedNotified['9']).toContain('review-2');
+      // Dismiss again with new headSha (e.g., after new commits + dismiss again)
+      await repository.markOutdatedNotified(owner, repo, '9', 'sha-new');
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'sha-new')).toBe(true);
+      // Old headSha should no longer match
+      expect(await repository.isOutdatedNotified(owner, repo, '9', 'sha-old')).toBe(false);
     });
   });
 });

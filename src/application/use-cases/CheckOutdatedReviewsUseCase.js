@@ -43,7 +43,8 @@ class CheckOutdatedReviewsUseCase {
         `[CheckOutdatedReviewsUseCase] Checking for outdated reviews in ${repoName}`
       );
 
-      const outdatedReviews = [];
+      // Group outdated reviews by PR
+      const prOutdatedMap = new Map(); // prNumber -> { pr, reviews: [] }
 
       // Check each PR for outdated reviews
       for (const pr of pullRequests) {
@@ -51,62 +52,71 @@ class CheckOutdatedReviewsUseCase {
 
         for (const review of reviews) {
           if (await this._isReviewOutdated(instance, repo, pr, review)) {
-            outdatedReviews.push({
-              pr,
-              review,
-              outdatedCommit: review.headSha,
-              currentCommit: pr.headSha
-            });
+            if (!prOutdatedMap.has(pr.number)) {
+              prOutdatedMap.set(pr.number, { pr, reviews: [] });
+            }
+            prOutdatedMap.get(pr.number).reviews.push(review);
           }
         }
       }
 
-      // Send notifications for outdated reviews
+      // Send 1 consolidated notification per PR
       const notificationResults = [];
-      for (const { pr, review, outdatedCommit, currentCommit } of outdatedReviews) {
-        // Check if we already notified about this outdated review
-        const notificationKey = `${instanceKey}/${repoName}/outdated/${review.id}`;
-        const alreadyNotified = await this._wasAlreadyNotified(notificationKey, pr.id, review.id);
+      const owner = instance.owner;
 
-        if (!alreadyNotified) {
-          const result = await this.notificationService.sendOutdatedReviewNotification(
-            instance,
-            repo,
-            review,
-            pr,
-            { outdatedCommit, currentCommit }
-          );
+      for (const [prNumber, { pr, reviews }] of prOutdatedMap) {
+        // Check if user dismissed notification for this exact headSha
+        const fsRepo = this.stateMachine.stateRepository.getRepository(owner, repoName);
+        const isDismissed = await fsRepo.isOutdatedNotified(
+          owner, repoName, pr.id.toString(), pr.headSha
+        );
 
-          notificationResults.push({
-            reviewId: review.id,
-            prNumber: pr.number,
-            sent: result.success
-          });
-
-          // Mark as notified
-          await this._markAsNotified(notificationKey, pr.id, review.id);
-        } else {
+        if (isDismissed) {
           this.logger.debug(
-            `[CheckOutdatedReviewsUseCase] Skipping already notified outdated review ${review.id} for PR #${pr.number}`
+            `[CheckOutdatedReviewsUseCase] Skipping dismissed outdated review for PR #${prNumber} (headSha: ${pr.headSha?.substring(0, 7)})`
           );
+          continue;
         }
+
+        // Build consolidated notification data
+        const reviewers = [...new Set(reviews.map(r => r.user).filter(Boolean))];
+        const result = await this.notificationService.sendOutdatedReviewNotification(
+          instance,
+          repo,
+          reviews[0], // primary review for backward compat
+          pr,
+          {
+            outdatedCommit: reviews[0].headSha,
+            currentCommit: pr.headSha,
+            reviewCount: reviews.length,
+            reviewers
+          }
+        );
+
+        notificationResults.push({
+          prNumber,
+          reviewCount: reviews.length,
+          sent: result.success
+        });
       }
 
       // Emit summary event
       await this.eventBus.emitAsync('outdated_reviews.checked', {
         instanceKey,
         repoName,
-        totalOutdated: outdatedReviews.length,
+        totalOutdated: [...prOutdatedMap.values()].reduce((sum, v) => sum + v.reviews.length, 0),
         notificationsSent: notificationResults.filter(r => r.sent).length
       });
 
       this.logger.info(
-        `[CheckOutdatedReviewsUseCase] Found ${outdatedReviews.length} outdated reviews, ` +
+        `[CheckOutdatedReviewsUseCase] Found ${[...prOutdatedMap.values()].reduce((sum, v) => sum + v.reviews.length, 0)} outdated reviews across ${prOutdatedMap.size} PRs, ` +
         `sent ${notificationResults.filter(r => r.sent).length} notifications`
       );
 
       return {
-        outdatedReviews,
+        outdatedReviews: [...prOutdatedMap.values()].flatMap(({ pr, reviews }) =>
+          reviews.map(review => ({ pr, review }))
+        ),
         notificationResults
       };
 
@@ -155,101 +165,6 @@ class CheckOutdatedReviewsUseCase {
   }
 
   /**
-   * Check if we already sent a notification for this outdated review
-   * @private
-   */
-  async _wasAlreadyNotified(notificationKey, prId, reviewId) {
-    // Parse notification key: instanceKey/repoName/outdated/reviewId
-    // Example: github/hinha/gosm/outdated/123456
-    const parts = notificationKey.split('/');
-
-    // Find the 'outdated' marker to determine where repo name ends
-    const outdatedIndex = parts.indexOf('outdated');
-    if (outdatedIndex === -1) {
-      this.logger.warn(`[CheckOutdatedReviewsUseCase] Invalid notification key format: ${notificationKey}`);
-      return false;
-    }
-
-    // instanceKey/repoName are before 'outdated'
-    // parts[0] might be 'github' if the key doesn't have the full instance path
-    // We need to reconstruct the instance key from parts before 'outdated'
-    const partsBeforeOutdated = parts.slice(0, outdatedIndex);
-
-    // The format should be: github/{owner}/{repo}/outdated/{reviewId}
-    // So partsBeforeOutdated = ['github', 'hinha', 'gosm']
-    // instanceKey = 'github/hinha' (parts 0-1)
-    // repoName = 'gosm' (part 2)
-
-    if (partsBeforeOutdated.length < 3) {
-      this.logger.warn(`[CheckOutdatedReviewsUseCase] Invalid notification key format: ${notificationKey}`);
-      return false;
-    }
-
-    const instanceKey = `${partsBeforeOutdated[0]}/${partsBeforeOutdated[1]}`; // e.g., github/hinha
-    const repoName = partsBeforeOutdated[2]; // e.g., gosm
-
-    // Extract owner from instanceKey (e.g., 'hinha' from 'github/hinha')
-    const owner = instanceKey.includes('/') ? instanceKey.split('/')[1] : instanceKey;
-
-    // Get the FileSystemStateRepository for this specific repo
-    const fsRepo = this.stateMachine.stateRepository.getRepository(owner, repoName);
-
-    // Use persistent storage to check if already notified
-    return await fsRepo.isOutdatedNotified(
-      owner,
-      repoName,
-      prId.toString(),
-      reviewId
-    );
-  }
-
-  /**
-   * Mark that we sent a notification for this outdated review
-   * @private
-   */
-  async _markAsNotified(notificationKey, prId, reviewId) {
-    // Parse notification key: instanceKey/repoName/outdated/reviewId
-    // Example: github/hinha/gosm/outdated/123456
-    const parts = notificationKey.split('/');
-
-    // Find the 'outdated' marker to determine where repo name ends
-    const outdatedIndex = parts.indexOf('outdated');
-    if (outdatedIndex === -1) {
-      this.logger.warn(`[CheckOutdatedReviewsUseCase] Invalid notification key format: ${notificationKey}`);
-      return;
-    }
-
-    // instanceKey/repoName are before 'outdated'
-    const partsBeforeOutdated = parts.slice(0, outdatedIndex);
-
-    if (partsBeforeOutdated.length < 3) {
-      this.logger.warn(`[CheckOutdatedReviewsUseCase] Invalid notification key format: ${notificationKey}`);
-      return;
-    }
-
-    const instanceKey = `${partsBeforeOutdated[0]}/${partsBeforeOutdated[1]}`; // e.g., github/hinha
-    const repoName = partsBeforeOutdated[2]; // e.g., gosm
-
-    // Extract owner from instanceKey
-    const owner = instanceKey.includes('/') ? instanceKey.split('/')[1] : instanceKey;
-
-    // Get the FileSystemStateRepository for this specific repo
-    const fsRepo = this.stateMachine.stateRepository.getRepository(owner, repoName);
-
-    // Use persistent storage to mark as notified
-    await fsRepo.markOutdatedNotified(
-      owner,
-      repoName,
-      prId.toString(),
-      reviewId
-    );
-
-    this.logger.debug(
-      `[CheckOutdatedReviewsUseCase] Marked outdated review ${reviewId} for PR #${prId} as notified`
-    );
-  }
-
-  /**
    * Check if a specific review is outdated
    *
    * @param {Object} instance - Instance configuration
@@ -263,34 +178,38 @@ class CheckOutdatedReviewsUseCase {
   }
 
   /**
-   * Dismiss an outdated review notification
+   * Dismiss an outdated review notification for a PR
    *
    * @param {Object} instance - Instance configuration
    * @param {Object} repo - Repository configuration
-   * @param {string} reviewId - Review ID to dismiss
-   * @param {string} prId - PR ID (optional, needed to clear from persistent storage)
+   * @param {string} reviewId - Review ID to dismiss (unused, kept for backward compat)
+   * @param {string} prId - PR ID
+   * @param {string} headSha - Current head SHA of the PR
    * @returns {Promise<Object>} Dismissal result
    */
-  async dismissOutdatedReview(instance, repo, reviewId, prId = null) {
+  async dismissOutdatedReview(instance, repo, reviewId, prId = null, headSha = null) {
     try {
-      // Clear from persistent storage if PR ID is provided
-      if (prId && this.stateMachine?.stateRepository) {
-        // Get the FileSystemStateRepository for this specific repo
-        // Use the actual instance.owner, not the instance.key
-        const owner = instance.owner; // This should be just 'hinha', not 'github/hinha'
+      if (prId && headSha && this.stateMachine?.stateRepository) {
+        const owner = instance.owner;
         const fsRepo = this.stateMachine.stateRepository.getRepository(owner, repo.name);
 
-        // Use the new clearOutdatedNotified method
+        // Mark as dismissed for this headSha - notifications won't fire again
+        // until new commits are pushed (headSha changes)
+        await fsRepo.markOutdatedNotified(owner, repo.name, prId.toString(), headSha);
+
+        this.logger.info(
+          `[CheckOutdatedReviewsUseCase] Dismissed outdated review for PR #${prId} (headSha: ${headSha.substring(0, 7)})`
+        );
+      } else if (prId && this.stateMachine?.stateRepository) {
+        // Fallback: clear dismiss data entirely (allows notifications on next cycle)
+        const owner = instance.owner;
+        const fsRepo = this.stateMachine.stateRepository.getRepository(owner, repo.name);
         await fsRepo.clearOutdatedNotified(owner, repo.name, prId.toString());
 
         this.logger.info(
-          `[CheckOutdatedReviewsUseCase] Cleared outdated notification for PR #${prId}, review ${reviewId}`
+          `[CheckOutdatedReviewsUseCase] Cleared outdated notification for PR #${prId} (no headSha provided)`
         );
       }
-
-      this.logger.debug(
-        `[CheckOutdatedReviewsUseCase] Dismissed outdated review notification for ${reviewId}`
-      );
 
       return { success: true };
 
