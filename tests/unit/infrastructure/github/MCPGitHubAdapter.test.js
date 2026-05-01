@@ -535,7 +535,7 @@ describe('MCPGitHubAdapter', () => {
         // HIGH severity should trigger REQUEST_CHANGES event
         const lastSpawnArgs = spawn.mock.calls[1][1];
         const eventArg = lastSpawnArgs.find(arg => arg.startsWith('event='));
-        expect(eventArg).toBe('event=REQUEST_CHANGES');
+        expect(eventArg).toBe('event="REQUEST_CHANGES"');
 
         // Body should contain fallback for the skipped MEDIUM comment
         const bodyArg = lastSpawnArgs.find(arg => arg.startsWith('body='));
@@ -734,8 +734,8 @@ describe('MCPGitHubAdapter', () => {
 
         const lastSpawnArgs = spawn.mock.calls[1][1];
         const bodyArg = lastSpawnArgs.find(arg => arg.startsWith('body='));
-        // Python language detection
-        expect(bodyArg).toContain('```python');
+        // Python language detection (backticks are escaped by _shellEscape)
+        expect(bodyArg).toContain('\\`\\`\\`python');
         expect(bodyArg).toContain('result = [x for x in items if x > 0]');
 
         done();
@@ -768,7 +768,7 @@ describe('MCPGitHubAdapter', () => {
           expect.arrayContaining([
             'call',
             'github-work.create_pull_request_review',
-            'event=APPROVE'
+            'event="APPROVE"'
           ]),
           expect.any(Object)
         );
@@ -811,7 +811,7 @@ describe('MCPGitHubAdapter', () => {
           expect.arrayContaining([
             'call',
             'github-work.create_pull_request_review',
-            'event=REQUEST_CHANGES'
+            'event="REQUEST_CHANGES"'
           ]),
           expect.any(Object)
         );
@@ -854,7 +854,7 @@ describe('MCPGitHubAdapter', () => {
           expect.arrayContaining([
             'call',
             'github-work.update_pull_request',
-            'state=closed'
+            'state="closed"'
           ]),
           expect.any(Object)
         );
@@ -916,6 +916,165 @@ describe('MCPGitHubAdapter', () => {
       expect(adapter._normalizeSeverity('invalid')).toBe('LOW');
       expect(adapter._normalizeSeverity(null)).toBe('LOW');
       expect(adapter._normalizeSeverity(undefined)).toBe('LOW');
+    });
+  });
+
+  describe('_shellEscape', () => {
+    test('should wrap simple strings in double quotes', () => {
+      expect(adapter._shellEscape('hello')).toBe('"hello"');
+    });
+
+    test('should escape double quotes', () => {
+      expect(adapter._shellEscape('say "hello"')).toBe('"say \\"hello\\""');
+    });
+
+    test('should escape dollar signs', () => {
+      expect(adapter._shellEscape('$HOME')).toBe('"\\$HOME"');
+    });
+
+    test('should escape backticks', () => {
+      expect(adapter._shellEscape('`whoami`')).toBe('"\\`whoami\\`"');
+    });
+
+    test('should escape backslashes', () => {
+      expect(adapter._shellEscape('path\\to\\file')).toBe('"path\\\\to\\\\file"');
+    });
+
+    test('should escape newlines', () => {
+      expect(adapter._shellEscape('line1\nline2')).toBe('"line1\\nline2"');
+    });
+
+    test('should handle injection attempt with single quotes', () => {
+      // This was the original bug: single quote in value breaks out of single-quote wrapping
+      const malicious = "'; rm -rf /; echo '";
+      const escaped = adapter._shellEscape(malicious);
+      // Single quotes are safe inside double quotes — shell treats it as literal string
+      expect(escaped).toBe(`"'; rm -rf /; echo '"`);
+      // Verify no unescaped $ or ` that could cause substitution
+      expect(escaped).not.toMatch(/(?<!\\)\$/);
+      expect(escaped).not.toMatch(/(?<!\\)`/);
+    });
+
+    test('should handle command substitution attempt', () => {
+      const malicious = '$(cat /etc/passwd)';
+      const escaped = adapter._shellEscape(malicious);
+      expect(escaped).toBe('"\\$(cat /etc/passwd)"');
+    });
+  });
+
+  describe('_normalizeEvent', () => {
+    test('should normalize valid event strings', () => {
+      expect(adapter._normalizeEvent('APPROVE')).toBe('APPROVE');
+      expect(adapter._normalizeEvent('approve')).toBe('APPROVE');
+      expect(adapter._normalizeEvent('REQUEST_CHANGES')).toBe('REQUEST_CHANGES');
+      expect(adapter._normalizeEvent('request_changes')).toBe('REQUEST_CHANGES');
+      expect(adapter._normalizeEvent('COMMENT')).toBe('COMMENT');
+      expect(adapter._normalizeEvent('comment')).toBe('COMMENT');
+    });
+
+    test('should return null for invalid or absent events', () => {
+      expect(adapter._normalizeEvent(null)).toBeNull();
+      expect(adapter._normalizeEvent(undefined)).toBeNull();
+      expect(adapter._normalizeEvent('')).toBeNull();
+      expect(adapter._normalizeEvent('INVALID')).toBeNull();
+      expect(adapter._normalizeEvent(123)).toBeNull();
+    });
+  });
+
+  describe('createReviewWithComments - explicit event from caller', () => {
+    test('should use REQUEST_CHANGES from caller when no comments', (done) => {
+      const mockPR = { id: 'pr_1', number: 456, headSha: 'abc123' };
+
+      const mockReviewResult = {
+        body: 'Changes requested via Telegram bot',
+        comments: [],
+        event: 'request_changes'
+      };
+
+      let callCount = 0;
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') {
+          onCloseCallback = cb;
+          callCount++;
+          setTimeout(() => {
+            if (callCount === 1) {
+              onDataCallback(JSON.stringify([]));
+            } else {
+              onDataCallback(JSON.stringify({ id: 'review_reject' }));
+            }
+            onCloseCallback(0);
+          }, 10);
+        }
+      });
+
+      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
+        expect(result.id).toBe('review_reject');
+
+        // Event should be REQUEST_CHANGES from caller, not COMMENT from severity fallback
+        const lastSpawnArgs = spawn.mock.calls[1][1];
+        const eventArg = lastSpawnArgs.find(arg => arg.startsWith('event='));
+        expect(eventArg).toBe('event="REQUEST_CHANGES"');
+
+        done();
+      });
+    });
+
+    test('should use severity fallback when caller event is invalid', (done) => {
+      const mockPR = { id: 'pr_1', number: 456, headSha: 'abc123' };
+
+      const mockReviewResult = {
+        summary: 'Found issues',
+        comments: [
+          { file: 'src/app.js', line: 10, message: 'Bug', severity: 'HIGH' }
+        ],
+        event: 'INVALID_EVENT'
+      };
+
+      const filesWithPatch = [{
+        filename: 'src/app.js',
+        patch: '@@ -1,3 +1,5 @@\n ctx1\n+added\n ctx2\n ctx3\n'
+      }];
+
+      let callCount = 0;
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') {
+          onCloseCallback = cb;
+          callCount++;
+          setTimeout(() => {
+            if (callCount === 1) {
+              onDataCallback(JSON.stringify(filesWithPatch));
+            } else {
+              onDataCallback(JSON.stringify({ id: 'review_severity_fallback' }));
+            }
+            onCloseCallback(0);
+          }, 10);
+        }
+      });
+
+      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
+        expect(result.id).toBe('review_severity_fallback');
+
+        // Invalid event should fall back to severity-based (HIGH -> REQUEST_CHANGES)
+        const lastSpawnArgs = spawn.mock.calls[1][1];
+        const eventArg = lastSpawnArgs.find(arg => arg.startsWith('event='));
+        expect(eventArg).toBe('event="REQUEST_CHANGES"');
+
+        done();
+      });
     });
   });
 });

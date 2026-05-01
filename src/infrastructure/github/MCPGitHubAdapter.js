@@ -51,7 +51,7 @@ class MCPGitHubAdapter extends IGitHubService {
 
       const spawnArgs = ['call', `${this.serverName}.${method}`, '--output', 'json'];
 
-      // Build command arguments
+      // Build command arguments (shell: true requires proper escaping for dynamic values)
       for (const [key, value] of Object.entries(args)) {
         if (value === null || value === undefined) {
           spawnArgs.push(`${key}=null`);
@@ -61,15 +61,10 @@ class MCPGitHubAdapter extends IGitHubService {
             const substitution = this._writeCommentsToTempFile(value);
             spawnArgs.push(`${key}=${substitution}`);
           } else {
-            spawnArgs.push(`'${key}:${JSON.stringify(value)}'`);
+            spawnArgs.push(`${key}=${this._shellEscape(JSON.stringify(value))}`);
           }
         } else if (typeof value === 'string') {
-          // Only quote if value contains spaces or special chars
-          if (value.includes(' ') || value.includes('"') || value.includes("'")) {
-            spawnArgs.push(`${key}='${value}'`);
-          } else {
-            spawnArgs.push(`${key}=${value}`);
-          }
+          spawnArgs.push(`${key}=${this._shellEscape(value)}`);
         } else {
           spawnArgs.push(`${key}=${value}`);
         }
@@ -223,6 +218,24 @@ class MCPGitHubAdapter extends IGitHubService {
   }
 
   /**
+   * Escape a string for safe use inside double-quoted shell argument
+   * Protects against shell break-out from dynamic values (body, comments, etc.)
+   * @param {string} str - String to escape
+   * @returns {string} Shell-safe quoted string
+   * @private
+   */
+  _shellEscape(str) {
+    // Escape characters special inside double quotes: $ ` " \ and newline
+    const escaped = str
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\$/g, '\\$')
+      .replace(/`/g, '\\`')
+      .replace(/\n/g, '\\n');
+    return `"${escaped}"`;
+  }
+
+  /**
    * Write comments to temporary file and return the command substitution string
    * @param {Array<Object>} comments - Array of comment objects
    * @returns {string} Command substitution string
@@ -354,24 +367,20 @@ class MCPGitHubAdapter extends IGitHubService {
       this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] All comments were filtered out, posting review with summary only`);
     }
 
-    // Determine event based on normalized severities
-    let event = 'COMMENT';
-    const hasHigh = stats.severityBreakdown.HIGH > 0;
-    const hasMedium = stats.severityBreakdown.MEDIUM > 0;
-    const hasLow = stats.severityBreakdown.LOW > 0;
+    // Determine event: explicit event from caller takes priority, then severity-based fallback
+    let event = this._normalizeEvent(reviewResult.event);
 
-    if (hasHigh) {
-      event = 'REQUEST_CHANGES';
-      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Event set to REQUEST_CHANGES: ${stats.severityBreakdown.HIGH} HIGH severity comment(s) found`);
-    } else if (hasMedium) {
-      event = 'COMMENT';
-      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Event set to COMMENT: ${stats.severityBreakdown.MEDIUM} MEDIUM severity comment(s) found`);
-    } else if (hasLow) {
-      event = 'COMMENT';
-      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Event set to COMMENT: ${stats.severityBreakdown.LOW} LOW severity comment(s) found`);
+    if (!event) {
+      const hasHigh = stats.severityBreakdown.HIGH > 0;
+      event = hasHigh ? 'REQUEST_CHANGES' : 'COMMENT';
+
+      if (hasHigh) {
+        this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Event set to REQUEST_CHANGES: ${stats.severityBreakdown.HIGH} HIGH severity comment(s) found`);
+      } else {
+        this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Event set to COMMENT: no HIGH severity comments`);
+      }
     } else {
-      event = 'COMMENT';
-      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Event set to COMMENT: no severity-specific comments found`);
+      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Event from caller: ${event}`);
     }
 
     // Update reviewResult with valid comments for further processing
@@ -931,6 +940,18 @@ class MCPGitHubAdapter extends IGitHubService {
     this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Comment validation: ${stats.valid}/${stats.total} valid, ${stats.filtered} filtered`);
 
     return { validComments, stats };
+  }
+
+  /**
+   * Normalize and validate review event value
+   * @param {*} event - Event value to normalize
+   * @returns {string|null} Normalized event or null if invalid/absent
+   * @private
+   */
+  _normalizeEvent(event) {
+    if (!event || typeof event !== 'string') return null;
+    const v = event.trim().toUpperCase();
+    return ['APPROVE', 'REQUEST_CHANGES', 'COMMENT'].includes(v) ? v : null;
   }
 
   /**
