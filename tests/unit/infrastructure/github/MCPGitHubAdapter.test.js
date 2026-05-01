@@ -397,6 +397,350 @@ describe('MCPGitHubAdapter', () => {
         done();
       });
     });
+
+    test('should append skipped comment with suggestedCode to review body when line not in diff', (done) => {
+      const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
+
+      const mockReviewResult = {
+        summary: 'Found 1 issue',
+        comments: [
+          {
+            file: 'src/infrastructure/persistence/FileSystemStateRepository.js',
+            line: 183,
+            severity: 'MEDIUM',
+            message: '`clearProcessedPRs` does not clear notification counts',
+            suggestedCode: 'async clearProcessedPRs(owner, repo) {\n  await this.initialize();\n}'
+          }
+        ]
+      };
+
+      // Patch only covers lines 1-5, line 183 is NOT in diff
+      const filesWithPatch = [{
+        filename: 'src/infrastructure/persistence/FileSystemStateRepository.js',
+        patch: '@@ -1,3 +1,5 @@\n line1\n+added\n line2\n line3\n'
+      }];
+
+      let callCount = 0;
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') {
+          onCloseCallback = cb;
+          callCount++;
+          setTimeout(() => {
+            if (callCount === 1) {
+              onDataCallback(JSON.stringify(filesWithPatch));
+            } else {
+              onDataCallback(JSON.stringify({ id: 'review_body_fallback' }));
+            }
+            onCloseCallback(0);
+          }, 10);
+        }
+      });
+
+      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
+        expect(result.id).toBe('review_body_fallback');
+
+        // Should warn about missing position
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('No position found for src/infrastructure/persistence/FileSystemStateRepository.js:183')
+        );
+
+        // Should log that comment was appended to body
+        expect(mockLogger.info).toHaveBeenCalledWith(
+          expect.stringContaining('0 inline comment(s) and 1 in body')
+        );
+
+        // The second spawn call should contain the body with fallback
+        const lastSpawnArgs = spawn.mock.calls[1][1];
+        const bodyArg = lastSpawnArgs.find(arg => arg.startsWith('body='));
+        expect(bodyArg).toContain('could not be placed as inline review');
+        expect(bodyArg).toContain('clearProcessedPRs');
+        expect(bodyArg).toContain('async clearProcessedPRs');
+
+        done();
+      });
+    });
+
+    test('should create inline comments for lines in diff and append others to body', (done) => {
+      const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
+
+      const mockReviewResult = {
+        summary: 'Found 2 issues',
+        comments: [
+          {
+            file: 'src/application/use-cases/ReviewPRUseCase.js',
+            line: 3,
+            severity: 'HIGH',
+            message: 'Critical bug in transition logic'
+          },
+          {
+            file: 'src/infrastructure/persistence/FileSystemStateRepository.js',
+            line: 183,
+            severity: 'MEDIUM',
+            message: 'Missing cleanup',
+            suggestedCode: 'async clear() {\n  await this.reset();\n}'
+          }
+        ]
+      };
+
+      // Two files: first has line 3 in diff, second does not
+      const filesWithPatch = [
+        {
+          filename: 'src/application/use-cases/ReviewPRUseCase.js',
+          patch: '@@ -1,3 +1,5 @@\n line1\n+added\n line2\n line3\n'
+        },
+        {
+          filename: 'src/infrastructure/persistence/FileSystemStateRepository.js',
+          patch: '@@ -1,3 +1,5 @@\n line1\n+added\n line2\n line3\n'
+        }
+      ];
+
+      let callCount = 0;
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') {
+          onCloseCallback = cb;
+          callCount++;
+          setTimeout(() => {
+            if (callCount === 1) {
+              onDataCallback(JSON.stringify(filesWithPatch));
+            } else {
+              onDataCallback(JSON.stringify({ id: 'review_mixed' }));
+            }
+            onCloseCallback(0);
+          }, 10);
+        }
+      });
+
+      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
+        expect(result.id).toBe('review_mixed');
+
+        // 1 inline + 1 in body
+        expect(mockLogger.info).toHaveBeenCalledWith(
+          expect.stringContaining('1 inline comment(s) and 1 in body')
+        );
+
+        // HIGH severity should trigger REQUEST_CHANGES event
+        const lastSpawnArgs = spawn.mock.calls[1][1];
+        const eventArg = lastSpawnArgs.find(arg => arg.startsWith('event='));
+        expect(eventArg).toBe('event=REQUEST_CHANGES');
+
+        // Body should contain fallback for the skipped MEDIUM comment
+        const bodyArg = lastSpawnArgs.find(arg => arg.startsWith('body='));
+        expect(bodyArg).toContain('Missing cleanup');
+        expect(bodyArg).toContain('async clear()');
+
+        done();
+      });
+    });
+
+    test('should handle multiple skipped comments with suggestedCode in body', (done) => {
+      const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
+
+      const mockReviewResult = {
+        summary: 'Code quality review',
+        comments: [
+          {
+            file: 'src/utils/helper.js',
+            line: 500,
+            severity: 'MEDIUM',
+            message: 'Missing error handling',
+            suggestedCode: 'try {\n  await fn();\n} catch(e) { log(e); }'
+          },
+          {
+            file: 'src/utils/helper.js',
+            line: 800,
+            severity: 'LOW',
+            message: 'Consider using const'
+          }
+        ]
+      };
+
+      // Patch only covers lines 1-10
+      const filesWithPatch = [{
+        filename: 'src/utils/helper.js',
+        patch: '@@ -1,3 +1,5 @@\n ctx1\n+added\n ctx2\n ctx3\n'
+      }];
+
+      let callCount = 0;
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') {
+          onCloseCallback = cb;
+          callCount++;
+          setTimeout(() => {
+            if (callCount === 1) {
+              onDataCallback(JSON.stringify(filesWithPatch));
+            } else {
+              onDataCallback(JSON.stringify({ id: 'review_multi_skip' }));
+            }
+            onCloseCallback(0);
+          }, 10);
+        }
+      });
+
+      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
+        expect(result.id).toBe('review_multi_skip');
+
+        // Both comments skipped → 0 inline, 2 in body
+        expect(mockLogger.info).toHaveBeenCalledWith(
+          expect.stringContaining('0 inline comment(s) and 2 in body')
+        );
+
+        const lastSpawnArgs = spawn.mock.calls[1][1];
+        const bodyArg = lastSpawnArgs.find(arg => arg.startsWith('body='));
+        // Both comments should be in body
+        expect(bodyArg).toContain('Missing error handling');
+        expect(bodyArg).toContain('Consider using const');
+        // Only first comment has suggestedCode
+        expect(bodyArg).toContain('try {');
+        // Separated by ---
+        expect(bodyArg).toContain('---');
+
+        done();
+      });
+    });
+
+    test('should not append fallback section when all comments have positions', (done) => {
+      const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
+
+      const mockReviewResult = {
+        summary: 'All lines in diff',
+        comments: [
+          {
+            file: 'src/index.js',
+            line: 2,
+            severity: 'HIGH',
+            message: 'Bug here',
+            suggestedCode: 'const fixed = true;'
+          }
+        ]
+      };
+
+      // Line 2 IS in the diff
+      const filesWithPatch = [{
+        filename: 'src/index.js',
+        patch: '@@ -1,3 +1,5 @@\n ctx1\n+added\n ctx2\n ctx3\n'
+      }];
+
+      let callCount = 0;
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') {
+          onCloseCallback = cb;
+          callCount++;
+          setTimeout(() => {
+            if (callCount === 1) {
+              onDataCallback(JSON.stringify(filesWithPatch));
+            } else {
+              onDataCallback(JSON.stringify({ id: 'review_all_inline' }));
+            }
+            onCloseCallback(0);
+          }, 10);
+        }
+      });
+
+      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
+        expect(result.id).toBe('review_all_inline');
+
+        // 1 inline comment, 0 in body
+        expect(mockLogger.info).toHaveBeenCalledWith(
+          expect.stringContaining('1 inline comment(s)')
+        );
+
+        // No "in body" suffix
+        const inlineLog = mockLogger.info.mock.calls.find(
+          call => call[0].includes('inline comment(s)')
+        );
+        expect(inlineLog[0]).not.toContain('and 0 in body');
+
+        // Body should NOT contain fallback section
+        const lastSpawnArgs = spawn.mock.calls[1][1];
+        const bodyArg = lastSpawnArgs.find(arg => arg.startsWith('body='));
+        expect(bodyArg).not.toContain('could not be placed as inline review');
+
+        done();
+      });
+    });
+
+    test('should format suggestedCode with correct language in fallback body', (done) => {
+      const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
+
+      const mockReviewResult = {
+        summary: 'Python file review',
+        comments: [
+          {
+            file: 'src/services/analyzer.py',
+            line: 999,
+            severity: 'MEDIUM',
+            message: 'Use list comprehension',
+            suggestedCode: 'result = [x for x in items if x > 0]'
+          }
+        ]
+      };
+
+      // No patch for this file → no position mapping
+      const filesWithPatch = [];
+
+      let callCount = 0;
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') {
+          onCloseCallback = cb;
+          callCount++;
+          setTimeout(() => {
+            if (callCount === 1) {
+              onDataCallback(JSON.stringify(filesWithPatch));
+            } else {
+              onDataCallback(JSON.stringify({ id: 'review_python' }));
+            }
+            onCloseCallback(0);
+          }, 10);
+        }
+      });
+
+      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
+        expect(result.id).toBe('review_python');
+
+        const lastSpawnArgs = spawn.mock.calls[1][1];
+        const bodyArg = lastSpawnArgs.find(arg => arg.startsWith('body='));
+        // Python language detection
+        expect(bodyArg).toContain('```python');
+        expect(bodyArg).toContain('result = [x for x in items if x > 0]');
+
+        done();
+      });
+    });
   });
 
   describe('approvePR', () => {

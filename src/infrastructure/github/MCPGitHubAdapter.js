@@ -404,7 +404,7 @@ class MCPGitHubAdapter extends IGitHubService {
 
     // Build comments with positions
     const comments = [];
-    let skippedCount = 0;
+    const skippedComments = [];
 
     for (const c of reviewResult.comments) {
       // Get position from the diff
@@ -413,8 +413,8 @@ class MCPGitHubAdapter extends IGitHubService {
       const position = positionMap ? positionMap.get(c.line) : null;
 
       if (position === null || position === undefined) {
-        this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] No position found for ${c.file}:${c.line}, skipping comment`);
-        skippedCount++;
+        this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] No position found for ${c.file}:${c.line}, will append to review body`);
+        skippedComments.push(c);
         continue;
       }
 
@@ -438,8 +438,8 @@ class MCPGitHubAdapter extends IGitHubService {
       this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Added comment for ${c.file}:${c.line}`);
     }
 
-    if (skippedCount > 0) {
-      this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Skipped ${skippedCount} comment(s) due to missing position`);
+    if (skippedComments.length > 0) {
+      this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] ${skippedComments.length} comment(s) could not be mapped to diff positions`);
     }
 
     // Count comments and log summary
@@ -450,7 +450,22 @@ class MCPGitHubAdapter extends IGitHubService {
     }
 
     // Create review with all comments in one batch (no batching)
-    const reviewBody = reviewResult.summary || reviewResult.body || 'Review completed';
+    // Append skipped comments to review body as fallback so feedback is not lost
+    let reviewBody = reviewResult.summary || reviewResult.body || 'Review completed';
+
+    if (skippedComments.length > 0) {
+      const fallbackSection = skippedComments.map(c => {
+        let text = `**[${c.severity}] \`${c.file}:${c.line}\`** — ${c.message}`;
+        if (c.suggestedCode) {
+          const language = this._detectLanguage(c.file);
+          text += `\n\n\`\`\`${language}\n${c.suggestedCode}\n\`\`\``;
+        }
+        return text;
+      }).join('\n\n---\n\n');
+
+      reviewBody += `\n\n---\n\n> **Note:** ${skippedComments.length} comment(s) could not be placed as inline review (line not in diff). Feedback appended below:\n\n${fallbackSection}`;
+    }
+
     const reviewArgs = {
       owner: this.owner,
       repo: repo,
@@ -461,7 +476,7 @@ class MCPGitHubAdapter extends IGitHubService {
       comments: comments
     };
 
-    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Creating review with ${comments.length} comment(s)`);
+    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Creating review with ${comments.length} inline comment(s)${skippedComments.length > 0 ? ` and ${skippedComments.length} in body` : ''}`);
     if (comments.length > 0) {
       this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] First comment JSON: ${JSON.stringify(comments[0])}`);
     }
@@ -489,7 +504,7 @@ class MCPGitHubAdapter extends IGitHubService {
     }
 
     this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Review created: ID=${result.id}`);
-    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] ✅ Created ${comments.length} line comment(s) - check GitHub PR Files tab`);
+    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] ✅ Created ${comments.length} inline comment(s), ${skippedComments.length} appended to body`);
     this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] ⚠️  Check GitHub PR: https://github.com/${this.owner}/${repo}/pull/${pr.number}/files`);
 
     return result;
