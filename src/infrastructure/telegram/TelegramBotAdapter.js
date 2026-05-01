@@ -321,12 +321,15 @@ class TelegramBotAdapter extends ITelegramService {
   _buildMapping() {
     let instanceIdx = 0;
     for (const [instanceKey, instance] of Object.entries(this.config.instances)) {
-      this.instanceMap.set(instanceIdx, { instanceKey, instance });
+      // Extract owner from instance key if not explicitly defined
+      // Format: github/org-name → owner = org-name
+      const owner = instance.owner || instanceKey.split('/')[1];
+      this.instanceMap.set(instanceIdx, { instanceKey, instance, owner });
 
       let repoIdx = 0;
       for (const repoName of Object.keys(instance.repos || {})) {
         this.repoMap.set(`${instanceIdx}:${repoIdx}`, {
-          owner: instance.owner,
+          owner: owner,
           repo: repoName,
           instanceKey,
           instance
