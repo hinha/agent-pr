@@ -34,6 +34,24 @@ describe('MultiRepoStateRepository', () => {
     if (fs.existsSync(testDataDir)) {
       fs.rmSync(testDataDir, { recursive: true, force: true });
     }
+
+    // Clean up other test directories that might have been created
+    const testDirs = [
+      'data/instances/github-hinha',
+      'data/instances/github-test-file-persistence',
+      'data/instances/github-test-notification-counts'
+    ];
+
+    testDirs.forEach(dir => {
+      const fullPath = path.join(process.cwd(), dir);
+      if (fs.existsSync(fullPath)) {
+        try {
+          fs.rmSync(fullPath, { recursive: true, force: true });
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      }
+    });
   });
 
   describe('key parsing', () => {
@@ -206,17 +224,43 @@ describe('MultiRepoStateRepository', () => {
   });
 
   describe('file persistence', () => {
-    const testDataPath = path.join(process.cwd(), 'data/instances/github-hinha/agent-pr');
+    const testDataPath = path.join(process.cwd(), 'data/instances/github-test-file-persistence/test-repo');
 
     afterEach(async () => {
       // Clean up test data files
+      await repository.cleanup();
       if (fs.existsSync(testDataPath)) {
-        fs.rmSync(testDataPath, { recursive: true, force: true });
+        try {
+          fs.rmSync(testDataPath, { recursive: true, force: true });
+        } catch (error) {
+          // If directory still has files, try removing files first
+          if (fs.existsSync(testDataPath)) {
+            const files = fs.readdirSync(testDataPath);
+            files.forEach(file => {
+              const filePath = path.join(testDataPath, file);
+              try {
+                if (fs.statSync(filePath).isDirectory()) {
+                  fs.rmSync(filePath, { recursive: true, force: true });
+                } else {
+                  fs.unlinkSync(filePath);
+                }
+              } catch (e) {
+                // Ignore individual file errors
+              }
+            });
+            // Try removing directory again
+            try {
+              fs.rmSync(testDataPath, { recursive: true, force: true });
+            } catch (e) {
+              // Ignore final cleanup error
+            }
+          }
+        }
       }
     });
 
     test('should persist data to files', async () => {
-      const key = 'github/hinha/agent-pr/pr/123';
+      const key = 'github/test-file-persistence/test-repo/pr/123';
       const value = { state: 'notified', count: 1 };
 
       await repository.set(key, value);
@@ -231,7 +275,7 @@ describe('MultiRepoStateRepository', () => {
 
     test('should load data from existing files', async () => {
       // Set initial data
-      const key = 'github/hinha/agent-pr/pr/123';
+      const key = 'github/test-file-persistence/test-repo/pr/123';
       const value = { state: 'notified', count: 1 };
 
       await repository.set(key, value);
@@ -251,17 +295,43 @@ describe('MultiRepoStateRepository', () => {
   });
 
   describe('notification count persistence', () => {
-    const testDataPath = path.join(process.cwd(), 'data/instances/github-hinha/agent-pr');
+    const testDataPath = path.join(process.cwd(), 'data/instances/github-test-notification-counts/test-repo');
 
     afterEach(async () => {
       // Clean up test data files
+      await repository.cleanup();
       if (fs.existsSync(testDataPath)) {
-        fs.rmSync(testDataPath, { recursive: true, force: true });
+        try {
+          fs.rmSync(testDataPath, { recursive: true, force: true });
+        } catch (error) {
+          // If directory still has files, try removing files first
+          if (fs.existsSync(testDataPath)) {
+            const files = fs.readdirSync(testDataPath);
+            files.forEach(file => {
+              const filePath = path.join(testDataPath, file);
+              try {
+                if (fs.statSync(filePath).isDirectory()) {
+                  fs.rmSync(filePath, { recursive: true, force: true });
+                } else {
+                  fs.unlinkSync(filePath);
+                }
+              } catch (e) {
+                // Ignore individual file errors
+              }
+            });
+            // Try removing directory again
+            try {
+              fs.rmSync(testDataPath, { recursive: true, force: true });
+            } catch (e) {
+              // Ignore final cleanup error
+            }
+          }
+        }
       }
     });
 
     test('should persist notification count when saving review state with notificationCount', async () => {
-      const key = 'github/hinha/agent-pr/pr/123';
+      const key = 'github/test-notification-counts/test-repo/pr/123';
       const value = { state: 'notified', notificationCount: 2, lastUpdated: new Date().toISOString() };
 
       await repository.set(key, value);
@@ -279,7 +349,7 @@ describe('MultiRepoStateRepository', () => {
     });
 
     test('should not persist notification count when value is undefined', async () => {
-      const key = 'github/hinha/agent-pr/pr/456';
+      const key = 'github/test-notification-counts/test-repo/pr/456';
       const value = null;
 
       await repository.set(key, value);
@@ -294,7 +364,7 @@ describe('MultiRepoStateRepository', () => {
     });
 
     test('should update notification count when updating review state', async () => {
-      const key = 'github/hinha/agent-pr/pr/789';
+      const key = 'github/test-notification-counts/test-repo/pr/789';
 
       // First save with count 1
       await repository.set(key, { state: 'notified', notificationCount: 1 });
@@ -310,9 +380,9 @@ describe('MultiRepoStateRepository', () => {
     });
 
     test('should handle multiple PRs with different notification counts', async () => {
-      await repository.set('github/hinha/agent-pr/pr/111', { notificationCount: 1 });
-      await repository.set('github/hinha/agent-pr/pr/222', { notificationCount: 3 });
-      await repository.set('github/hinha/agent-pr/pr/333', { notificationCount: 0 });
+      await repository.set('github/test-notification-counts/test-repo/pr/111', { notificationCount: 1 });
+      await repository.set('github/test-notification-counts/test-repo/pr/222', { notificationCount: 3 });
+      await repository.set('github/test-notification-counts/test-repo/pr/333', { notificationCount: 0 });
 
       await new Promise(resolve => setTimeout(resolve, 100));
 
