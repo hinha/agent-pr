@@ -13,7 +13,7 @@
  * await orchestrator.start();
  */
 
-const { shouldSnooze, getSnoozeReason } = require('../../utils/timeUtils');
+const { shouldSnooze, getSnoozeReason, getCurrentTimestampWIB } = require('../../utils/timeUtils');
 
 class PRProcessingOrchestrator {
   /**
@@ -30,6 +30,16 @@ class PRProcessingOrchestrator {
     this.eventBus = eventBus;
     this.logger = options.logger || console;
     this.pollInterval = options.pollInterval || (config.checkIntervalMinutes || 7) * 60 * 1000;
+
+    // Outdated review check interval (separate from PR poll interval)
+    this.outdatedReviewCheckInterval = config.app?.outdatedReviewCheckIntervalMs || 0;
+    this.lastOutdatedReviewCheckTime = null;
+
+    this.logger.info(
+      `[PRProcessingOrchestrator] Configured intervals - ` +
+      `PR poll: ${this.pollInterval}ms (${Math.round(this.pollInterval / 60000)}min), ` +
+      `Outdated review check: ${this.outdatedReviewCheckInterval}ms (${this.outdatedReviewCheckInterval > 0 ? Math.round(this.outdatedReviewCheckInterval / 60000) + 'min' : 'every poll'})`
+    );
 
     this.isRunning = false;
     this.pollTimer = null;
@@ -360,7 +370,36 @@ class PRProcessingOrchestrator {
         this.logger.info(
           `[PRProcessingOrchestrator] ${snoozeReason}. Skipping outdated review check for ${repo.name}.`
         );
+      } else if (this.outdatedReviewCheckInterval > 0) {
+        // Check if enough time has passed since last outdated review check
+        const now = getCurrentTimestampWIB().getTime();
+        const timeSinceLastCheck = this.lastOutdatedReviewCheckTime
+          ? now - this.lastOutdatedReviewCheckTime
+          : Infinity;
+
+        if (timeSinceLastCheck >= this.outdatedReviewCheckInterval) {
+          try {
+            this.logger.info(
+              `[PRProcessingOrchestrator] Running outdated review check for ${repo.name} ` +
+              `(last check: ${this.lastOutdatedReviewCheckTime ? new Date(this.lastOutdatedReviewCheckTime).toISOString() : 'never'}, ` +
+              `interval: ${this.outdatedReviewCheckInterval}ms)`
+            );
+            await this.useCases.checkOutdatedReviews.execute(instance, repo, openPRs, githubAdapter);
+            this.lastOutdatedReviewCheckTime = now;
+          } catch (error) {
+            this.logger.error(
+              `[PRProcessingOrchestrator] Error checking outdated reviews in ${repo.name}:`,
+              error
+            );
+          }
+        } else {
+          this.logger.debug(
+            `[PRProcessingOrchestrator] Skipping outdated review check for ${repo.name} ` +
+            `(next check in ${Math.ceil((this.outdatedReviewCheckInterval - timeSinceLastCheck) / 1000 / 60)} minutes)`
+          );
+        }
       } else {
+        // No interval configured, run every poll (default behavior)
         try {
           await this.useCases.checkOutdatedReviews.execute(instance, repo, openPRs, githubAdapter);
         } catch (error) {

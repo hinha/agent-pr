@@ -10,10 +10,20 @@ const PRProcessingOrchestrator = require('../../../../src/application/orchestrat
 // Mock timeUtils module
 jest.mock('../../../../src/utils/timeUtils', () => ({
   shouldSnooze: jest.fn(),
-  getSnoozeReason: jest.fn()
+  getSnoozeReason: jest.fn(),
+  getCurrentTimestampWIB: jest.fn(() => ({
+    getTime: () => Date.now() // Return timestamp in WIB (same as local for mock)
+  }))
 }));
 
-const { shouldSnooze, getSnoozeReason } = require('../../../../src/utils/timeUtils');
+const { shouldSnooze, getSnoozeReason, getCurrentTimestampWIB } = require('../../../../src/utils/timeUtils');
+
+// Make sure getCurrentTimestampWIB always returns an object with getTime
+beforeEach(() => {
+  getCurrentTimestampWIB.mockReturnValue({
+    getTime: () => Date.now()
+  });
+});
 
 describe('PRProcessingOrchestrator', () => {
   let orchestrator;
@@ -40,14 +50,38 @@ describe('PRProcessingOrchestrator', () => {
       },
       githubService: {
         create: jest.fn().mockReturnValue({
-          getOpenPRs: jest.fn().mockResolvedValue([]),
-          getPRDetails: jest.fn().mockResolvedValue({ files: [], filesChanged: 0, totalChanges: 0 })
+          getOpenPRs: jest.fn().mockResolvedValue([
+            {
+              id: 'pr-1',
+              number: 123,
+              title: 'Test PR',
+              url: 'https://github.com/testorg/test-repo/pull/123',
+              author: 'testuser',
+              createdAt: new Date(),
+              description: 'Test',
+              baseBranch: 'main',
+              headBranch: 'feature',
+              headSha: 'abc123',
+              owner: 'testorg',
+              repo: 'test-repo'
+            }
+          ]),
+          getPRDetails: jest.fn().mockResolvedValue({
+            files: [],
+            filesChanged: 0,
+            totalChanges: 0,
+            totalFilesChanged: 0
+          }),
+          getPRReviews: jest.fn().mockResolvedValue([])
         })
       }
     };
 
     mockConfig = {
-      checkIntervalMinutes: 7,
+      app: {
+        outdatedReviewCheckIntervalMs: 0, // Default: run every poll
+        checkIntervalMs: 7 * 60 * 1000
+      },
       instances: {
         'github/testorg': {
           key: 'github/testorg',
@@ -80,6 +114,180 @@ describe('PRProcessingOrchestrator', () => {
       mockEventBus,
       { logger: mockLogger, pollInterval: 60000 }
     );
+  });
+
+  describe('outdated review check interval', () => {
+    beforeEach(() => {
+      shouldSnooze.mockReturnValue(false); // No snooze
+    });
+
+    test('should read outdatedReviewCheckIntervalMs from config', () => {
+      const configWithInterval = {
+        ...mockConfig,
+        app: {
+          outdatedReviewCheckIntervalMs: 30 * 60 * 1000 // 30 minutes
+        },
+        instances: mockConfig.instances,
+        snoozeTime: mockConfig.snoozeTime
+      };
+
+      const testOrchestrator = new PRProcessingOrchestrator(
+        mockUseCases,
+        configWithInterval,
+        mockEventBus,
+        { logger: mockLogger, pollInterval: 60000 }
+      );
+
+      expect(testOrchestrator.outdatedReviewCheckInterval).toBe(30 * 60 * 1000);
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('PR poll: 60000ms (1min)')
+      );
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('Outdated review check: 1800000ms (30min)')
+      );
+    });
+
+    test('should run outdated review check on first poll when interval is set', async () => {
+      const configWithInterval = {
+        ...mockConfig,
+        app: {
+          ...mockConfig.app,
+          outdatedReviewCheckIntervalMs: 10 * 60 * 1000 // 10 minutes
+        }
+      };
+
+      // Mock shouldProcess to skip PR processing (we only want to test outdated review check)
+      mockUseCases.processPR.shouldProcess.mockResolvedValueOnce({ shouldProcess: false, reason: 'Test skip' });
+      shouldSnooze.mockReturnValue(false); // No snooze
+
+      const testOrchestrator = new PRProcessingOrchestrator(
+        mockUseCases,
+        configWithInterval,
+        mockEventBus,
+        { logger: mockLogger, pollInterval: 60000 }
+      );
+
+      await testOrchestrator._poll();
+
+      // First poll should run the check
+      expect(mockUseCases.checkOutdatedReviews.execute).toHaveBeenCalled();
+      expect(testOrchestrator.lastOutdatedReviewCheckTime).toBeDefined();
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('Running outdated review check for test-repo')
+      );
+    });
+
+    test('should skip outdated review check when interval has not passed', async () => {
+      const configWithInterval = {
+        ...mockConfig,
+        app: {
+          ...mockConfig.app,
+          outdatedReviewCheckIntervalMs: 30 * 60 * 1000 // 30 minutes
+        }
+      };
+
+      // Mock shouldProcess to skip PR processing
+      mockUseCases.processPR.shouldProcess.mockResolvedValue({ shouldProcess: false, reason: 'Test skip' });
+
+      const testOrchestrator = new PRProcessingOrchestrator(
+        mockUseCases,
+        configWithInterval,
+        mockEventBus,
+        { logger: mockLogger, pollInterval: 60000 }
+      );
+
+      // Set last check time to now (simulate recent check)
+      testOrchestrator.lastOutdatedReviewCheckTime = Date.now();
+
+      await testOrchestrator._poll();
+
+      // Should skip because interval hasn't passed
+      expect(mockUseCases.checkOutdatedReviews.execute).not.toHaveBeenCalled();
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        expect.stringContaining('Skipping outdated review check for test-repo')
+      );
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        expect.stringContaining('next check in')
+      );
+    });
+
+    test('should run outdated review check when interval has passed', async () => {
+      const configWithInterval = {
+        ...mockConfig,
+        app: {
+          ...mockConfig.app,
+          outdatedReviewCheckIntervalMs: 5 * 60 * 1000 // 5 minutes
+        }
+      };
+
+      // Mock shouldProcess to skip PR processing
+      mockUseCases.processPR.shouldProcess.mockResolvedValue({ shouldProcess: false, reason: 'Test skip' });
+
+      const testOrchestrator = new PRProcessingOrchestrator(
+        mockUseCases,
+        configWithInterval,
+        mockEventBus,
+        { logger: mockLogger, pollInterval: 60000 }
+      );
+
+      // Set last check time to 6 minutes ago (past the 5 minute interval)
+      testOrchestrator.lastOutdatedReviewCheckTime = Date.now() - (6 * 60 * 1000);
+
+      await testOrchestrator._poll();
+
+      // Should run because interval has passed
+      expect(mockUseCases.checkOutdatedReviews.execute).toHaveBeenCalled();
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('Running outdated review check for test-repo')
+      );
+    });
+
+    test('should run on every poll when outdatedReviewCheckIntervalMs is 0 (default behavior)', async () => {
+      const configWithZeroInterval = {
+        ...mockConfig,
+        app: {
+          ...mockConfig.app,
+          outdatedReviewCheckIntervalMs: 0 // No interval set
+        }
+      };
+
+      const testOrchestrator = new PRProcessingOrchestrator(
+        mockUseCases,
+        configWithZeroInterval,
+        mockEventBus,
+        { logger: mockLogger, pollInterval: 60000 }
+      );
+
+      await testOrchestrator._poll();
+
+      // Should run every poll when interval is 0
+      expect(mockUseCases.checkOutdatedReviews.execute).toHaveBeenCalled();
+    });
+
+    test('should update lastOutdatedReviewCheckTime after running check', async () => {
+      const configWithInterval = {
+        ...mockConfig,
+        app: {
+          ...mockConfig.app,
+          outdatedReviewCheckIntervalMs: 10 * 60 * 1000
+        }
+      };
+
+      const testOrchestrator = new PRProcessingOrchestrator(
+        mockUseCases,
+        configWithInterval,
+        mockEventBus,
+        { logger: mockLogger, pollInterval: 60000 }
+      );
+
+      const beforeTime = Date.now();
+      await testOrchestrator._poll();
+      const afterTime = Date.now();
+
+      // lastOutdatedReviewCheckTime should be updated
+      expect(testOrchestrator.lastOutdatedReviewCheckTime).toBeGreaterThanOrEqual(beforeTime);
+      expect(testOrchestrator.lastOutdatedReviewCheckTime).toBeLessThanOrEqual(afterTime);
+    });
   });
 
   describe('snooze check for outdated reviews', () => {
