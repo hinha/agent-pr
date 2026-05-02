@@ -34,6 +34,7 @@ class CallbackHandler {
     this.skipManager = options.skipManager || null;
     this.stateRepositoryFactory = options.stateRepositoryFactory || null;
     this.checkOutdatedReviewsUseCase = options.checkOutdatedReviewsUseCase || null;
+    this.confirmationManager = options.confirmationManager || null;
     this.bot = options.bot || null;
     this.chatId = options.chatId || null;
   }
@@ -86,6 +87,14 @@ class CallbackHandler {
 
         case 'approve':
           result = await this._handleApprove(query, instance, repo, pr);
+          break;
+
+        case 'cfm_y':
+          result = await this._handleConfirmYes(query, instance, repo, pr, callback);
+          break;
+
+        case 'cfm_n':
+          result = await this._handleConfirmNo(query, instance, repo, pr, callback);
           break;
 
         case 'reject':
@@ -449,11 +458,47 @@ class CallbackHandler {
   }
 
   /**
-   * Handle approve action
+   * Handle approve action - show confirmation prompt
    * @private
    */
   async _handleApprove(query, instance, repo, pr) {
-    this.logger.info(`[CallbackHandler] Approving PR with id=${pr.id}`);
+    this.logger.info(`[CallbackHandler] Approve confirmation requested for PR with id=${pr.id}`);
+
+    await query.answer('Konfirmasi approve...');
+
+    const originalKeyboard = query.message?.reply_markup?.inline_keyboard;
+    const chatId = query.message?.chat?.id || this.chatId;
+    const messageId = query.message?.message_id;
+
+    if (!messageId || !this.confirmationManager) {
+      // Fallback: no confirmation, approve directly
+      return await this._executeApprove(query, instance, repo, pr);
+    }
+
+    // Store pending confirmation
+    this.confirmationManager.add(chatId, messageId, originalKeyboard, 'approve', {});
+
+    // Show confirmation keyboard
+    const instanceIdx = instance.instanceIdx;
+    const repoIdx = repo.repoIdx;
+    const confirmKeyboard = [
+      [
+        { text: '✅ Yes, Approve', callback_data: `cfm_y:${instanceIdx}:${repoIdx}:${pr.id}` },
+        { text: '❌ No', callback_data: `cfm_n:${instanceIdx}:${repoIdx}:${pr.id}` }
+      ]
+    ];
+
+    await query.editMessageReplyMarkup({ inline_keyboard: confirmKeyboard });
+
+    return { success: true, action: 'confirm_pending' };
+  }
+
+  /**
+   * Execute the actual approval (after confirmation)
+   * @private
+   */
+  async _executeApprove(query, instance, repo, pr) {
+    this.logger.info(`[CallbackHandler] Executing approve for PR with id=${pr.id}`);
 
     await query.answer('Approving PR...');
 
@@ -613,11 +658,47 @@ class CallbackHandler {
   }
 
   /**
-   * Handle approve_outdated - approve PR and clear review state
+   * Handle approve_outdated - show confirmation prompt
    * @private
    */
   async _handleApproveOutdated(query, instance, repo, pr, reviewId) {
-    this.logger.info(`[CallbackHandler] Approving outdated review ${reviewId} for PR with id=${pr.id}`);
+    this.logger.info(`[CallbackHandler] Approve outdated confirmation requested for review ${reviewId}`);
+
+    await query.answer('Konfirmasi approve...');
+
+    const originalKeyboard = query.message?.reply_markup?.inline_keyboard;
+    const chatId = query.message?.chat?.id || this.chatId;
+    const messageId = query.message?.message_id;
+
+    if (!messageId || !this.confirmationManager) {
+      // Fallback: no confirmation, approve directly
+      return await this._executeApproveOutdated(query, instance, repo, pr, reviewId);
+    }
+
+    // Store pending confirmation
+    this.confirmationManager.add(chatId, messageId, originalKeyboard, 'approve_outdated', { reviewId });
+
+    // Show confirmation keyboard with reviewId
+    const instanceIdx = instance.instanceIdx;
+    const repoIdx = repo.repoIdx;
+    const confirmKeyboard = [
+      [
+        { text: '✅ Yes, Approve', callback_data: `cfm_y:${instanceIdx}:${repoIdx}:${pr.id}:${reviewId}` },
+        { text: '❌ No', callback_data: `cfm_n:${instanceIdx}:${repoIdx}:${pr.id}:${reviewId}` }
+      ]
+    ];
+
+    await query.editMessageReplyMarkup({ inline_keyboard: confirmKeyboard });
+
+    return { success: true, action: 'confirm_pending' };
+  }
+
+  /**
+   * Execute the actual approve-outdated (after confirmation)
+   * @private
+   */
+  async _executeApproveOutdated(query, instance, repo, pr, reviewId) {
+    this.logger.info(`[CallbackHandler] Executing approve outdated for review ${reviewId}`);
 
     await query.answer('Approving PR...');
 
@@ -641,6 +722,56 @@ class CallbackHandler {
     }
 
     return result;
+  }
+
+  /**
+   * Handle confirmation Yes - execute the pending approval
+   * @private
+   */
+  async _handleConfirmYes(query, instance, repo, pr, callback) {
+    const chatId = query.message?.chat?.id || this.chatId;
+    const messageId = query.message?.message_id;
+
+    const confirmation = this.confirmationManager?.consume(chatId, messageId);
+
+    if (!confirmation) {
+      await query.answer('Confirmation expired', true);
+      return { success: false, action: 'expired' };
+    }
+
+    const { actionType, extraData } = confirmation;
+
+    if (actionType === 'approve_outdated' && extraData?.reviewId) {
+      return await this._executeApproveOutdated(query, instance, repo, pr, extraData.reviewId);
+    }
+
+    return await this._executeApprove(query, instance, repo, pr);
+  }
+
+  /**
+   * Handle confirmation No - cancel and restore original keyboard
+   * @private
+   */
+  async _handleConfirmNo(query, instance, repo, pr, callback) {
+    const chatId = query.message?.chat?.id || this.chatId;
+    const messageId = query.message?.message_id;
+
+    const confirmation = this.confirmationManager?.consume(chatId, messageId);
+
+    if (!confirmation) {
+      await query.answer('Confirmation expired', true);
+      return { success: false, action: 'expired' };
+    }
+
+    await query.answer('Approval cancelled');
+
+    // Restore original keyboard
+    const { originalKeyboard } = confirmation;
+    if (originalKeyboard) {
+      await query.editMessageReplyMarkup({ inline_keyboard: originalKeyboard });
+    }
+
+    return { success: true, action: 'confirm_cancelled' };
   }
 
   /**

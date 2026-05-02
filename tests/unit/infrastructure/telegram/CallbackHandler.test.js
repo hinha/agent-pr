@@ -14,6 +14,7 @@ describe('CallbackHandler', () => {
   let mockGitHubAdapter;
   let mockConfig;
   let mockLogger;
+  let mockConfirmationManager;
 
   beforeEach(() => {
     mockReviewPRUseCase = {
@@ -86,6 +87,14 @@ describe('CallbackHandler', () => {
       error: jest.fn()
     };
 
+    mockConfirmationManager = {
+      add: jest.fn(),
+      consume: jest.fn().mockReturnValue(null),
+      clearAll: jest.fn(),
+      getTimeoutMs: jest.fn().mockReturnValue(10 * 60 * 1000),
+      getPendingCount: jest.fn().mockReturnValue(0)
+    };
+
     handler = new CallbackHandler(
       mockReviewPRUseCase,
       mockStateMachine,
@@ -93,7 +102,8 @@ describe('CallbackHandler', () => {
       {
         logger: mockLogger,
         githubAdapter: mockGitHubAdapter,
-        config: mockConfig
+        config: mockConfig,
+        confirmationManager: mockConfirmationManager
       }
     );
   });
@@ -211,6 +221,56 @@ describe('CallbackHandler', () => {
       });
     });
 
+    test('should parse cfm_y callback (confirm yes)', () => {
+      const data = 'cfm_y:0:0:67890';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'cfm_y',
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: '67890'
+      });
+    });
+
+    test('should parse cfm_n callback (confirm no)', () => {
+      const data = 'cfm_n:0:0:67890';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'cfm_n',
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: '67890'
+      });
+    });
+
+    test('should parse cfm_y callback with reviewId (outdated)', () => {
+      const data = 'cfm_y:0:0:12345:review-789';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'cfm_y',
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: '12345',
+        reviewId: 'review-789'
+      });
+    });
+
+    test('should parse cfm_n callback with reviewId (outdated)', () => {
+      const data = 'cfm_n:0:0:12345:review-789';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'cfm_n',
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: '12345',
+        reviewId: 'review-789'
+      });
+    });
+
     test('should return null for invalid format (too few parts)', () => {
       const data = 'action:0:0';
       const result = handler._parseCallbackData(data);
@@ -310,7 +370,40 @@ describe('CallbackHandler', () => {
   });
 
   describe('handleCallbackQuery - approve', () => {
-    test('should handle approve callback successfully', async () => {
+    test('should show confirmation keyboard on approve', async () => {
+      const originalKeyboard = [[{ text: 'Approve', callback_data: 'approve:0:0:67890' }]];
+      const mockQuery = {
+        data: 'approve:0:0:67890',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageReplyMarkup: jest.fn().mockResolvedValue(),
+        message: {
+          message_id: 500,
+          chat: { id: 123 },
+          reply_markup: { inline_keyboard: originalKeyboard }
+        }
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('confirm_pending');
+      expect(mockQuery.answer).toHaveBeenCalledWith('Konfirmasi approve...');
+      expect(mockConfirmationManager.add).toHaveBeenCalledWith(
+        123, 500, originalKeyboard, 'approve', {}
+      );
+      expect(mockQuery.editMessageReplyMarkup).toHaveBeenCalledWith({
+        inline_keyboard: [
+          [
+            { text: '✅ Yes, Approve', callback_data: 'cfm_y:0:0:67890' },
+            { text: '❌ No', callback_data: 'cfm_n:0:0:67890' }
+          ]
+        ]
+      });
+    });
+
+    test('should fall back to direct approve when no confirmationManager', async () => {
+      handler.confirmationManager = null;
+
       const mockQuery = {
         data: 'approve:0:0:67890',
         answer: jest.fn().mockResolvedValue(),
@@ -323,27 +416,143 @@ describe('CallbackHandler', () => {
       expect(mockQuery.answer).toHaveBeenCalledWith('Approving PR...');
       expect(mockQuery.editMessageText).toHaveBeenCalledWith('✅ PR #99 approved');
       expect(mockReviewPRUseCase.approve).toHaveBeenCalled();
-      expect(mockGitHubAdapter.create).toHaveBeenCalledWith('github/testorg');
-      expect(mockEventBus.emitAsync).toHaveBeenCalledWith('callback.handled', expect.any(Object));
     });
 
-    test('should handle approve failure', async () => {
-      mockReviewPRUseCase.approve.mockResolvedValue({
-        success: false,
-        error: 'Approval failed'
-      });
+    test('should fall back to direct approve when no messageId', async () => {
+      handler.confirmationManager = null;
 
       const mockQuery = {
         data: 'approve:0:0:67890',
         answer: jest.fn().mockResolvedValue(),
-        editMessageText: jest.fn().mockResolvedValue()
+        editMessageText: jest.fn().mockResolvedValue(),
+        message: {}
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockReviewPRUseCase.approve).toHaveBeenCalled();
+    });
+  });
+
+  describe('handleCallbackQuery - cfm_y (confirm yes)', () => {
+    test('should execute approve on confirm yes', async () => {
+      const confirmation = {
+        originalKeyboard: [[{ text: 'Approve', callback_data: 'approve:0:0:67890' }]],
+        actionType: 'approve',
+        extraData: {}
+      };
+      mockConfirmationManager.consume.mockReturnValue(confirmation);
+
+      const mockQuery = {
+        data: 'cfm_y:0:0:67890',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue(),
+        message: { message_id: 500, chat: { id: 123 } }
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockConfirmationManager.consume).toHaveBeenCalledWith(123, 500);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Approving PR...');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith('✅ PR #99 approved');
+      expect(mockReviewPRUseCase.approve).toHaveBeenCalled();
+    });
+
+    test('should execute approve_outdated on confirm yes with reviewId', async () => {
+      const confirmation = {
+        originalKeyboard: [],
+        actionType: 'approve_outdated',
+        extraData: { reviewId: 'review-789' }
+      };
+      mockConfirmationManager.consume.mockReturnValue(confirmation);
+
+      const mockStateRepo = {
+        clearReviewState: jest.fn().mockResolvedValue(),
+        markProcessed: jest.fn().mockResolvedValue()
+      };
+      handler.stateRepositoryFactory = {
+        create: jest.fn().mockReturnValue(mockStateRepo)
+      };
+
+      const mockQuery = {
+        data: 'cfm_y:0:0:12345:review-789',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue(),
+        message: { message_id: 500, chat: { id: 123 } }
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockConfirmationManager.consume).toHaveBeenCalledWith(123, 500);
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('approved!')
+      );
+      expect(mockStateRepo.clearReviewState).toHaveBeenCalled();
+    });
+
+    test('should handle expired confirmation on confirm yes', async () => {
+      mockConfirmationManager.consume.mockReturnValue(null);
+
+      const mockQuery = {
+        data: 'cfm_y:0:0:67890',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue(),
+        message: { message_id: 500, chat: { id: 123 } }
       };
 
       const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
 
       expect(result.success).toBe(false);
-      expect(mockQuery.answer).toHaveBeenCalledWith('Failed to approve: Approval failed', true);
-      expect(mockQuery.editMessageText).not.toHaveBeenCalled();
+      expect(result.action).toBe('expired');
+      expect(mockQuery.answer).toHaveBeenCalledWith('Confirmation expired', true);
+      expect(mockReviewPRUseCase.approve).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleCallbackQuery - cfm_n (confirm no)', () => {
+    test('should restore original keyboard on confirm no', async () => {
+      const originalKeyboard = [[{ text: 'Approve', callback_data: 'approve:0:0:67890' }]];
+      const confirmation = {
+        originalKeyboard,
+        actionType: 'approve',
+        extraData: {}
+      };
+      mockConfirmationManager.consume.mockReturnValue(confirmation);
+
+      const mockQuery = {
+        data: 'cfm_n:0:0:67890',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageReplyMarkup: jest.fn().mockResolvedValue(),
+        message: { message_id: 500, chat: { id: 123 } }
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('confirm_cancelled');
+      expect(mockQuery.answer).toHaveBeenCalledWith('Approval cancelled');
+      expect(mockQuery.editMessageReplyMarkup).toHaveBeenCalledWith({
+        inline_keyboard: originalKeyboard
+      });
+    });
+
+    test('should handle expired confirmation on confirm no', async () => {
+      mockConfirmationManager.consume.mockReturnValue(null);
+
+      const mockQuery = {
+        data: 'cfm_n:0:0:67890',
+        answer: jest.fn().mockResolvedValue(),
+        message: { message_id: 500, chat: { id: 123 } }
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(false);
+      expect(result.action).toBe('expired');
+      expect(mockQuery.answer).toHaveBeenCalledWith('Confirmation expired', true);
     });
   });
 

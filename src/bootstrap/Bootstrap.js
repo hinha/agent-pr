@@ -191,6 +191,11 @@ class Bootstrap {
       }
       logger.info('   ✓ Telegram handlers removed');
 
+      // Clear pending approval confirmations
+      const confirmationManager = this.container.get('confirmationManager');
+      confirmationManager.clearAll();
+      logger.info('   ✓ Confirmation manager cleared');
+
       // Stop Telegram bot
       await telegramAdapter.stop();
       logger.info('   ✓ Telegram bot stopped');
@@ -242,6 +247,7 @@ class Bootstrap {
     const skipManager = this.container.get('skipManager');
     const stateRepositoryFactory = this.container.get('stateRepositoryFactory');
     const checkOutdatedReviewsUseCase = this.container.get('checkOutdatedReviewsUseCase');
+    const confirmationManager = this.container.get('confirmationManager');
 
     logger.info(`[Bootstrap] Setting up Telegram callbacks (isPollingOwner: ${telegramAdapter.isPollingOwner})`);
 
@@ -255,6 +261,10 @@ class Bootstrap {
     callbackHandler.skipManager = skipManager;
     callbackHandler.stateRepositoryFactory = stateRepositoryFactory;
     callbackHandler.checkOutdatedReviewsUseCase = checkOutdatedReviewsUseCase;
+    callbackHandler.confirmationManager = confirmationManager;
+
+    // Wire ConfirmationManager with bot for timeout keyboard edits
+    confirmationManager.setBot(bot);
 
     // Store handlers for cleanup
     this._callbackQueryHandler = async (query) => {

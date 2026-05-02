@@ -297,7 +297,8 @@ class Container {
           config: cradle.config,
           skipManager: cradle.skipManager,
           stateRepositoryFactory: cradle.stateRepositoryFactory,
-          checkOutdatedReviewsUseCase: cradle.checkOutdatedReviewsUseCase
+          checkOutdatedReviewsUseCase: cradle.checkOutdatedReviewsUseCase,
+          confirmationManager: cradle.confirmationManager
         }
       );
     }).singleton();
@@ -324,6 +325,17 @@ class Container {
 
       return new SkipManager(
         cradle.logger,
+        cradle.config
+      );
+    }).singleton();
+
+    // Confirmation Manager (approve confirmation timeouts)
+    this.registerFunction('confirmationManager', (cradle) => {
+      const ConfirmationManager = require('../infrastructure/telegram/ConfirmationManager');
+
+      return new ConfirmationManager(
+        cradle.logger,
+        cradle.timeoutManager,
         cradle.config
       );
     }).singleton();
