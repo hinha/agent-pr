@@ -171,7 +171,7 @@ describe('PRProcessingOrchestrator', () => {
 
       // First poll should run the check
       expect(mockUseCases.checkOutdatedReviews.execute).toHaveBeenCalled();
-      expect(testOrchestrator.lastOutdatedReviewCheckTime).toBeDefined();
+      expect(testOrchestrator.lastOutdatedReviewCheckTimeByRepo.get('github/testorg/test-repo')).toBeDefined();
       expect(mockLogger.info).toHaveBeenCalledWith(
         expect.stringContaining('Running outdated review check for test-repo')
       );
@@ -197,7 +197,7 @@ describe('PRProcessingOrchestrator', () => {
       );
 
       // Set last check time to now (simulate recent check)
-      testOrchestrator.lastOutdatedReviewCheckTime = Date.now();
+      testOrchestrator.lastOutdatedReviewCheckTimeByRepo.set('github/testorg/test-repo', Date.now());
 
       await testOrchestrator._poll();
 
@@ -231,7 +231,7 @@ describe('PRProcessingOrchestrator', () => {
       );
 
       // Set last check time to 6 minutes ago (past the 5 minute interval)
-      testOrchestrator.lastOutdatedReviewCheckTime = Date.now() - (6 * 60 * 1000);
+      testOrchestrator.lastOutdatedReviewCheckTimeByRepo.set('github/testorg/test-repo', Date.now() - (6 * 60 * 1000));
 
       await testOrchestrator._poll();
 
@@ -284,9 +284,60 @@ describe('PRProcessingOrchestrator', () => {
       await testOrchestrator._poll();
       const afterTime = Date.now();
 
-      // lastOutdatedReviewCheckTime should be updated
-      expect(testOrchestrator.lastOutdatedReviewCheckTime).toBeGreaterThanOrEqual(beforeTime);
-      expect(testOrchestrator.lastOutdatedReviewCheckTime).toBeLessThanOrEqual(afterTime);
+      // lastOutdatedReviewCheckTimeByRepo should be updated
+      const lastCheck = testOrchestrator.lastOutdatedReviewCheckTimeByRepo.get('github/testorg/test-repo');
+      expect(lastCheck).toBeGreaterThanOrEqual(beforeTime);
+      expect(lastCheck).toBeLessThanOrEqual(afterTime);
+    });
+
+    test('should track outdated review check independently per repo', async () => {
+      const configWithInterval = {
+        ...mockConfig,
+        app: {
+          ...mockConfig.app,
+          outdatedReviewCheckIntervalMs: 30 * 60 * 1000 // 30 minutes
+        },
+        instances: {
+          'github/testorg': {
+            key: 'github/testorg',
+            owner: 'testorg',
+            repos: {
+              'repo-a': { thread_id: '111' },
+              'repo-b': { thread_id: '222' }
+            }
+          }
+        }
+      };
+
+      // Mock shouldProcess to skip PR processing
+      mockUseCases.processPR.shouldProcess.mockResolvedValue({ shouldProcess: false, reason: 'Test skip' });
+
+      const testOrchestrator = new PRProcessingOrchestrator(
+        mockUseCases,
+        configWithInterval,
+        mockEventBus,
+        { logger: mockLogger, pollInterval: 60000 }
+      );
+
+      // First poll: both repos should run (timestamps undefined)
+      await testOrchestrator._poll();
+      expect(mockUseCases.checkOutdatedReviews.execute).toHaveBeenCalledTimes(2);
+
+      // Set repo-a to recent (skip), repo-b to old (run)
+      mockUseCases.checkOutdatedReviews.execute.mockClear();
+      testOrchestrator.lastOutdatedReviewCheckTimeByRepo.set('github/testorg/repo-a', Date.now());
+      testOrchestrator.lastOutdatedReviewCheckTimeByRepo.set('github/testorg/repo-b', Date.now() - (31 * 60 * 1000));
+
+      await testOrchestrator._poll();
+
+      // Only repo-b should have run (repo-a skipped due to recent timestamp)
+      expect(mockUseCases.checkOutdatedReviews.execute).toHaveBeenCalledTimes(1);
+      expect(mockUseCases.checkOutdatedReviews.execute).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ name: 'repo-b' }),
+        expect.any(Array),
+        expect.anything()
+      );
     });
   });
 

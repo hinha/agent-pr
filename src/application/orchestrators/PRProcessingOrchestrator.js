@@ -33,7 +33,7 @@ class PRProcessingOrchestrator {
 
     // Outdated review check interval (separate from PR poll interval)
     this.outdatedReviewCheckInterval = config.app?.outdatedReviewCheckIntervalMs || 0;
-    this.lastOutdatedReviewCheckTime = null;
+    this.lastOutdatedReviewCheckTimeByRepo = new Map(); // key: `${instance.key}/${repo.name}`
 
     this.logger.info(
       `[PRProcessingOrchestrator] Configured intervals - ` +
@@ -146,6 +146,7 @@ class PRProcessingOrchestrator {
 
     this.isRunning = false;
     this.isShuttingDown = false;
+    this.lastOutdatedReviewCheckTimeByRepo.clear();
 
     // Log final statistics
     const uptime = Date.now() - this.stats.startTime.getTime();
@@ -371,21 +372,21 @@ class PRProcessingOrchestrator {
           `[PRProcessingOrchestrator] ${snoozeReason}. Skipping outdated review check for ${repo.name}.`
         );
       } else if (this.outdatedReviewCheckInterval > 0) {
-        // Check if enough time has passed since last outdated review check
+        // Check if enough time has passed since last outdated review check (per-repo)
+        const checkKey = `${instance.key}/${repo.name}`;
         const now = getCurrentTimestampWIB().getTime();
-        const timeSinceLastCheck = this.lastOutdatedReviewCheckTime
-          ? now - this.lastOutdatedReviewCheckTime
-          : Infinity;
+        const lastCheck = this.lastOutdatedReviewCheckTimeByRepo.get(checkKey) ?? 0;
+        const timeSinceLastCheck = lastCheck ? now - lastCheck : Infinity;
 
         if (timeSinceLastCheck >= this.outdatedReviewCheckInterval) {
           try {
             this.logger.info(
               `[PRProcessingOrchestrator] Running outdated review check for ${repo.name} ` +
-              `(last check: ${this.lastOutdatedReviewCheckTime ? new Date(this.lastOutdatedReviewCheckTime).toISOString() : 'never'}, ` +
+              `(last check: ${lastCheck ? new Date(lastCheck).toISOString() : 'never'}, ` +
               `interval: ${this.outdatedReviewCheckInterval}ms)`
             );
             await this.useCases.checkOutdatedReviews.execute(instance, repo, openPRs, githubAdapter);
-            this.lastOutdatedReviewCheckTime = now;
+            this.lastOutdatedReviewCheckTimeByRepo.set(checkKey, now);
           } catch (error) {
             this.logger.error(
               `[PRProcessingOrchestrator] Error checking outdated reviews in ${repo.name}:`,
