@@ -1,27 +1,29 @@
-const logger = require('./src/utils/logger');
-const scheduler = require('./src/services/schedulerDaemon');
+#!/usr/bin/env node
+/**
+ * PR Monitor Daemon - Main Entry Point
+ *
+ * This is the main entry point for the GitHub PR monitoring daemon.
+ * It uses a Bootstrap class to initialize the application with proper
+ * dependency injection and graceful shutdown.
+ *
+ * Architecture:
+ * - Bootstrap handles initialization
+ * - DI Container manages all dependencies
+ * - Orchestrators coordinate workflows
+ * - Use cases encapsulate business logic
+ * - Adapters abstract external services
+ */
 
-// Keep process alive on uncaught errors to prevent repeated restarts
-process.on('uncaughtException', (err) => {
-  logger.error(`Uncaught exception: ${err.message}. Continuing operation.`);
+const Bootstrap = require('./src/bootstrap/Bootstrap');
+
+// Create bootstrap instance
+const bootstrap = new Bootstrap();
+
+// Start the application
+bootstrap.start().catch((error) => {
+  console.error('Failed to start application:', error);
+  process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error(`Unhandled rejection at ${promise}: reason: ${reason}. Continuing operation.`);
-});
-
-// Handle graceful shutdown
-process.on('SIGINT', () => {
-  logger.info('Received SIGINT, shutting down PR monitor');
-  scheduler.stop();
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  logger.info('Received SIGTERM, shutting down PR monitor');
-  scheduler.stop();
-  process.exit(0);
-});
-
-// Start the daemon
-scheduler.start();
+// Export for testing
+module.exports = bootstrap;

@@ -1,0 +1,99 @@
+# Multi-Instance GitHub PR Monitor Configuration
+# Copy this file to config.yml and update with your values
+
+app:
+  # How often to check for new PRs (in minutes)
+  check_interval_minutes: 7
+
+  # How often to check for outdated reviews (in minutes)
+  # Set to 0 to disable this feature
+  outdated_review_check_minutes: 10
+
+  # How long to wait for approval confirmation (in minutes)
+  # Set to 0 to disable this feature
+  approve_confirmation_timeout_minutes: '10'
+
+  # Flagsmith remote configuration
+  flagsmith:
+    enabled: true
+    environment_id: your-flagsmith-environment-id
+    identity: your-unique-identity-for-flagsmith
+    sync_interval_minutes: 5  # Sync every 5 minutes
+
+  # Optional: Snooze outdated review notifications during quiet hours
+  snooze_time:
+    enabled: true        # Set to false to disable snooze
+    start_hour: 20       # 20:00 (8 PM)
+    end_hour: 6          # 06:00 (6 AM next day)
+    skip_weekends: true  # Skip Saturday & Sunday
+    # Optional: Custom day names (Sunday to Saturday)
+    day_names:
+      - Senin
+      - Selasa
+      - Rabu
+      - Kamis
+      - Jumat
+
+  telegram:
+    # Telegram bot token (from @BotFather)
+    bot_token: "<YOUR_TELEGRAM_BOT_TOKEN>"
+    # Telegram chat ID for notifications
+    chat_id: "<YOUR_TELEGRAM_CHAT_ID>"
+
+# List of allowed repository patterns (for validation)
+repos:
+  allowed:
+    - github/your-org-or-user
+
+# Logging configuration
+log:
+  level: info
+
+# GitHub Instance Configuration
+# Format: github/{organization-name}
+github/your-org-or-user:
+  # MCP server name from your mcporter configuration
+  mcp_name: your-mcp-name
+
+  # Maximum age of PRs to process (in hours)
+  max_age_hours: 48
+
+  # How long to skip notifications for a PR when user clicks "Skip" (in hours)
+  skip_cache_duration_hours: 3
+
+  # OpenClaw agent configuration
+  agent:
+    # Use 'openclaw agents list' to see available agents
+    review: please-create-agent-first
+    summary: please-create-agent-first
+    # Available review levels
+    level: [low, medium, high]
+    # Review timeout in seconds
+    review_timeout_seconds: 1200
+    # Human-readable timeout message
+    review_timeot_string: "20 menit"
+
+  # Repositories in this instance
+  repos:
+    your-repo-name-1:
+      # Telegram thread ID for this repo's notifications
+      thread_id: "<THREAD_ID>"
+    your-repo-name-2:
+      thread_id: "<THREAD_ID>"
+    your-repo-name-3:
+      thread_id: "<THREAD_ID>"
+
+# Optional: Additional GitHub instances can be added by duplicating the block below and updating the instance name and configuration
+github/another-org-or-user:
+  mcp_name: your-other-mcp-name
+  max_age_hours: 48
+  skip_cache_duration_hours: 3
+  agent:
+    review: please-create-agent-first
+    summary: please-create-agent-first
+    level: [low, medium, high]
+    review_timeout_seconds: 1200
+    review_timeot_string: "20 menit"
+  repos:
+    your-repo-name-1:
+      thread_id: "<THREAD_ID>"

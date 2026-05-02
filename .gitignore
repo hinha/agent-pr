@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Environment variables (keep secrets out of git)
 .env
@@ -15,9 +14,15 @@ npm-debug.log*
 # Data files (runtime generated)
 data/
 
+# Build artifacts
+.version.json
+
 # OS files
 .DS_Store
 Thumbs.db
+
+/dist/
+/build/
 
 # IDE
 .vscode/
@@ -25,3 +30,10 @@ Thumbs.db
 *.swp
 *.swo
 *~
+/CLAUDE.md
+/config.yml
+/.claude/settings.local.json
+/examples/
+/coverage/*
+/config.yml.backup
+/.ai/mcp/mcp.json

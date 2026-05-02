@@ -1,1 +1,59 @@
-{"name":"simasfin-mcp-pr-monitor","version":"2.0.0","description":"Production MCP-based GitHub PR monitoring daemon for simasfin-backend","main":"index.js","type":"commonjs","scripts":{"start":"node index.js","dev":"nodemon index.js"},"dependencies":{"dotenv":"^16.4.5","lodash":"^4.17.21","node-telegram-bot-api":"^0.66.0","p-retry":"^6.2.1","winston":"^3.13.0"},"devDependencies":{"nodemon":"^3.1.0"}}
+{
+  "name": "agent-pr-monitor",
+  "version": "1.0.0",
+  "description": "Production MCP-based GitHub PR monitoring daemon for pr-agent",
+  "main": "index.js",
+  "bin": {
+    "agent-pr-monitor": "./index.js"
+  },
+  "type": "commonjs",
+  "scripts": {
+    "start": "node --expose-gc --max-old-space-size=128 index.js",
+    "dev": "nodemon --exec 'node --expose-gc --max-old-space-size=128' index.js",
+    "prebuild": "node scripts/prebuild.js",
+    "build": "pkg . --targets latest-linux-x64 --output dist/agent-pr-monitor --no-bytecode --public-packages \"*\" --public",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:ci": "jest --coverage --ci",
+    "lint": "eslint src/**/*.js tests/**/*.js index.js",
+    "lint:fix": "eslint src/**/*.js tests/**/*.js index.js --fix",
+    "example:flagsmith-basic": "node examples/flagsmith-remote-config/basic-init.js",
+    "example:flagsmith-flags": "node examples/flagsmith-remote-config/feature-flags.js",
+    "example:flagsmith-config": "node examples/flagsmith-remote-config/remote-config.js",
+    "example:flagsmith-traits": "node examples/flagsmith-remote-config/with-traits.js"
+  },
+  "dependencies": {
+    "@flagsmith/flagsmith": "^12.0.1",
+    "awilix": "^13.0.3",
+    "dotenv": "^16.4.5",
+    "js-yaml": "^4.1.0",
+    "lodash": "^4.17.21",
+    "node-telegram-bot-api": "^0.66.0",
+    "winston": "^3.13.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@faker-js/faker": "^10.4.0",
+    "eslint": "^10.2.1",
+    "jest": "^30.3.0",
+    "mock-fs": "^5.5.0",
+    "nodemon": "^3.1.0",
+    "pkg": "^5.8.1",
+    "sinon": "^21.1.2"
+  },
+  "pkg": {
+    "scripts": [
+      "src/**/*.js",
+      "index.js"
+    ],
+    "assets": [
+      "package.json",
+      ".version.json"
+    ],
+    "targets": [
+      "latest-linux-x64"
+    ],
+    "outputPath": "dist"
+  }
+}

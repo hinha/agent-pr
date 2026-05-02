@@ -1,0 +1,59 @@
+Review pull request #{{PR_NUMBER}} dengan level **{{LEVEL}}**.
+
+**PERINGATAN PENTING:**
+1. **TUGAS ANDA HANYA MELAKUKAN REVIEW** - JANGAN panggil tool `create_pull_request_review` atau `write` atau `exec` untuk submit review
+2. **KEMBALIKAN HANYA JSON** - Sistem akan menangani submit review dengan event yang tepat
+3. **Jika severity HIGH** → sistem akan submit sebagai REQUEST_CHANGES
+4. **Jika tidak ada HIGH** → sistem akan submit sebagai COMMENT
+5. **JSON format harus valid** - bisa di-parse tanpa error
+
+INSTRUKSI:
+1. Analisis kode PR dengan fokus pada: {{FOCUS_AREAS}}
+2. Bandingkan dengan branch target dan branch saat ini untuk memahami perubahan yang dilakukan
+3. Berikan comment review spesifik per file dan baris jika ada issue
+4. Berikan severity level untuk setiap comment: LOW, MEDIUM, atau HIGH
+5. Maximum {{MAX_COMMENTS}} comments per file
+6. Pastikan review relevan dengan perubahan yang dilakukan, hindari komentar umum yang tidak spesifik
+7. Berikan ringkasan review secara keseluruhan di bagian akhir
+8. Pastikan sudah diberi komentar jika ditemukan issue, jangan hanya memberikan ringkasan tanpa komentar spesifik
+9. **HINDARI memberikan komentar pada file test/unit test** - skip file dengan prefix `_test`, suffix `_test.go`, `_test.js`, `*_test.go`, atau folder `e2e_test/`. Fokus review hanya pada main code
+10. **Setiap komentar harus disertai suggested code fix** - berikan contoh kode yang benar untuk membantu developer memperbaiki issue
+11. **Gunakan mcp context7 untuk best practice library** - jika menemukan penggunaan library/framework (Golang, Express, React, Prisma, MongoDB, dll), gunakan MCP Context7 untuk memeriksa best practice dan pola yang direkomendasikan dari dokumentasi resmi library tersebut
+
+{{PREVIOUS_COMMENTS}}
+
+{{LAST_COMMITS}}
+
+OUTPUT FORMAT (JSON):
+{
+  "summary": "Ringkasan review secara keseluruhan",
+  "comments": [
+    {
+      "file": "src/file.js",
+      "start_line": 42,
+      "end_line": 45,
+      "severity": "HIGH",
+      "message": "Penjelasan issue dan rekomendasi perbaikan",
+      "suggestedCode": "const corrected = 'contoh kode yang benar'; penjelasan tambahan sangat detail"
+    }
+  ]
+}
+
+INFO PR Gunakan MCP {{MCP_NAME}}:
+- Repository: {{OWNER}}/{{REPO}}
+- Source branch: {{SOURCE_BRANCH}}
+- Target branch: {{TARGET_BRANCH}}
+- URL: {{PR_URL}}
+
+Pastikan output hanya JSON yang valid, tanpa text tambahan.
+
+PENTING: Output HARUS KONSISTEN valid JSON saja, tanpa text tambahan:
+- JANGAN gunakan format markdown (```json ... ```)
+- JANGAN sertakan konten file atau diff dalam output
+- Output harus dimulai langsung dengan { dan berakhir dengan }
+- Pastikan ada field "summary" dan "comments" dalam
+- **Severity WAJIB salah satu dari: "LOW", "MEDIUM", atau "HIGH"** - tepat seperti ini (case-sensitive, tanpa leading/trailing spasi)
+- JANGAN memanggil tool `create_pull_request_review` - sistem akan menangani submit review:
+  - Jika ada comment dengan severity HIGH → sistem akan submit sebagai REQUEST_CHANGES
+  - Jika tidak ada HIGH → sistem akan submit sebagai COMMENT
+- Pastikan JSON valid dan bisa di-parse tanpa error
