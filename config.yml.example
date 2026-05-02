@@ -9,6 +9,10 @@ app:
   # Set to 0 to disable this feature
   outdated_review_check_minutes: 10
 
+  # How long to wait for approval confirmation (in minutes)
+  # Set to 0 to disable this feature
+  approve_confirmation_timeout_minutes: '10'
+
   # Flagsmith remote configuration
   flagsmith:
     enabled: true

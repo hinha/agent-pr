@@ -94,14 +94,17 @@ function buildInstances(config) {
 
   for (const key of Object.keys(config)) {
     if (key.startsWith('github/')) {
-      const [_, owner] = key.split('/');
+      const [, owner] = key.split('/');
+
+      const maxAgeHours = config[key].max_age_hours || 48;
+      const skipCacheHours = config[key].skip_cache_duration_hours || 3;
 
       instances[key] = {
         key: key,
         owner: owner,
         mcpName: config[key].mcp_name,
-        maxAgeMs: config[key].max_age_hours * 60 * 60 * 1000,
-        skipDurationMs: config[key].skip_cache_duration_hours * 60 * 60 * 1000,
+        maxAgeMs: maxAgeHours * 60 * 60 * 1000,
+        skipDurationMs: skipCacheHours * 60 * 60 * 1000,
         agent: {
           reviewAgent: config[key].agent.review,
           summaryAgent: config[key].agent.summary,
@@ -281,7 +284,7 @@ const configProxy = new Proxy({}, {
     const currentConfig = getConfig();
     return prop in currentConfig;
   },
-  ownKeys(target) {
+  ownKeys(_target) {
     const functions = {
       loadYamlConfig,
       reloadConfig,

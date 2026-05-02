@@ -3,15 +3,23 @@
  */
 
 /**
- * Get current hour in Asia/Jakarta timezone (WIB, UTC+7)
- * @returns {number} Current hour (0-23) in WIB
+ * Get current timestamp in Asia/Jakarta timezone (WIB, UTC+7)
+ * @returns {Date} Current timestamp in WIB
  */
-function getCurrentHourWIB() {
+function getCurrentTimestampWIB() {
   const now = new Date();
   // Convert to UTC then add WIB offset (UTC+7)
   const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
   const wibTime = new Date(utc + (7 * 3600000));
-  return wibTime.getHours();
+  return wibTime;
+}
+
+/**
+ * Get current hour in Asia/Jakarta timezone (WIB, UTC+7)
+ * @returns {number} Current hour (0-23) in WIB
+ */
+function getCurrentHourWIB() {
+  return getCurrentTimestampWIB().getHours();
 }
 
 /**
@@ -117,5 +125,7 @@ function getSnoozeReason(snoozeConfig) {
 module.exports = {
   isSnoozeTime,
   shouldSnooze,
-  getSnoozeReason
+  getSnoozeReason,
+  getCurrentTimestampWIB,
+  getCurrentHourWIB
 };

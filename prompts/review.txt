@@ -20,6 +20,10 @@ INSTRUKSI:
 10. **Setiap komentar harus disertai suggested code fix** - berikan contoh kode yang benar untuk membantu developer memperbaiki issue
 11. **Gunakan mcp context7 untuk best practice library** - jika menemukan penggunaan library/framework (Golang, Express, React, Prisma, MongoDB, dll), gunakan MCP Context7 untuk memeriksa best practice dan pola yang direkomendasikan dari dokumentasi resmi library tersebut
 
+{{PREVIOUS_COMMENTS}}
+
+{{LAST_COMMITS}}
+
 OUTPUT FORMAT (JSON):
 {
   "summary": "Ringkasan review secara keseluruhan",

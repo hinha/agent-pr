@@ -3,6 +3,9 @@ name: Build Linux Binary
 on:
   pull_request:
     branches: ['**']
+  push:
+    tags:
+      - 'v*.*.*'
 
 permissions:
   contents: read
@@ -14,6 +17,35 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Get version info
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+            echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+            echo "is_tag_build=true" >> $GITHUB_OUTPUT
+            echo "🏷️ Building from TAG: $TAG_NAME"
+          else
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            echo "tag=$SHORT_SHA" >> $GITHUB_OUTPUT
+            echo "is_tag_build=false" >> $GITHUB_OUTPUT
+            echo "🔨 Building from COMMIT: $SHORT_SHA"
+          fi
+
+      - name: Display build info
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Build Information"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Is Tag Build: ${{ steps.version.outputs.is_tag_build }}"
+          echo "Version/Tag: ${{ steps.version.outputs.tag }}"
+          echo "Commit SHA: ${{ github.sha }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Run Number: ${{ github.run_number }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -33,7 +65,6 @@ jobs:
           npm run test:coverage -- --json --outputFile=coverage/coverage-final.json
           # Fail build if coverage is below minimum acceptable threshold
           # This will be adjusted upward as we improve coverage
-          echo "Current coverage: ~52%. Target: 90%"
 
       - name: Upload coverage to Codecov
         if: always()
@@ -45,4 +76,22 @@ jobs:
           fail_ci_if_error: false
 
       - name: Build binary
-        run: npm run build
+        run: |
+          if [ "${{ steps.version.outputs.is_tag_build }}" = "true" ]; then
+            echo "Building release binary for tag ${{ steps.version.outputs.tag }}"
+            export GIT_TAG="${{ steps.version.outputs.tag }}"
+            export BUILD_VERSION="${{ steps.version.outputs.tag }}"
+            npm run build
+          else
+            echo "Building development binary"
+            export BUILD_VERSION="${{ steps.version.outputs.tag }}"
+            npm run build
+          fi
+
+      - name: Display build artifacts
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Build Artifacts"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          ls -lh dist/ 2>/dev/null || echo "No dist/ directory found"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -237,7 +237,7 @@ function matchArchitectureType(filePath) {
   const path = filePath.toLowerCase();
   const matchedTypes = new Set();
 
-  for (const [key, pattern] of Object.entries(ARCHITECTURE_PATTERNS)) {
+  for (const [, pattern] of Object.entries(ARCHITECTURE_PATTERNS)) {
     for (const indicator of pattern.indicators) {
       const indicatorLower = indicator.toLowerCase();
       if (path.includes(indicatorLower) || path.endsWith(indicatorLower)) {
@@ -295,34 +295,34 @@ function detectAPIImpact(filename, dominantArchitecture) {
   };
 
   switch (dominantArchitecture) {
-    case 'layered':
-      // Layered: Controllers/Routes → Services → Repositories
-      if (filename.includes('/controller') ||
+  case 'layered':
+    // Layered: Controllers/Routes → Services → Repositories
+    if (filename.includes('/controller') ||
           filename.includes('/controllers/') ||
           filename.includes('/routes/') ||
           filename.includes('/api/')) {
-        impacts.presentation = true;
-      }
-      if (filename.includes('/service') ||
+      impacts.presentation = true;
+    }
+    if (filename.includes('/service') ||
           filename.includes('/services/')) {
-        impacts.application = true;
-      }
-      if (filename.includes('/repository') ||
+      impacts.application = true;
+    }
+    if (filename.includes('/repository') ||
           filename.includes('/repositories/') ||
           filename.includes('/dao')) {
-        impacts.infrastructure = true;
-      }
-      break;
+      impacts.infrastructure = true;
+    }
+    break;
 
-    case 'clean':
-      // Clean: Presenters/Controllers → Use Cases → Gateways
-      if (filename.includes('/presenter') ||
+  case 'clean':
+    // Clean: Presenters/Controllers → Use Cases → Gateways
+    if (filename.includes('/presenter') ||
           filename.includes('/presenters/') ||
           filename.includes('/controller') ||
           filename.includes('/controllers/')) {
-        impacts.presentation = true;
-      }
-      if (filename.includes('/usecase') ||
+      impacts.presentation = true;
+    }
+    if (filename.includes('/usecase') ||
           filename.includes('/usecases/') ||
           filename.includes('/use-case') ||
           filename.includes('/use-cases/') ||
@@ -330,188 +330,188 @@ function detectAPIImpact(filename, dominantArchitecture) {
           filename.includes('/use_cases/') ||
           filename.includes('/interactor') ||
           filename.includes('/interactors/')) {
-        impacts.application = true;
-      }
-      if (filename.includes('/gateway') ||
+      impacts.application = true;
+    }
+    if (filename.includes('/gateway') ||
           filename.includes('/gateways/') ||
           filename.includes('/interface') ||
           filename.includes('/interfaces/')) {
-        impacts.infrastructure = true;
-      }
-      break;
+      impacts.infrastructure = true;
+    }
+    break;
 
-    case 'onion':
-      // Onion: Presentation → Application → Domain → Infrastructure
-      if (filename.includes('/presentation/')) {
-        impacts.presentation = true;
-      }
-      if (filename.includes('/application/')) {
-        impacts.application = true;
-      }
-      if (filename.includes('/domain/')) {
-        impacts.domain = true;
-      }
-      if (filename.includes('/infrastructure/')) {
-        impacts.infrastructure = true;
-      }
-      break;
+  case 'onion':
+    // Onion: Presentation → Application → Domain → Infrastructure
+    if (filename.includes('/presentation/')) {
+      impacts.presentation = true;
+    }
+    if (filename.includes('/application/')) {
+      impacts.application = true;
+    }
+    if (filename.includes('/domain/')) {
+      impacts.domain = true;
+    }
+    if (filename.includes('/infrastructure/')) {
+      impacts.infrastructure = true;
+    }
+    break;
 
-    case 'hexagonal':
-      // Hexagonal: Primary Adapters → Ports → Application → Ports → Secondary Adapters
-      if (filename.includes('/primary/') ||
+  case 'hexagonal':
+    // Hexagonal: Primary Adapters → Ports → Application → Ports → Secondary Adapters
+    if (filename.includes('/primary/') ||
           filename.includes('/adapter') && !filename.includes('/adapters/')) {
-        impacts.presentation = true;  // Driving/Primary adapters
-      }
-      if (filename.includes('/ports/') ||
+      impacts.presentation = true;  // Driving/Primary adapters
+    }
+    if (filename.includes('/ports/') ||
           filename.includes('port')) {
-        impacts.infrastructure = true;  // Ports are interfaces
-      }
-      if (filename.includes('/secondary/')) {
-        impacts.infrastructure = true;  // Driven/Secondary adapters
-      }
-      break;
+      impacts.infrastructure = true;  // Ports are interfaces
+    }
+    if (filename.includes('/secondary/')) {
+      impacts.infrastructure = true;  // Driven/Secondary adapters
+    }
+    break;
 
-    case 'ddd':
-      // DDD: Application Layer → Domain Layer → Infrastructure Layer
-      if (filename.includes('/application/') ||
+  case 'ddd':
+    // DDD: Application Layer → Domain Layer → Infrastructure Layer
+    if (filename.includes('/application/') ||
           filename.includes('/app/')) {
-        impacts.application = true;
-      }
-      if (filename.includes('/domain/') ||
+      impacts.application = true;
+    }
+    if (filename.includes('/domain/') ||
           filename.includes('/aggregate') ||
           filename.includes('/entity')) {
-        impacts.domain = true;
-      }
-      if (filename.includes('/infrastructure/') ||
+      impacts.domain = true;
+    }
+    if (filename.includes('/infrastructure/') ||
           filename.includes('/repository')) {
-        impacts.infrastructure = true;
-      }
-      break;
+      impacts.infrastructure = true;
+    }
+    break;
 
-    case 'cqrs':
-      // CQRS: Commands/Queries → Handlers → Read/Write Models
-      if (filename.includes('/command') ||
+  case 'cqrs':
+    // CQRS: Commands/Queries → Handlers → Read/Write Models
+    if (filename.includes('/command') ||
           filename.includes('/query')) {
-        impacts.application = true;
-      }
-      if (filename.includes('/handler') ||
+      impacts.application = true;
+    }
+    if (filename.includes('/handler') ||
           filename.includes('/handlers/')) {
-        impacts.application = true;
-      }
-      break;
+      impacts.application = true;
+    }
+    break;
 
-    case 'nestjs':
-      // NestJS: Controllers → Services/Providers → Repositories
-      if (filename.includes('.controller') ||
+  case 'nestjs':
+    // NestJS: Controllers → Services/Providers → Repositories
+    if (filename.includes('.controller') ||
           filename.includes('@controller')) {
-        impacts.presentation = true;
-      }
-      if (filename.includes('.service') ||
+      impacts.presentation = true;
+    }
+    if (filename.includes('.service') ||
           filename.includes('@injectable')) {
-        impacts.application = true;
-      }
-      if (filename.includes('.repository')) {
-        impacts.infrastructure = true;
-      }
-      break;
+      impacts.application = true;
+    }
+    if (filename.includes('.repository')) {
+      impacts.infrastructure = true;
+    }
+    break;
 
-    case 'spring_boot':
-      // Spring Boot: @Controller → @Service → @Repository
-      if (filename.includes('@controller') ||
+  case 'spring_boot':
+    // Spring Boot: @Controller → @Service → @Repository
+    if (filename.includes('@controller') ||
           filename.includes('/rest/')) {
-        impacts.presentation = true;
-      }
-      if (filename.includes('@service')) {
-        impacts.application = true;
-      }
-      if (filename.includes('@repository') ||
+      impacts.presentation = true;
+    }
+    if (filename.includes('@service')) {
+      impacts.application = true;
+    }
+    if (filename.includes('@repository') ||
           filename.includes('@entity')) {
-        impacts.infrastructure = true;
-      }
-      break;
+      impacts.infrastructure = true;
+    }
+    break;
 
-    case 'go_clean':
-      // Go Clean: handlers → usecases → repositories → grpc/http
-      if (filename.includes('/handler') ||
+  case 'go_clean':
+    // Go Clean: handlers → usecases → repositories → grpc/http
+    if (filename.includes('/handler') ||
           filename.includes('/http')) {
-        impacts.presentation = true;
-      }
-      if (filename.includes('/usecase') ||
+      impacts.presentation = true;
+    }
+    if (filename.includes('/usecase') ||
           filename.includes('/usecases/')) {
-        impacts.application = true;
-      }
-      if (filename.includes('/repository')) {
-        impacts.infrastructure = true;
-      }
-      break;
+      impacts.application = true;
+    }
+    if (filename.includes('/repository')) {
+      impacts.infrastructure = true;
+    }
+    break;
 
-    case 'mvvm_mobile':
-    case 'mvvm_frontend':
-      // MVVM: View → ViewModel → Model
-      if (filename.includes('viewmodel') ||
+  case 'mvvm_mobile':
+  case 'mvvm_frontend':
+    // MVVM: View → ViewModel → Model
+    if (filename.includes('viewmodel') ||
           filename.includes('view-model')) {
-        impacts.application = true;  // ViewModel is business logic
-      }
-      if (filename.includes('model') && !filename.includes('viewmodel')) {
-        impacts.domain = true;
-      }
-      break;
+      impacts.application = true;  // ViewModel is business logic
+    }
+    if (filename.includes('model') && !filename.includes('viewmodel')) {
+      impacts.domain = true;
+    }
+    break;
 
-    case 'mvi':
-      // MVI: View → Intent → Reducer → State
-      if (filename.includes('intent') ||
+  case 'mvi':
+    // MVI: View → Intent → Reducer → State
+    if (filename.includes('intent') ||
           filename.includes('reducer')) {
-        impacts.application = true;
-      }
-      if (filename.includes('state')) {
-        impacts.domain = true;
-      }
-      break;
+      impacts.application = true;
+    }
+    if (filename.includes('state')) {
+      impacts.domain = true;
+    }
+    break;
 
-    case 'flux_redux':
-    case 'redux_mobile':
-      // Redux/Flux: Component → Action → Reducer → Store
-      if (filename.includes('/action') ||
+  case 'flux_redux':
+  case 'redux_mobile':
+    // Redux/Flux: Component → Action → Reducer → Store
+    if (filename.includes('/action') ||
           filename.includes('/actions/')) {
-        impacts.application = true;
-      }
-      if (filename.includes('/reducer') ||
+      impacts.application = true;
+    }
+    if (filename.includes('/reducer') ||
           filename.includes('/reducers/')) {
-        impacts.application = true;
-      }
-      if (filename.includes('/store') ||
+      impacts.application = true;
+    }
+    if (filename.includes('/store') ||
           filename.includes('/stores/')) {
-        impacts.infrastructure = true;
-      }
-      break;
+      impacts.infrastructure = true;
+    }
+    break;
 
-    case 'component_based':
-      // Component-Based: Atomic Design
-      if (filename.includes('/atom') ||
+  case 'component_based':
+    // Component-Based: Atomic Design
+    if (filename.includes('/atom') ||
           filename.includes('/molecule') ||
           filename.includes('/organism')) {
-        impacts.presentation = true;
-      }
-      if (filename.includes('/template')) {
-        impacts.application = true;
-      }
-      break;
+      impacts.presentation = true;
+    }
+    if (filename.includes('/template')) {
+      impacts.application = true;
+    }
+    break;
 
-    default:
-      // Generic detection for unknown architectures
-      if (filename.includes('controller') ||
+  default:
+    // Generic detection for unknown architectures
+    if (filename.includes('controller') ||
           filename.includes('/routes/') ||
           filename.includes('/api/')) {
-        impacts.presentation = true;
-      }
-      if (filename.includes('service') ||
+      impacts.presentation = true;
+    }
+    if (filename.includes('service') ||
           filename.includes('handler')) {
-        impacts.application = true;
-      }
-      if (filename.includes('repository') ||
+      impacts.application = true;
+    }
+    if (filename.includes('repository') ||
           filename.includes('dao')) {
-        impacts.infrastructure = true;
-      }
+      impacts.infrastructure = true;
+    }
   }
 
   return impacts;
@@ -761,7 +761,7 @@ function determineImpactArea(files) {
 /**
  * Get recommended review based on risk level and impact area
  */
-function getRecommendedReview(riskLevel, impactArea, pr, files) {
+function getRecommendedReview(riskLevel, impactArea, pr, _files) {
   // Check if PR is a draft or WIP
   const title = (pr.title || '').toLowerCase();
   const description = (pr.description || '').toLowerCase();
@@ -801,7 +801,7 @@ function getRecommendedReview(riskLevel, impactArea, pr, files) {
 /**
  * Detect suspicious patterns in the PR
  */
-function detectSuspiciousPatterns(files, pr) {
+function detectSuspiciousPatterns(files, _pr) {
   const patterns = [];
 
   // Database migration

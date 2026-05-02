@@ -14,9 +14,15 @@ npm-debug.log*
 # Data files (runtime generated)
 data/
 
+# Build artifacts
+.version.json
+
 # OS files
 .DS_Store
 Thumbs.db
+
+/dist/
+/build/
 
 # IDE
 .vscode/
@@ -28,34 +34,6 @@ Thumbs.db
 /config.yml
 /.claude/settings.local.json
 /examples/
-/coverage/lcov-report/config/index.html
-/coverage/lcov-report/config/index.js.html
-/coverage/lcov-report/config/yamlConfig.js.html
-/coverage/lcov-report/services/flagsmithSyncService.js.html
-/coverage/lcov-report/services/index.html
-/coverage/lcov-report/services/mcpGithubService.js.html
-/coverage/lcov-report/services/openclawAgentService.js.html
-/coverage/lcov-report/services/prStateManager.js.html
-/coverage/lcov-report/services/repositoryStateManager.js.html
-/coverage/lcov-report/services/reviewStateManager.js.html
-/coverage/lcov-report/services/schedulerDaemon.js.html
-/coverage/lcov-report/services/skipManager.js.html
-/coverage/lcov-report/services/telegramService.js.html
-/coverage/lcov-report/utils/index.html
-/coverage/lcov-report/utils/logger.js.html
-/coverage/lcov-report/utils/memoryMonitor.js.html
-/coverage/lcov-report/utils/prAnalyzer.js.html
-/coverage/lcov-report/utils/timeoutManager.js.html
-/coverage/lcov-report/utils/timeUtils.js.html
-/coverage/lcov-report/base.css
-/coverage/lcov-report/block-navigation.js
-/coverage/lcov-report/favicon.png
-/coverage/lcov-report/index.html
-/coverage/lcov-report/prettify.css
-/coverage/lcov-report/prettify.js
-/coverage/lcov-report/sort-arrow-sprite.png
-/coverage/lcov-report/sorter.js
-/coverage/clover.xml
-/coverage/coverage-final.json
-/coverage/lcov.info
+/coverage/*
 /config.yml.backup
+/.ai/mcp/mcp.json

@@ -123,7 +123,7 @@ describe('MemoryMonitor', () => {
     test('should include threshold values', () => {
       const stats = monitor.getMemoryStats();
 
-      expect(stats.thresholds.warn).toBe(monitor.warnThreshold);
+      expect(stats.thresholds.warnThreshold).toBe(monitor.warnThreshold);
       expect(stats.thresholds.critical).toBe(monitor.critThreshold);
       expect(stats.thresholds.restart).toBe(monitor.restartThreshold);
     });
