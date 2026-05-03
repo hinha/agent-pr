@@ -664,6 +664,28 @@ class CallbackHandler {
     const githubAdapter = this.githubAdapter.create(instance.key);
     const freshPR = await this._resolveFreshPR(pr, repo, githubAdapter);
 
+    // Check current PR state - some states can't transition to SKIPPED
+    const currentState = await this.stateMachine.getState(instance.key, repo.name, freshPR.number);
+    const finalStates = ['approved', 'rejected', 'closed', 'processed'];
+
+    if (finalStates.includes(currentState)) {
+      // PR is already in a final state - notifications have stopped
+      const stateMessages = {
+        approved: '✅ This PR has been approved',
+        rejected: '❌ Changes were requested for this PR',
+        closed: '🔒 This PR has been closed',
+        processed: '✅ This PR has been fully processed'
+      };
+
+      await query.editMessageText(
+        `${stateMessages[currentState]}\n\n` +
+        `🔇 Silent mode is not needed - notifications have already stopped for this PR.`,
+        { parse_mode: 'HTML' }
+      );
+
+      return { success: true, alreadyFinal: true, currentState };
+    }
+
     const durationMs = hours * 60 * 60 * 1000;
     const result = await this.reviewPRUseCase.skip(instance, repo, freshPR, durationMs);
 

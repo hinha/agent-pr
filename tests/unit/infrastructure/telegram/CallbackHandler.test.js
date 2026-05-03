@@ -29,6 +29,16 @@ describe('CallbackHandler', () => {
     };
 
     mockStateMachine = jest.fn();
+    mockStateMachine.getState = jest.fn().mockResolvedValue('notified');
+    mockStateMachine.isTerminalState = jest.fn().mockReturnValue(false);
+    mockStateMachine.markAsSkipped = jest.fn().mockResolvedValue({
+      success: true,
+      currentState: 'skipped'
+    });
+    mockStateMachine.transition = jest.fn().mockResolvedValue({
+      currentState: 'skipped',
+      notificationCount: 1
+    });
 
     mockEventBus = {
       emitAsync: jest.fn().mockResolvedValue()
@@ -871,6 +881,85 @@ describe('CallbackHandler', () => {
 
       expect(result.success).toBe(false);
       expect(mockQuery.answer).toHaveBeenCalledWith('Failed to silent: Silent failed', true);
+    });
+
+    test('should inform user when PR is already approved (no silent needed)', async () => {
+      const mockQuery = {
+        data: 'silent_dur:0:0:12345:6',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      // PR is in approved state
+      handler.stateMachine.getState = jest.fn().mockResolvedValue('approved');
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.alreadyFinal).toBe(true);
+      expect(result.currentState).toBe('approved');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('has been approved'),
+        { parse_mode: 'HTML' }
+      );
+      expect(mockReviewPRUseCase.skip).not.toHaveBeenCalled();
+    });
+
+    test('should inform user when PR is closed (no silent needed)', async () => {
+      const mockQuery = {
+        data: 'silent_dur:0:0:12345:3',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      handler.stateMachine.getState = jest.fn().mockResolvedValue('closed');
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.alreadyFinal).toBe(true);
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('has been closed'),
+        { parse_mode: 'HTML' }
+      );
+    });
+
+    test('should inform user when PR is processed (no silent needed)', async () => {
+      const mockQuery = {
+        data: 'silent_dur:0:0:12345:8',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      handler.stateMachine.getState = jest.fn().mockResolvedValue('processed');
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.alreadyFinal).toBe(true);
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('has been fully processed'),
+        { parse_mode: 'HTML' }
+      );
+    });
+
+    test('should inform user when PR is rejected (no silent needed)', async () => {
+      const mockQuery = {
+        data: 'silent_dur:0:0:12345:3',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      handler.stateMachine.getState = jest.fn().mockResolvedValue('rejected');
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.alreadyFinal).toBe(true);
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('Changes were requested for this PR'),
+        { parse_mode: 'HTML' }
+      );
     });
   });
 
