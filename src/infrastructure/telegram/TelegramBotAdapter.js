@@ -278,6 +278,9 @@ class TelegramBotAdapter extends ITelegramService {
           ],
           [
             { text: '🔗 Visit PR', callback_data: `visit:${instanceIdx}:${repoIdx}:${pr.id}` },
+            { text: '🔇 Silent', callback_data: `silent:${instanceIdx}:${repoIdx}:${pr.id}` }
+          ],
+          [
             { text: '❌ Dismiss', callback_data: `dismiss_outdated:${instanceIdx}:${repoIdx}:${pr.id}:${reviewId}` }
           ]
         ];
