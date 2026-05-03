@@ -1539,4 +1539,70 @@ describe('CallbackHandler', () => {
       expect(firstCall[0]).toContain('Estimated time: ~30 minutes');
     });
   });
+
+  describe('handleCallbackQuery - visit', () => {
+    test('should handle visit callback successfully', async () => {
+      const mockQuery = {
+        data: 'visit:0:0:12345',
+        answer: jest.fn().mockResolvedValue(),
+        message: { message_id: 999 }
+      };
+
+      const mockFreshPR = {
+        id: 12345,
+        number: 42,
+        url: 'https://github.com/testorg/test-repo/pull/42'
+      };
+
+      const mockGithubAdapter = {
+        getOpenPRs: jest.fn().mockResolvedValue([mockFreshPR])
+      };
+
+      handler.githubAdapter = {
+        create: jest.fn().mockReturnValue(mockGithubAdapter)
+      };
+
+      handler.bot = {
+        sendMessage: jest.fn().mockResolvedValue({ message_id: 1000 })
+      };
+      handler.chatId = 123;
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('visit');
+      expect(mockQuery.answer).toHaveBeenCalledWith('🔗 Opening PR page...');
+      expect(mockGithubAdapter.getOpenPRs).toHaveBeenCalled();
+      expect(handler.bot.sendMessage).toHaveBeenCalledWith(
+        123,
+        expect.stringContaining('PR URL'),
+        expect.objectContaining({
+          message_thread_id: 456
+        })
+      );
+    });
+  });
+
+  describe('handleCallbackQuery - review_cancel', () => {
+    test('should handle review_cancel callback successfully', async () => {
+      const mockQuery = {
+        data: 'review_cancel:0:0:12345',
+        answer: jest.fn().mockResolvedValue(),
+        deleteMessage: jest.fn().mockResolvedValue(),
+        message: { message_id: 999 }
+      };
+
+      handler.bot = {
+        deleteMessage: jest.fn().mockResolvedValue()
+      };
+      handler.chatId = 123;
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('cancelled');
+      expect(mockQuery.answer).toHaveBeenCalledWith('❌ Review cancelled');
+      expect(handler.bot.deleteMessage).toHaveBeenCalledWith(123, 999);
+    });
+  });
 });
