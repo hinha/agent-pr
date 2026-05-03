@@ -154,7 +154,7 @@ class CheckOutdatedReviewsUseCase {
     // Review is outdated if:
     // 1. It's not dismissed
     // 2. The head SHA has changed
-    // 3. The review is not in a terminal state
+    // 3. The PR is NOT in a terminal state (approved, rejected, closed, processed)
 
     if (review.state === 'DISMISSED') {
       return false;
@@ -164,9 +164,10 @@ class CheckOutdatedReviewsUseCase {
       return false;
     }
 
-    // Check PR state - don't notify if PR is already processed
+    // Check PR state - don't notify if PR is in a terminal state
     const prState = await this.stateMachine.getState(instance.key, repo.name, pr.number);
-    if (prState === 'processed' || prState === 'closed') {
+    const terminalStates = ['processed', 'closed', 'approved', 'rejected'];
+    if (terminalStates.includes(prState)) {
       return false;
     }
 

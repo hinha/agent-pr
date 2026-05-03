@@ -217,6 +217,28 @@ describe('CheckOutdatedReviewsUseCase', () => {
       expect(result).toBe(false);
     });
 
+    it('should return false for approved PR state', async () => {
+      stateMachine.getState = jest.fn().mockResolvedValue('approved');
+
+      const result = await useCase._isReviewOutdated(
+        instance, repo,
+        { headSha: 'new', number: 1 },
+        { state: 'APPROVED', headSha: 'old' }
+      );
+      expect(result).toBe(false);
+    });
+
+    it('should return false for rejected PR state', async () => {
+      stateMachine.getState = jest.fn().mockResolvedValue('rejected');
+
+      const result = await useCase._isReviewOutdated(
+        instance, repo,
+        { headSha: 'new', number: 1 },
+        { state: 'APPROVED', headSha: 'old' }
+      );
+      expect(result).toBe(false);
+    });
+
     it('should return true when SHA differs and PR is active', async () => {
       stateMachine.getState = jest.fn().mockResolvedValue('notified');
 
