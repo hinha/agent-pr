@@ -98,6 +98,7 @@ function buildInstances(config) {
 
       const maxAgeHours = config[key].max_age_hours || 48;
       const skipCacheHours = config[key].skip_cache_duration_hours || 3;
+      const queueMaxSize = config[key].queue?.max_size || 2;
 
       instances[key] = {
         key: key,
@@ -105,6 +106,9 @@ function buildInstances(config) {
         mcpName: config[key].mcp_name,
         maxAgeMs: maxAgeHours * 60 * 60 * 1000,
         skipDurationMs: skipCacheHours * 60 * 60 * 1000,
+        queue: {
+          maxSize: queueMaxSize
+        },
         agent: {
           reviewAgent: config[key].agent.review,
           summaryAgent: config[key].agent.summary,
@@ -116,7 +120,7 @@ function buildInstances(config) {
       };
 
       const repoCount = Object.keys(config[key].repos || {}).length;
-      logger.info(`Instance ${key}: owner=${owner}, mcp=${config[key].mcp_name}, repos=${repoCount}`);
+      logger.info(`Instance ${key}: owner=${owner}, mcp=${config[key].mcp_name}, queue_max=${queueMaxSize}, repos=${repoCount}`);
     }
   }
 

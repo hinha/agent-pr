@@ -91,6 +91,13 @@ class Bootstrap {
       await orchestrator.start();
       logger.info('✅ PR processing orchestrator started');
 
+      // Step 8.5: Start review queue worker
+      logger.info('[Bootstrap] Step 8.5: Starting review queue worker...');
+      const reviewQueueWorker = this.container.get('reviewQueueWorker');
+      await reviewQueueWorker.start();
+      logger.info('✅ Review queue worker started');
+      this._reviewQueueWorker = reviewQueueWorker;
+
       // Step 9: Initialize Flagsmith sync if configured
       logger.info('[Bootstrap] Step 9: Checking Flagsmith configuration...');
       if (config.app?.flagsmith?.enabled) {
@@ -178,6 +185,12 @@ class Bootstrap {
       const orchestrator = this.container.get('prProcessingOrchestrator');
       await orchestrator.stop();
       logger.info('   ✓ PR processing orchestrator stopped');
+
+      // Stop review queue worker
+      if (this._reviewQueueWorker) {
+        await this._reviewQueueWorker.stop();
+        logger.info('   ✓ Review queue worker stopped');
+      }
 
       // Remove Telegram callback handler before stopping bot
       const telegramAdapter = this.container.get('telegramAdapter');
