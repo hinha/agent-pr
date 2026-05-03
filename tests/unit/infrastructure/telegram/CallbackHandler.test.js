@@ -219,6 +219,41 @@ describe('CallbackHandler', () => {
       });
     });
 
+    test('should reject silent_dur with invalid hours (not in whitelist)', () => {
+      const data = 'silent_dur:0:0:22222:5';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toBeNull();
+    });
+
+    test('should reject silent_dur with negative hours', () => {
+      const data = 'silent_dur:0:0:22222:-1';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toBeNull();
+    });
+
+    test('should reject silent_dur with NaN hours', () => {
+      const data = 'silent_dur:0:0:22222:abc';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toBeNull();
+    });
+
+    test('should reject silent_dur with zero hours', () => {
+      const data = 'silent_dur:0:0:22222:0';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toBeNull();
+    });
+
+    test('should reject silent_dur with hours exceeding max', () => {
+      const data = 'silent_dur:0:0:22222:100';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toBeNull();
+    });
+
     test('should parse review_level callback with level', () => {
       const data = 'review_level:0:0:33333:low';
       const result = handler._parseCallbackData(data);

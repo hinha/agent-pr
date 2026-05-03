@@ -200,7 +200,14 @@ class CallbackHandler {
       if (callback.action === 'review_level' || callback.action === 'review_level_outdated') {
         callback.level = parts[4];
       } else if (callback.action === 'silent_dur') {
-        callback.hours = parseInt(parts[4], 10);
+        const parsedHours = parseInt(parts[4], 10);
+        const allowedHours = new Set([1, 2, 3, 4, 6, 8, 12, 24, 48]);
+
+        if (!Number.isInteger(parsedHours) || !allowedHours.has(parsedHours)) {
+          return null; // reject malformed/tampered callback
+        }
+
+        callback.hours = parsedHours;
       } else {
         // For approve_outdated, re_review, dismiss_outdated: parts[4] is reviewId
         callback.reviewId = parts[4];
@@ -650,12 +657,15 @@ class CallbackHandler {
    * @private
    */
   async _handleSilentDur(query, instance, repo, pr, hours) {
-    this.logger.info(`[CallbackHandler] Silencing PR #${pr.number} for ${hours} hours`);
+    this.logger.info(`[CallbackHandler] Silencing PR with id=${pr.id} for ${hours} hours`);
 
     await query.answer('Silencing...');
 
+    const githubAdapter = this.githubAdapter.create(instance.key);
+    const freshPR = await this._resolveFreshPR(pr, repo, githubAdapter);
+
     const durationMs = hours * 60 * 60 * 1000;
-    const result = await this.reviewPRUseCase.skip(instance, repo, pr, durationMs);
+    const result = await this.reviewPRUseCase.skip(instance, repo, freshPR, durationMs);
 
     if (result.success) {
       const silentUntil = new Date(Date.now() + durationMs).toLocaleString('en-GB', {
@@ -664,7 +674,7 @@ class CallbackHandler {
         hour: '2-digit', minute: '2-digit', hour12: false
       });
       await query.editMessageText(
-        `🔇 <b>PR #${pr.number} silenced for ${hours} hour${hours > 1 ? 's' : ''}</b>\n\n` +
+        `🔇 <b>PR #${freshPR.number} silenced for ${hours} hour${hours > 1 ? 's' : ''}</b>\n\n` +
         `Notifications will resume at ${silentUntil} WIB`,
         { parse_mode: 'HTML' }
       );
