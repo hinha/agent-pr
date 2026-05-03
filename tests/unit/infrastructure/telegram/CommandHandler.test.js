@@ -139,7 +139,7 @@ describe('CommandHandler', () => {
       expect(result.success).toBe(false);
       expect(mockBot.sendMessage).toHaveBeenCalledWith(
         99999,
-        '❌ Usage: /reset <pr_number>\nContoh: /reset 9',
+        '❌ Usage: /reset <pr_number>\nExample: /reset 9',
         expect.objectContaining({
           message_thread_id: 12345,
           reply_to_message_id: message.message_id
@@ -158,7 +158,7 @@ describe('CommandHandler', () => {
       expect(result.success).toBe(false);
       expect(mockBot.sendMessage).toHaveBeenCalledWith(
         99999,
-        '❌ Invalid PR number. Gunakan: /reset <pr_number>',
+        '❌ Invalid PR number. Usage: /reset <pr_number>',
         expect.objectContaining({
           message_thread_id: 12345,
           reply_to_message_id: message.message_id
@@ -195,7 +195,7 @@ describe('CommandHandler', () => {
       expect(result.success).toBe(false);
       expect(mockBot.sendMessage).toHaveBeenCalledWith(
         99999,
-        '❌ Usage: /status <pr_number>\nContoh: /status 9',
+        '❌ Usage: /status <pr_number>\nExample: /status 9',
         expect.objectContaining({
           message_thread_id: 12345,
           reply_to_message_id: message.message_id

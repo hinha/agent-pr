@@ -536,7 +536,7 @@ class TelegramBotAdapter extends ITelegramService {
       ],
       [
         { text: '🔒 Close PR', callback_data: `close:${instanceIdx}:${repoIdx}:${pr.id}` },
-        { text: '⏸️ Skip (3h)', callback_data: `skip:${instanceIdx}:${repoIdx}:${pr.id}` }
+        { text: '🔇 Silent', callback_data: `silent:${instanceIdx}:${repoIdx}:${pr.id}` }
       ]
     ];
   }

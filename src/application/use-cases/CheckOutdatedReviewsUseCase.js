@@ -65,6 +65,15 @@ class CheckOutdatedReviewsUseCase {
       const owner = instance.owner;
 
       for (const [prNumber, { pr, reviews }] of prOutdatedMap) {
+        // Check if PR is currently silenced
+        const isSkipped = await this.stateMachine.isSkipped(instanceKey, repoName, prNumber);
+        if (isSkipped) {
+          this.logger.debug(
+            `[CheckOutdatedReviewsUseCase] Skipping outdated review for silenced PR #${prNumber}`
+          );
+          continue;
+        }
+
         // Check if user dismissed notification for this exact headSha
         const fsRepo = this.stateMachine.stateRepository.getRepository(owner, repoName);
         const isDismissed = await fsRepo.isOutdatedNotified(

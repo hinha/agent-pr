@@ -861,6 +861,14 @@ describe('TelegramBotAdapter', () => {
         text: '❌ Reject',
         callback_data: 'reject:0:0:pr_123'
       });
+      expect(keyboard[2][0]).toEqual({
+        text: '🔒 Close PR',
+        callback_data: 'close:0:0:pr_123'
+      });
+      expect(keyboard[2][1]).toEqual({
+        text: '🔇 Silent',
+        callback_data: 'silent:0:0:pr_123'
+      });
     });
   });
 });
