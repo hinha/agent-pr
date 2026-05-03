@@ -296,4 +296,112 @@ describe('CommandHandler', () => {
       expect(result.action).toBe('ignored');
     });
   });
+
+  describe('error handling', () => {
+    test('should handle missing thread_id gracefully', async () => {
+      const message = {
+        text: '/reset 9'
+        // No message_thread_id
+      };
+
+      const result = await commandHandler.handleCommand(message, testConfig);
+
+      expect(result.success).toBe(false);
+      expect(mockBot.sendMessage).toHaveBeenCalledWith(
+        99999,
+        '⚠️ Invalid command in this thread.',
+        expect.objectContaining({
+          reply_to_message_id: message.message_id
+        })
+      );
+    });
+
+    test('should handle reset command errors', async () => {
+      const message = {
+        text: '/reset 9',
+        message_thread_id: 12345,
+        message_id: 999
+      };
+
+      mockStateMachine.reset.mockRejectedValue(new Error('Reset failed'));
+
+      const result = await commandHandler.handleCommand(message, testConfig);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Reset failed');
+      expect(mockBot.sendMessage).toHaveBeenCalledWith(
+        99999,
+        expect.stringContaining('Failed to reset PR'),
+        expect.objectContaining({
+          message_thread_id: 12345,
+          reply_to_message_id: 999
+        })
+      );
+    });
+
+    test('should handle status command errors', async () => {
+      const message = {
+        text: '/status 9',
+        message_thread_id: 12345,
+        message_id: 999
+      };
+
+      mockStateMachine.getState.mockRejectedValue(new Error('State error'));
+
+      const result = await commandHandler.handleCommand(message, testConfig);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('State error');
+      expect(mockBot.sendMessage).toHaveBeenCalledWith(
+        99999,
+        expect.stringContaining('Failed to get status'),
+        expect.objectContaining({
+          message_thread_id: 12345,
+          reply_to_message_id: 999
+        })
+      );
+    });
+
+    test('should handle missing bot or chatId gracefully', async () => {
+      const handlerWithoutBot = new CommandHandler(
+        mockStateMachine,
+        mockStateRepositoryFactory,
+        {
+          logger: mockLogger,
+          config: testConfig
+          // No bot or chatId
+        }
+      );
+
+      const message = {
+        text: '/reset 9',
+        message_thread_id: 12345
+      };
+
+      await handlerWithoutBot.handleCommand(message, testConfig);
+
+      // Should not throw error, just log warning
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Cannot reply')
+      );
+    });
+  });
+
+  describe('_replyMessage error handling', () => {
+    test('should handle sendMessage errors gracefully', async () => {
+      mockBot.sendMessage.mockRejectedValue(new Error('Network error'));
+
+      const message = {
+        text: '/unknown',
+        message_thread_id: 12345
+      };
+
+      await commandHandler.handleCommand(message, testConfig);
+
+      // Should not throw, just log error
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to send reply')
+      );
+    });
+  });
 });
