@@ -17,6 +17,7 @@ describe('CheckOutdatedReviewsUseCase', () => {
     };
     stateMachine = {
       getState: jest.fn().mockResolvedValue('notified'),
+      isSkipped: jest.fn().mockResolvedValue(false),
       stateRepository: {
         getRepository: jest.fn().mockReturnValue({
           isOutdatedNotified: jest.fn().mockResolvedValue(false),
@@ -103,6 +104,44 @@ describe('CheckOutdatedReviewsUseCase', () => {
       expect(notificationService.sendOutdatedReviewNotification).not.toHaveBeenCalled();
     });
 
+    it('should skip outdated review notification for silenced PR', async () => {
+      const pr = { number: 42, id: 'pr42', headSha: 'newsha123' };
+      const review = {
+        id: 'r1', state: 'CHANGES_REQUESTED', headSha: 'oldsha456',
+        user: 'reviewer1', body: 'Fix'
+      };
+
+      githubAdapter.getPRReviews = jest.fn().mockResolvedValue([review]);
+
+      // Mark PR as silenced
+      stateMachine.isSkipped = jest.fn().mockResolvedValue(true);
+
+      const result = await useCase.execute(instance, repo, [pr], githubAdapter);
+
+      expect(result.notificationResults).toHaveLength(0);
+      expect(notificationService.sendOutdatedReviewNotification).not.toHaveBeenCalled();
+      expect(stateMachine.isSkipped).toHaveBeenCalledWith('github/myorg', 'my-repo', 42);
+    });
+
+    it('should skip outdated review notification for PR in APPROVED state with skip metadata', async () => {
+      const pr = { number: 42, id: 'pr42', headSha: 'newsha123' };
+      const review = {
+        id: 'r1', state: 'APPROVED', headSha: 'oldsha456',
+        user: 'reviewer1', body: 'LGTM'
+      };
+
+      githubAdapter.getPRReviews = jest.fn().mockResolvedValue([review]);
+
+      // PR is in APPROVED state but has active skip metadata
+      stateMachine.getState = jest.fn().mockResolvedValue('approved');
+      stateMachine.isSkipped = jest.fn().mockResolvedValue(true);
+
+      const result = await useCase.execute(instance, repo, [pr], githubAdapter);
+
+      expect(result.notificationResults).toHaveLength(0);
+      expect(notificationService.sendOutdatedReviewNotification).not.toHaveBeenCalled();
+    });
+
     it('should skip dismissed reviews (state=DISMISSED)', async () => {
       const pr = { number: 42, id: 'pr42', headSha: 'newsha123' };
       const review = {
@@ -169,6 +208,28 @@ describe('CheckOutdatedReviewsUseCase', () => {
 
     it('should return false for closed PR state', async () => {
       stateMachine.getState = jest.fn().mockResolvedValue('closed');
+
+      const result = await useCase._isReviewOutdated(
+        instance, repo,
+        { headSha: 'new', number: 1 },
+        { state: 'APPROVED', headSha: 'old' }
+      );
+      expect(result).toBe(false);
+    });
+
+    it('should return false for approved PR state', async () => {
+      stateMachine.getState = jest.fn().mockResolvedValue('approved');
+
+      const result = await useCase._isReviewOutdated(
+        instance, repo,
+        { headSha: 'new', number: 1 },
+        { state: 'APPROVED', headSha: 'old' }
+      );
+      expect(result).toBe(false);
+    });
+
+    it('should return false for rejected PR state', async () => {
+      stateMachine.getState = jest.fn().mockResolvedValue('rejected');
 
       const result = await useCase._isReviewOutdated(
         instance, repo,

@@ -655,7 +655,7 @@ describe('PRStateMachine', () => {
       expect(isSkipped).toBe(true);
     });
 
-    test('should auto-transition to PENDING when skip period expires', async () => {
+    test('should return false when skip period has expired', async () => {
       const duration = 100; // 100ms
       await stateMachine.markAsSkipped(
         'github/hinha/agent-pr',
@@ -675,13 +675,74 @@ describe('PRStateMachine', () => {
 
       expect(isSkipped).toBe(false);
 
-      // Verify state transitioned back to PENDING
+      // State should remain as SKIPPED (no auto-transition to PENDING anymore)
       const state = await stateMachine.getState(
         'github/hinha/agent-pr',
         'agent-pr',
         123
       );
-      expect(state).toBe(PRState.PENDING);
+      expect(state).toBe(PRState.SKIPPED);
+    });
+
+    test('should return true for PR in APPROVED state with active skip metadata', async () => {
+      // First mark as skipped (stores metadata)
+      const duration = 3600000; // 1 hour
+      await stateMachine.markAsSkipped(
+        'github/hinha/agent-pr',
+        'agent-pr',
+        123,
+        duration
+      );
+
+      // Then transition to APPROVED (simulating PR being approved)
+      await stateMachine.transition(
+        'github/hinha/agent-pr',
+        'agent-pr',
+        123,
+        PRState.APPROVED
+      );
+
+      // Should still be considered skipped due to metadata
+      const isSkipped = await stateMachine.isSkipped(
+        'github/hinha/agent-pr',
+        'agent-pr',
+        123
+      );
+
+      expect(isSkipped).toBe(true);
+    });
+
+    test('should find most recent skip metadata in transition history', async () => {
+      // Mark as skipped
+      await stateMachine.markAsSkipped(
+        'github/hinha/agent-pr',
+        'agent-pr',
+        123,
+        3600000 // 1 hour
+      );
+
+      // Transition through multiple states
+      await stateMachine.transition(
+        'github/hinha/agent-pr',
+        'agent-pr',
+        123,
+        PRState.APPROVED
+      );
+      await stateMachine.transition(
+        'github/hinha/agent-pr',
+        'agent-pr',
+        123,
+        PRState.PROCESSED
+      );
+
+      // Should still find the skip metadata
+      const isSkipped = await stateMachine.isSkipped(
+        'github/hinha/agent-pr',
+        'agent-pr',
+        123
+      );
+
+      expect(isSkipped).toBe(true);
     });
   });
 

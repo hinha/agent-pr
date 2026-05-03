@@ -53,7 +53,7 @@ class CommandHandler {
     const { instance, repo } = this._findRepoByThreadId(message_thread_id, config);
     if (!instance || !repo) {
       this.logger.warn(`[CommandHandler] No repo found for thread_id: ${message_thread_id}`);
-      await this._replyMessage(message, '⚠️ Command tidak valid di thread ini.');
+      await this._replyMessage(message, '⚠️ Invalid command in this thread.');
       return { success: false, error: 'Thread not associated with any repo' };
     }
 
@@ -74,7 +74,7 @@ class CommandHandler {
         break;
 
       default:
-        await this._replyMessage(message, `❌ Unknown command: ${command}\nGunakan /help untuk melihat command yang tersedia.`);
+        await this._replyMessage(message, `❌ Unknown command: ${command}\nUse /help to see available commands.`);
         result = { success: false, error: 'Unknown command' };
     }
 
@@ -137,13 +137,13 @@ class CommandHandler {
    */
   async _handleReset(args, instance, repo, message) {
     if (args.length !== 1) {
-      await this._replyMessage(message, '❌ Usage: /reset <pr_number>\nContoh: /reset 9');
+      await this._replyMessage(message, '❌ Usage: /reset <pr_number>\nExample: /reset 9');
       return { success: false, error: 'Invalid arguments' };
     }
 
     const prNumber = parseInt(args[0], 10);
     if (isNaN(prNumber) || prNumber <= 0) {
-      await this._replyMessage(message, '❌ Invalid PR number. Gunakan: /reset <pr_number>');
+      await this._replyMessage(message, '❌ Invalid PR number. Usage: /reset <pr_number>');
       return { success: false, error: 'Invalid PR number' };
     }
 
@@ -165,7 +165,7 @@ class CommandHandler {
       // Also clear review state if exists
       await stateRepository.clearReviewState(prNumber);
 
-      await this._replyMessage(message, `✅ PR #${prNumber} state has been reset.\n\nPR ini akan diproses ulang pada polling berikutnya.`);
+      await this._replyMessage(message, `✅ PR #${prNumber} state has been reset.\n\nThis PR will be reprocessed in the next polling cycle.`);
 
       this.logger.info(`[CommandHandler] PR #${prNumber} reset complete`);
 
@@ -176,7 +176,7 @@ class CommandHandler {
       };
     } catch (error) {
       this.logger.error(`[CommandHandler] Error resetting PR #${prNumber}:`, error);
-      await this._replyMessage(message, `❌ Gagal reset PR #${prNumber}: ${error.message}`);
+      await this._replyMessage(message, `❌ Failed to reset PR #${prNumber}: ${error.message}`);
       return { success: false, error: error.message };
     }
   }
@@ -187,13 +187,13 @@ class CommandHandler {
    */
   async _handleStatus(args, instance, repo, message) {
     if (args.length !== 1) {
-      await this._replyMessage(message, '❌ Usage: /status <pr_number>\nContoh: /status 9');
+      await this._replyMessage(message, '❌ Usage: /status <pr_number>\nExample: /status 9');
       return { success: false, error: 'Invalid arguments' };
     }
 
     const prNumber = parseInt(args[0], 10);
     if (isNaN(prNumber) || prNumber <= 0) {
-      await this._replyMessage(message, '❌ Invalid PR number. Gunakan: /status <pr_number>');
+      await this._replyMessage(message, '❌ Invalid PR number. Usage: /status <pr_number>');
       return { success: false, error: 'Invalid PR number' };
     }
 
@@ -220,7 +220,7 @@ class CommandHandler {
       };
     } catch (error) {
       this.logger.error(`[CommandHandler] Error getting status for PR #${prNumber}:`, error);
-      await this._replyMessage(message, `❌ Gagal mendapatkan status PR #${prNumber}: ${error.message}`);
+      await this._replyMessage(message, `❌ Failed to get status for PR #${prNumber}: ${error.message}`);
       return { success: false, error: error.message };
     }
   }
@@ -233,12 +233,12 @@ class CommandHandler {
     const helpMsg =
       `📖 <b>Available Commands</b>\n\n` +
       `/reset &lt;pr_number&gt;\n` +
-      `  Reset state PR agar diproses ulang.\n` +
-      `  Contoh: /reset 9\n\n` +
+      `  Reset PR state for reprocessing.\n` +
+      `  Example: /reset 9\n\n` +
       `/status &lt;pr_number&gt;\n` +
-      `  Lihat status PR saat ini.\n` +
-      `  Contoh: /status 9\n\n` +
-      `⚠️ <b>Note:</b> Command bekerja di dalam thread repo saja.`;
+      `  View current PR status.\n` +
+      `  Example: /status 9\n\n` +
+      `⚠️ <b>Note:</b> Commands only work within repo threads.`;
 
     await this._replyMessage(message, helpMsg);
 

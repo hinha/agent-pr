@@ -29,6 +29,16 @@ describe('CallbackHandler', () => {
     };
 
     mockStateMachine = jest.fn();
+    mockStateMachine.getState = jest.fn().mockResolvedValue('notified');
+    mockStateMachine.isTerminalState = jest.fn().mockReturnValue(false);
+    mockStateMachine.markAsSkipped = jest.fn().mockResolvedValue({
+      success: true,
+      currentState: 'skipped'
+    });
+    mockStateMachine.transition = jest.fn().mockResolvedValue({
+      currentState: 'skipped',
+      notificationCount: 1
+    });
 
     mockEventBus = {
       emitAsync: jest.fn().mockResolvedValue()
@@ -60,7 +70,7 @@ describe('CallbackHandler', () => {
           owner: 'testorg',
           mcpName: 'github-work',
           agent: {
-            review_timeot_string: '20 menit'
+            review_timeot_string: '20 minutes'
           },
           repos: {
             'test-repo': { name: 'test-repo', thread_id: 456 }
@@ -71,7 +81,7 @@ describe('CallbackHandler', () => {
           owner: 'otherorg',
           mcpName: 'github-other',
           agent: {
-            review_timeot_string: '20 menit'
+            review_timeot_string: '20 minutes'
           },
           repos: {
             'another-repo': { name: 'another-repo', thread_id: 789 }
@@ -167,6 +177,91 @@ describe('CallbackHandler', () => {
         repoIdx: 0,
         prId: '22222'
       });
+    });
+
+    test('should parse silent callback', () => {
+      const data = 'silent:0:0:22222';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'silent',
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: '22222'
+      });
+    });
+
+    test('should parse silent_dur callback with hours', () => {
+      const data = 'silent_dur:0:0:22222:8';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'silent_dur',
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: '22222',
+        hours: 8
+      });
+    });
+
+    test('should parse silent_dur callback with 48 hours (2 days)', () => {
+      const data = 'silent_dur:0:0:22222:48';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'silent_dur',
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: '22222',
+        hours: 48
+      });
+    });
+
+    test('should parse silent_custom callback', () => {
+      const data = 'silent_custom:0:0:22222';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toEqual({
+        action: 'silent_custom',
+        instanceIdx: 0,
+        repoIdx: 0,
+        prId: '22222'
+      });
+    });
+
+    test('should reject silent_dur with invalid hours (not in whitelist)', () => {
+      const data = 'silent_dur:0:0:22222:5';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toBeNull();
+    });
+
+    test('should reject silent_dur with negative hours', () => {
+      const data = 'silent_dur:0:0:22222:-1';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toBeNull();
+    });
+
+    test('should reject silent_dur with NaN hours', () => {
+      const data = 'silent_dur:0:0:22222:abc';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toBeNull();
+    });
+
+    test('should reject silent_dur with zero hours', () => {
+      const data = 'silent_dur:0:0:22222:0';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toBeNull();
+    });
+
+    test('should reject silent_dur with hours exceeding max', () => {
+      const data = 'silent_dur:0:0:22222:100';
+      const result = handler._parseCallbackData(data);
+
+      expect(result).toBeNull();
     });
 
     test('should parse review_level callback with level', () => {
@@ -328,7 +423,7 @@ describe('CallbackHandler', () => {
       expect(keyboard[0][0].text).toContain('LOW');
       expect(keyboard[1][0].text).toContain('MEDIUM');
       expect(keyboard[2][0].text).toContain('HIGH');
-      expect(keyboard[3][0].text).toBe('❌ Batal');
+      expect(keyboard[3][0].text).toBe('❌ Cancel');
     });
 
     test('should build keyboard with custom levels from config', async () => {
@@ -365,7 +460,7 @@ describe('CallbackHandler', () => {
       expect(keyboard).toHaveLength(3); // low, high + cancel
       expect(keyboard[0][0].text).toContain('LOW');
       expect(keyboard[1][0].text).toContain('HIGH');
-      expect(keyboard[2][0].text).toBe('❌ Batal');
+      expect(keyboard[2][0].text).toBe('❌ Cancel');
     });
   });
 
@@ -387,7 +482,7 @@ describe('CallbackHandler', () => {
 
       expect(result.success).toBe(true);
       expect(result.action).toBe('confirm_pending');
-      expect(mockQuery.answer).toHaveBeenCalledWith('Konfirmasi approve...');
+      expect(mockQuery.answer).toHaveBeenCalledWith('Confirming approval...');
       expect(mockConfirmationManager.add).toHaveBeenCalledWith(
         123, 500, originalKeyboard, 'approve', {}
       );
@@ -671,6 +766,256 @@ describe('CallbackHandler', () => {
     });
   });
 
+  describe('handleCallbackQuery - silent', () => {
+    test('should show duration selection keyboard', async () => {
+      const mockQuery = {
+        data: 'silent:0:0:12345',
+        answer: jest.fn().mockResolvedValue(),
+        message: { message_id: 999 }
+      };
+
+      handler.bot = {
+        sendMessage: jest.fn().mockResolvedValue({ message_id: 1000 })
+      };
+      handler.chatId = 123;
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('show_silent_options');
+      expect(mockQuery.answer).toHaveBeenCalledWith();
+      expect(handler.bot.sendMessage).toHaveBeenCalled();
+
+      const sendMessageCall = handler.bot.sendMessage.mock.calls[0];
+      expect(sendMessageCall[0]).toBe(123); // chatId
+      expect(sendMessageCall[1]).toContain('Silent Mode');
+      expect(sendMessageCall[2].message_thread_id).toBe(456); // threadId
+
+      const keyboard = sendMessageCall[2].reply_markup.inline_keyboard;
+      expect(keyboard).toHaveLength(3);
+      expect(keyboard[0][0].text).toBe('🔇 3 Hours');
+      expect(keyboard[0][1].text).toBe('🔇 6 Hours');
+      expect(keyboard[1][0].text).toBe('🔇 8 Hours');
+      expect(keyboard[1][1].text).toBe('✏️ Custom');
+      expect(keyboard[2][0].text).toBe('❌ Cancel');
+    });
+  });
+
+  describe('handleCallbackQuery - silent_dur', () => {
+    test('should execute silent with 3 hours', async () => {
+      const mockQuery = {
+        data: 'silent_dur:0:0:12345:3',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Silencing...');
+      expect(mockReviewPRUseCase.skip).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.any(Object),
+        expect.any(Object),
+        3 * 60 * 60 * 1000
+      );
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('silenced for 3 hours'),
+        { parse_mode: 'HTML' }
+      );
+    });
+
+    test('should execute silent with 8 hours', async () => {
+      const mockQuery = {
+        data: 'silent_dur:0:0:12345:8',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockReviewPRUseCase.skip).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.any(Object),
+        expect.any(Object),
+        8 * 60 * 60 * 1000
+      );
+    });
+
+    test('should execute silent with 48 hours (2 days)', async () => {
+      const mockQuery = {
+        data: 'silent_dur:0:0:12345:48',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockReviewPRUseCase.skip).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.any(Object),
+        expect.any(Object),
+        48 * 60 * 60 * 1000
+      );
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('silenced for 48 hours'),
+        { parse_mode: 'HTML' }
+      );
+    });
+
+    test('should handle silent_dur failure', async () => {
+      mockReviewPRUseCase.skip.mockResolvedValue({
+        success: false,
+        error: 'Silent failed'
+      });
+
+      const mockQuery = {
+        data: 'silent_dur:0:0:12345:6',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(false);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Failed to silent: Silent failed', true);
+    });
+
+    test('should inform user when PR is already approved (no silent needed)', async () => {
+      const mockQuery = {
+        data: 'silent_dur:0:0:12345:6',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      // PR is in approved state
+      handler.stateMachine.getState = jest.fn().mockResolvedValue('approved');
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.alreadyFinal).toBe(true);
+      expect(result.currentState).toBe('approved');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('has been approved'),
+        { parse_mode: 'HTML' }
+      );
+      expect(mockReviewPRUseCase.skip).not.toHaveBeenCalled();
+    });
+
+    test('should inform user when PR is closed (no silent needed)', async () => {
+      const mockQuery = {
+        data: 'silent_dur:0:0:12345:3',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      handler.stateMachine.getState = jest.fn().mockResolvedValue('closed');
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.alreadyFinal).toBe(true);
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('has been closed'),
+        { parse_mode: 'HTML' }
+      );
+    });
+
+    test('should inform user when PR is processed (no silent needed)', async () => {
+      const mockQuery = {
+        data: 'silent_dur:0:0:12345:8',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      handler.stateMachine.getState = jest.fn().mockResolvedValue('processed');
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.alreadyFinal).toBe(true);
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('has been fully processed'),
+        { parse_mode: 'HTML' }
+      );
+    });
+
+    test('should inform user when PR is rejected (no silent needed)', async () => {
+      const mockQuery = {
+        data: 'silent_dur:0:0:12345:3',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      handler.stateMachine.getState = jest.fn().mockResolvedValue('rejected');
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.alreadyFinal).toBe(true);
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('Changes were requested for this PR'),
+        { parse_mode: 'HTML' }
+      );
+    });
+  });
+
+  describe('handleCallbackQuery - silent_custom', () => {
+    test('should show secondary keyboard with more durations', async () => {
+      const mockQuery = {
+        data: 'silent_custom:0:0:12345',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('show_custom_silent_options');
+      expect(mockQuery.answer).toHaveBeenCalledWith();
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('Custom Duration'),
+        expect.objectContaining({
+          parse_mode: 'HTML',
+          reply_markup: expect.any(Object)
+        })
+      );
+
+      const keyboard = mockQuery.editMessageText.mock.calls[0][1].reply_markup.inline_keyboard;
+      expect(keyboard).toHaveLength(4);
+      expect(keyboard[0][0].text).toBe('🔇 1 Hour');
+      expect(keyboard[0][1].text).toBe('🔇 2 Hours');
+      expect(keyboard[1][0].text).toBe('🔇 4 Hours');
+      expect(keyboard[1][1].text).toBe('🔇 12 Hours');
+      expect(keyboard[2][0].text).toBe('🔇 24 Hours');
+      expect(keyboard[2][1].text).toBe('🔇 2 Days');
+      expect(keyboard[3][0].text).toBe('❌ Cancel');
+    });
+
+    test('should use silent_dur callback format for custom durations', async () => {
+      const mockQuery = {
+        data: 'silent_custom:0:0:12345',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      const keyboard = mockQuery.editMessageText.mock.calls[0][1].reply_markup.inline_keyboard;
+
+      // Verify all duration buttons use silent_dur format
+      expect(keyboard[0][0].callback_data).toBe('silent_dur:0:0:12345:1');
+      expect(keyboard[0][1].callback_data).toBe('silent_dur:0:0:12345:2');
+      expect(keyboard[1][0].callback_data).toBe('silent_dur:0:0:12345:4');
+      expect(keyboard[1][1].callback_data).toBe('silent_dur:0:0:12345:12');
+      expect(keyboard[2][0].callback_data).toBe('silent_dur:0:0:12345:24');
+      expect(keyboard[2][1].callback_data).toBe('silent_dur:0:0:12345:48');
+    });
+  });
+
   describe('handleCallbackQuery - review_level', () => {
     test('should handle review_level with low level', async () => {
       const mockQuery = {
@@ -685,7 +1030,7 @@ describe('CallbackHandler', () => {
       expect(mockQuery.answer).toHaveBeenCalledWith('🚀 Running low review...');
       expect(mockQuery.editMessageText).toHaveBeenCalledTimes(2);
       expect(mockQuery.editMessageText).toHaveBeenNthCalledWith(1,
-        expect.stringContaining('LOW Review sedang berjalan'),
+        expect.stringContaining('LOW Review in progress'),
         expect.objectContaining({
           parse_mode: 'HTML',
           reply_markup: { inline_keyboard: [] }
@@ -800,8 +1145,8 @@ describe('CallbackHandler', () => {
       await handler.handleCallbackQuery(mockQuery, mockConfig);
 
       const firstCall = mockQuery.editMessageText.mock.calls[0];
-      expect(firstCall[0]).toContain('HIGH Review sedang berjalan');
-      expect(firstCall[0]).toContain('Estimasi waktu: ~20 menit');
+      expect(firstCall[0]).toContain('HIGH Review in progress');
+      expect(firstCall[0]).toContain('Estimated time: ~20 minutes');
       expect(firstCall[1]).toEqual(
         expect.objectContaining({
           parse_mode: 'HTML',
@@ -817,7 +1162,7 @@ describe('CallbackHandler', () => {
             key: 'github/testorg',
             owner: 'testorg',
             agent: {
-              review_timeot_string: '30 menit'
+              review_timeot_string: '30 minutes'
             },
             repos: {
               'test-repo': { name: 'test-repo', thread_id: 456 }
@@ -835,7 +1180,7 @@ describe('CallbackHandler', () => {
       await handler.handleCallbackQuery(mockQuery, customConfig);
 
       const firstCall = mockQuery.editMessageText.mock.calls[0];
-      expect(firstCall[0]).toContain('Estimasi waktu: ~30 menit');
+      expect(firstCall[0]).toContain('Estimated time: ~30 minutes');
     });
 
     test('should use default timeout string when not configured', async () => {
@@ -860,7 +1205,7 @@ describe('CallbackHandler', () => {
       await handler.handleCallbackQuery(mockQuery, noAgentConfig);
 
       const firstCall = mockQuery.editMessageText.mock.calls[0];
-      expect(firstCall[0]).toContain('Estimasi waktu: ~20 menit');
+      expect(firstCall[0]).toContain('Estimated time: ~20 minutes');
     });
   });
 
@@ -1102,8 +1447,8 @@ describe('CallbackHandler', () => {
       expect(mockQuery.editMessageText).toHaveBeenCalledTimes(2);
 
       const firstCall = mockQuery.editMessageText.mock.calls[0];
-      expect(firstCall[0]).toContain('HIGH Re-review sedang berjalan');
-      expect(firstCall[0]).toContain('Estimasi waktu: ~20 menit');
+      expect(firstCall[0]).toContain('HIGH Re-review in progress');
+      expect(firstCall[0]).toContain('Estimated time: ~20 minutes');
       expect(firstCall[1]).toEqual(
         expect.objectContaining({
           parse_mode: 'HTML',
@@ -1167,7 +1512,7 @@ describe('CallbackHandler', () => {
             key: 'github/testorg',
             owner: 'testorg',
             agent: {
-              review_timeot_string: '30 menit'
+              review_timeot_string: '30 minutes'
             },
             repos: {
               'test-repo': { name: 'test-repo', thread_id: 456 }
@@ -1191,7 +1536,7 @@ describe('CallbackHandler', () => {
       await handler.handleCallbackQuery(mockQuery, customConfig);
 
       const firstCall = mockQuery.editMessageText.mock.calls[0];
-      expect(firstCall[0]).toContain('Estimasi waktu: ~30 menit');
+      expect(firstCall[0]).toContain('Estimated time: ~30 minutes');
     });
   });
 });

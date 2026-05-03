@@ -65,6 +65,15 @@ class CheckOutdatedReviewsUseCase {
       const owner = instance.owner;
 
       for (const [prNumber, { pr, reviews }] of prOutdatedMap) {
+        // Check if PR is currently silenced
+        const isSkipped = await this.stateMachine.isSkipped(instanceKey, repoName, prNumber);
+        if (isSkipped) {
+          this.logger.debug(
+            `[CheckOutdatedReviewsUseCase] Skipping outdated review for silenced PR #${prNumber}`
+          );
+          continue;
+        }
+
         // Check if user dismissed notification for this exact headSha
         const fsRepo = this.stateMachine.stateRepository.getRepository(owner, repoName);
         const isDismissed = await fsRepo.isOutdatedNotified(
@@ -145,7 +154,7 @@ class CheckOutdatedReviewsUseCase {
     // Review is outdated if:
     // 1. It's not dismissed
     // 2. The head SHA has changed
-    // 3. The review is not in a terminal state
+    // 3. The PR is NOT in a terminal state (approved, rejected, closed, processed)
 
     if (review.state === 'DISMISSED') {
       return false;
@@ -155,9 +164,10 @@ class CheckOutdatedReviewsUseCase {
       return false;
     }
 
-    // Check PR state - don't notify if PR is already processed
+    // Check PR state - don't notify if PR is in a terminal state
     const prState = await this.stateMachine.getState(instance.key, repo.name, pr.number);
-    if (prState === 'processed' || prState === 'closed') {
+    const terminalStates = ['processed', 'closed', 'approved', 'rejected'];
+    if (terminalStates.includes(prState)) {
       return false;
     }
 

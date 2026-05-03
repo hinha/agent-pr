@@ -278,6 +278,9 @@ class TelegramBotAdapter extends ITelegramService {
           ],
           [
             { text: '🔗 Visit PR', callback_data: `visit:${instanceIdx}:${repoIdx}:${pr.id}` },
+            { text: '🔇 Silent', callback_data: `silent:${instanceIdx}:${repoIdx}:${pr.id}` }
+          ],
+          [
             { text: '❌ Dismiss', callback_data: `dismiss_outdated:${instanceIdx}:${repoIdx}:${pr.id}:${reviewId}` }
           ]
         ];
@@ -536,7 +539,7 @@ class TelegramBotAdapter extends ITelegramService {
       ],
       [
         { text: '🔒 Close PR', callback_data: `close:${instanceIdx}:${repoIdx}:${pr.id}` },
-        { text: '⏸️ Skip (3h)', callback_data: `skip:${instanceIdx}:${repoIdx}:${pr.id}` }
+        { text: '🔇 Silent', callback_data: `silent:${instanceIdx}:${repoIdx}:${pr.id}` }
       ]
     ];
   }

@@ -109,6 +109,18 @@ class CallbackHandler {
           result = await this._handleSkip(query, instance, repo, pr);
           break;
 
+        case 'silent':
+          result = await this._handleSilent(query, instance, repo, pr);
+          break;
+
+        case 'silent_dur':
+          result = await this._handleSilentDur(query, instance, repo, pr, callback.hours);
+          break;
+
+        case 'silent_custom':
+          result = await this._handleSilentCustom(query, instance, repo, pr);
+          break;
+
         case 'review_level':
           result = await this._handleReviewLevel(query, instance, repo, pr, callback.level);
           break;
@@ -187,6 +199,15 @@ class CallbackHandler {
     if (parts.length >= 5) {
       if (callback.action === 'review_level' || callback.action === 'review_level_outdated') {
         callback.level = parts[4];
+      } else if (callback.action === 'silent_dur') {
+        const parsedHours = parseInt(parts[4], 10);
+        const allowedHours = new Set([1, 2, 3, 4, 6, 8, 12, 24, 48]);
+
+        if (!Number.isInteger(parsedHours) || !allowedHours.has(parsedHours)) {
+          return null; // reject malformed/tampered callback
+        }
+
+        callback.hours = parsedHours;
       } else {
         // For approve_outdated, re_review, dismiss_outdated: parts[4] is reviewId
         callback.reviewId = parts[4];
@@ -350,16 +371,16 @@ class CallbackHandler {
 
     // Add cancel button
     keyboard.push([
-      { text: '❌ Batal', callback_data: `review_cancel:${instanceIdx}:${repoIdx}:${pr.id}` }
+      { text: '❌ Cancel', callback_data: `review_cancel:${instanceIdx}:${repoIdx}:${pr.id}` }
     ]);
 
     // Send NEW message (not edit) - this matches feature branch UX
     await this.bot.sendMessage(
       this.chatId,
-      `🔍 <b>Pilih Level Review untuk ${this._escapeHtml(`${instance.owner}/${repo.name}`)} PR #${pr.number}</b>\n\n` +
+      `🔍 <b>Select Review Level for ${this._escapeHtml(`${instance.owner}/${repo.name}`)} PR #${pr.number}</b>\n\n` +
       `📌 <b>Title:</b> ${this._escapeHtml(pr.title)}\n` +
       `👤 <b>Author:</b> ${this._escapeHtml(pr.author)}\n\n` +
-      `Pilih level review:`,
+      `Choose review level:`,
       {
         reply_markup: { inline_keyboard: keyboard },
         message_thread_id: repo.threadId,
@@ -382,7 +403,7 @@ class CallbackHandler {
       `[CallbackHandler] Visit PR requested for PR with id=${pr.id}`
     );
 
-    await query.answer('🔗 Membuka halaman PR...');
+    await query.answer('🔗 Opening PR page...');
 
     // Resolve fresh PR data for correct URL
     const githubAdapter = this.githubAdapter.create(instance.key);
@@ -464,7 +485,7 @@ class CallbackHandler {
   async _handleApprove(query, instance, repo, pr) {
     this.logger.info(`[CallbackHandler] Approve confirmation requested for PR with id=${pr.id}`);
 
-    await query.answer('Konfirmasi approve...');
+    await query.answer('Confirming approval...');
 
     const originalKeyboard = query.message?.reply_markup?.inline_keyboard;
     const chatId = query.message?.chat?.id || this.chatId;
@@ -582,6 +603,155 @@ class CallbackHandler {
   }
 
   /**
+   * Handle silent action - show duration selection keyboard
+   * @private
+   */
+  async _handleSilent(query, instance, repo, pr) {
+    this.logger.info(`[CallbackHandler] Silent requested for PR with id=${pr.id}`);
+
+    await query.answer();
+
+    // Resolve fresh PR data for display
+    const githubAdapter = this.githubAdapter.create(instance.key);
+    pr = await this._resolveFreshPR(pr, repo, githubAdapter);
+
+    const instanceIdx = instance.instanceIdx;
+    const repoIdx = repo.repoIdx;
+
+    // Build duration selection keyboard
+    const keyboard = [
+      [
+        { text: '🔇 3 Hours', callback_data: `silent_dur:${instanceIdx}:${repoIdx}:${pr.id}:3` },
+        { text: '🔇 6 Hours', callback_data: `silent_dur:${instanceIdx}:${repoIdx}:${pr.id}:6` }
+      ],
+      [
+        { text: '🔇 8 Hours', callback_data: `silent_dur:${instanceIdx}:${repoIdx}:${pr.id}:8` },
+        { text: '✏️ Custom', callback_data: `silent_custom:${instanceIdx}:${repoIdx}:${pr.id}` }
+      ],
+      [
+        { text: '❌ Cancel', callback_data: `review_cancel:${instanceIdx}:${repoIdx}:${pr.id}` }
+      ]
+    ];
+
+    // Send NEW message to thread
+    await this.bot.sendMessage(
+      this.chatId,
+      `🔇 <b>Silent Mode for ${this._escapeHtml(`${instance.owner}/${repo.name}`)} PR #${pr.number}</b>\n\n` +
+      `📌 <b>Title:</b> ${this._escapeHtml(pr.title)}\n\n` +
+      `Choose silent duration:`,
+      {
+        reply_markup: { inline_keyboard: keyboard },
+        message_thread_id: repo.threadId,
+        parse_mode: 'HTML'
+      }
+    );
+
+    return {
+      success: true,
+      action: 'show_silent_options'
+    };
+  }
+
+  /**
+   * Handle silent_dur action - execute silent with chosen duration
+   * @private
+   */
+  async _handleSilentDur(query, instance, repo, pr, hours) {
+    this.logger.info(`[CallbackHandler] Silencing PR with id=${pr.id} for ${hours} hours`);
+
+    await query.answer('Silencing...');
+
+    const githubAdapter = this.githubAdapter.create(instance.key);
+    const freshPR = await this._resolveFreshPR(pr, repo, githubAdapter);
+
+    // Check current PR state - some states can't transition to SKIPPED
+    const currentState = await this.stateMachine.getState(instance.key, repo.name, freshPR.number);
+    const finalStates = ['approved', 'rejected', 'closed', 'processed'];
+
+    if (finalStates.includes(currentState)) {
+      // PR is already in a final state - notifications have stopped
+      const stateMessages = {
+        approved: '✅ This PR has been approved',
+        rejected: '❌ Changes were requested for this PR',
+        closed: '🔒 This PR has been closed',
+        processed: '✅ This PR has been fully processed'
+      };
+
+      await query.editMessageText(
+        `${stateMessages[currentState]}\n\n` +
+        `🔇 Silent mode is not needed - notifications have already stopped for this PR.`,
+        { parse_mode: 'HTML' }
+      );
+
+      return { success: true, alreadyFinal: true, currentState };
+    }
+
+    const durationMs = hours * 60 * 60 * 1000;
+    const result = await this.reviewPRUseCase.skip(instance, repo, freshPR, durationMs);
+
+    if (result.success) {
+      const silentUntil = new Date(Date.now() + durationMs).toLocaleString('en-GB', {
+        timeZone: 'Asia/Jakarta',
+        day: '2-digit', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: false
+      });
+      await query.editMessageText(
+        `🔇 <b>PR #${freshPR.number} silenced for ${hours} hour${hours > 1 ? 's' : ''}</b>\n\n` +
+        `Notifications will resume at ${silentUntil} WIB`,
+        { parse_mode: 'HTML' }
+      );
+    } else {
+      await query.answer(`Failed to silent: ${result.error}`, true);
+    }
+
+    return result;
+  }
+
+  /**
+   * Handle silent_custom action - show secondary keyboard with more durations
+   * @private
+   */
+  async _handleSilentCustom(query, instance, repo, pr) {
+    this.logger.info(`[CallbackHandler] Custom silent duration requested for PR #${pr.number}`);
+
+    await query.answer();
+
+    const instanceIdx = instance.instanceIdx;
+    const repoIdx = repo.repoIdx;
+
+    const keyboard = [
+      [
+        { text: '🔇 1 Hour', callback_data: `silent_dur:${instanceIdx}:${repoIdx}:${pr.id}:1` },
+        { text: '🔇 2 Hours', callback_data: `silent_dur:${instanceIdx}:${repoIdx}:${pr.id}:2` }
+      ],
+      [
+        { text: '🔇 4 Hours', callback_data: `silent_dur:${instanceIdx}:${repoIdx}:${pr.id}:4` },
+        { text: '🔇 12 Hours', callback_data: `silent_dur:${instanceIdx}:${repoIdx}:${pr.id}:12` }
+      ],
+      [
+        { text: '🔇 24 Hours', callback_data: `silent_dur:${instanceIdx}:${repoIdx}:${pr.id}:24` },
+        { text: '🔇 2 Days', callback_data: `silent_dur:${instanceIdx}:${repoIdx}:${pr.id}:48` }
+      ],
+      [
+        { text: '❌ Cancel', callback_data: `review_cancel:${instanceIdx}:${repoIdx}:${pr.id}` }
+      ]
+    ];
+
+    await query.editMessageText(
+      `🔇 <b>Custom Duration</b>\n\nChoose silent duration:`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: keyboard }
+      }
+    );
+
+    return {
+      success: true,
+      action: 'show_custom_silent_options'
+    };
+  }
+
+  /**
    * Handle review level selection
    * @private
    */
@@ -596,13 +766,13 @@ class CallbackHandler {
     pr = await this._resolveFreshPR(pr, repo, githubAdapter);
 
     // Immediately show processing confirmation and disable buttons
-    const timeoutString = instance.agent?.review_timeot_string || '20 menit';
+    const timeoutString = instance.agent?.review_timeot_string || '20 minutes';
     await query.editMessageText(
-      `⏳ <b>${level.toUpperCase()} Review sedang berjalan...</b>\n\n` +
+      `⏳ <b>${level.toUpperCase()} Review in progress...</b>\n\n` +
       `📌 PR #${pr.number}: ${this._escapeHtml(pr.title)}\n` +
       `📂 ${this._escapeHtml(`${instance.owner}/${repo.name}`)}\n\n` +
-      `⏱️ Estimasi waktu: ~${timeoutString}\n` +
-      `Silakan tunggu, hasil review akan muncul di sini.`,
+      `⏱️ Estimated time: ~${timeoutString}\n` +
+      `Please wait, the review results will appear here.`,
       { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } }
     );
 
@@ -664,7 +834,7 @@ class CallbackHandler {
   async _handleApproveOutdated(query, instance, repo, pr, reviewId) {
     this.logger.info(`[CallbackHandler] Approve outdated confirmation requested for review ${reviewId}`);
 
-    await query.answer('Konfirmasi approve...');
+    await query.answer('Confirming approval...');
 
     const originalKeyboard = query.message?.reply_markup?.inline_keyboard;
     const chatId = query.message?.chat?.id || this.chatId;
@@ -829,13 +999,13 @@ class CallbackHandler {
     pr = await this._resolveFreshPR(pr, repo, githubAdapter);
 
     // Immediately show processing confirmation and disable buttons
-    const timeoutString = instance.agent?.review_timeot_string || '20 menit';
+    const timeoutString = instance.agent?.review_timeot_string || '20 minutes';
     await query.editMessageText(
-      `⏳ <b>${level.toUpperCase()} Re-review sedang berjalan...</b>\n\n` +
+      `⏳ <b>${level.toUpperCase()} Re-review in progress...</b>\n\n` +
       `📌 PR #${pr.number}: ${this._escapeHtml(pr.title)}\n` +
       `📂 ${this._escapeHtml(`${instance.owner}/${repo.name}`)}\n\n` +
-      `⏱️ Estimasi waktu: ~${timeoutString}\n` +
-      `Silakan tunggu, hasil review akan muncul di sini.`,
+      `⏱️ Estimated time: ~${timeoutString}\n` +
+      `Please wait, the review results will appear here.`,
       { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } }
     );
 

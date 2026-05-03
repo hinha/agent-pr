@@ -301,17 +301,15 @@ class PRStateMachine {
   /**
    * Check if PR is currently skipped
    *
+   * Checks both the current state and any active skip metadata in transitions.
+   * This allows skip to work even when PR is in a terminal state (approved, rejected, etc.)
+   *
    * @param {string} instanceKey - Instance key
    * @param {string} repoName - Repository name
    * @param {number} prNumber - PR number
    * @returns {Promise<boolean>}
    */
   async isSkipped(instanceKey, repoName, prNumber) {
-    const state = await this.getState(instanceKey, repoName, prNumber);
-    if (state !== PRState.SKIPPED) {
-      return false;
-    }
-
     const key = this._buildStateKey(instanceKey, repoName, prNumber);
     const stateData = await this.stateRepository.get(key);
 
@@ -319,23 +317,34 @@ class PRStateMachine {
       return false;
     }
 
-    // Check last skip transition
-    const lastTransition = stateData.transitions[stateData.transitions.length - 1];
-    if (!lastTransition?.metadata?.skipUntil) {
-      return false;
+    // Find the most recent skip transition in the history
+    // This allows skip to work regardless of current state
+    for (let i = stateData.transitions.length - 1; i >= 0; i--) {
+      const transition = stateData.transitions[i];
+
+      // Check if this transition was a skip action (has skipUntil metadata)
+      if (transition.metadata?.skipUntil) {
+        const skipUntil = new Date(transition.metadata.skipUntil);
+
+        // Check if skip period has expired
+        if (new Date() > skipUntil) {
+          // Skip expired - clean up and return false
+          // Don't auto-transition to avoid disrupting current state
+          return false;
+        }
+
+        // Found active skip
+        return true;
+      }
     }
 
-    // Check if skip period has expired
-    const skipUntil = new Date(lastTransition.metadata.skipUntil);
-    if (new Date() > skipUntil) {
-      // Auto-transition back to pending
-      await this.transition(instanceKey, repoName, prNumber, PRState.PENDING, {
-        reason: 'Skip period expired'
-      });
-      return false;
+    // Also check if current state is SKIPPED for backward compatibility
+    const state = await this.getState(instanceKey, repoName, prNumber);
+    if (state === PRState.SKIPPED) {
+      return true;
     }
 
-    return true;
+    return false;
   }
 
   /**

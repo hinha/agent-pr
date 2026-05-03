@@ -451,6 +451,36 @@ describe('TelegramBotAdapter', () => {
       expect(sentMessage).toContain('reviewer-bot');
       expect(sentMessage).toContain('CHANGES_REQUESTED');
     });
+
+    test('should include Silent button in outdated review keyboard', async () => {
+      const notification = {
+        owner: 'testorg',
+        repo: 'test-repo',
+        pr: {
+          id: 'pr_123',
+          number: 456,
+          title: 'Test PR',
+          author: 'testuser',
+          repo: 'test-repo'
+        },
+        reviewState: 'APPROVED',
+        threadId: 456
+      };
+
+      await adapter.sendOutdatedReviewNotification(notification);
+
+      const options = adapter.bot.sendMessage.mock.calls[0][2];
+      const keyboard = options.reply_markup.inline_keyboard;
+
+      expect(keyboard).toHaveLength(3);
+      expect(keyboard[0]).toHaveLength(2); // Approve, Re-review
+      expect(keyboard[1]).toHaveLength(2); // Visit PR, Silent
+      expect(keyboard[1][1]).toEqual({
+        text: '🔇 Silent',
+        callback_data: expect.stringContaining('silent:')
+      });
+      expect(keyboard[2]).toHaveLength(1); // Dismiss
+    });
   });
 
   describe('callback_query forwarding', () => {
@@ -860,6 +890,14 @@ describe('TelegramBotAdapter', () => {
       expect(keyboard[1][1]).toEqual({
         text: '❌ Reject',
         callback_data: 'reject:0:0:pr_123'
+      });
+      expect(keyboard[2][0]).toEqual({
+        text: '🔒 Close PR',
+        callback_data: 'close:0:0:pr_123'
+      });
+      expect(keyboard[2][1]).toEqual({
+        text: '🔇 Silent',
+        callback_data: 'silent:0:0:pr_123'
       });
     });
   });
