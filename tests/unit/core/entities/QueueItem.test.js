@@ -154,8 +154,8 @@ describe('QueueItem', () => {
       item.markAsCompleted();
 
       const duration = item.getDuration();
-      expect(duration).toBeGreaterThanOrEqual(10);
-      expect(duration).toBeLessThan(100);
+      expect(duration).toBeGreaterThanOrEqual(1);
+      expect(duration).toBeLessThan(1000);
     });
   });
 

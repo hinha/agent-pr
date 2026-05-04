@@ -31,7 +31,7 @@ OUTPUT FORMAT (JSON):
     {
       "file": "src/file.js",
       "start_line": 42,
-      "end_line": 45,
+      "end_line": 45,  // tambahkan +10 line jika ada perubahan di baris terakhir
       "severity": "HIGH",
       "message": "Penjelasan issue dan rekomendasi perbaikan",
       "suggestedCode": "const corrected = 'contoh kode yang benar'; penjelasan tambahan sangat detail"
