@@ -184,6 +184,30 @@ class ReviewQueueWorker {
 
       const duration = Date.now() - startTime;
 
+      // Handle non-success result (use case catches errors, doesn't throw)
+      if (!result?.success) {
+        const err = new Error(result?.error || 'Review execution failed');
+
+        await this.queueUseCase.handleProcessingFailure(
+          queue.instanceKey,
+          item.id,
+          err
+        );
+
+        await this.eventBus.emitAsync('queue.item.failed', {
+          instanceKey: queue.instanceKey,
+          itemId: item.id,
+          error: err.message,
+          duration
+        });
+
+        this.logger.error(
+          `[ReviewQueueWorker] Review failed for ${item.instanceKey}/${item.repoName} PR #${item.prNumber}: ${err.message}`
+        );
+
+        return;
+      }
+
       // Complete processing
       await this.queueUseCase.completeProcessing(
         queue.instanceKey,
@@ -249,8 +273,14 @@ class ReviewQueueWorker {
             new Error('Processing timeout - recovery')
           );
         } else {
+          // Requeue item so worker can pick it up normally
+          queue.currentItem = null;
+          queue.status = 'idle';
+          queue.items.unshift(item);
+          await this.queueRepository.saveQueue(queue);
+
           this.logger.info(
-            `[ReviewQueueWorker] Found active item ${item.id} for ${queue.instanceKey}, will continue processing`
+            `[ReviewQueueWorker] Requeued interrupted item ${item.id} for ${queue.instanceKey}`
           );
         }
       }

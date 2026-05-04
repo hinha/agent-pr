@@ -29,7 +29,8 @@ describe('ReviewQueueWorker', () => {
 
     mockRepository = {
       getAllQueues: jest.fn(),
-      loadAllQueues: jest.fn()
+      loadAllQueues: jest.fn(),
+      saveQueue: jest.fn()
     };
     mockQueueUseCase = {
       dequeueForProcessing: jest.fn(),
@@ -390,7 +391,7 @@ describe('ReviewQueueWorker', () => {
       );
     });
 
-    test('should keep recent items as active', async () => {
+    test('should requeue recent active items', async () => {
       const queue = new ReviewQueue('github/test', 2);
       const item = new QueueItem({
         id: 'qi_test',
@@ -410,6 +411,11 @@ describe('ReviewQueueWorker', () => {
       await worker._recoverInterruptedItems();
 
       expect(mockQueueUseCase.handleProcessingFailure).not.toHaveBeenCalled();
+      // Verify item was requeued
+      expect(queue.currentItem).toBeNull();
+      expect(queue.status).toBe('idle');
+      expect(queue.items[0]).toBe(item);
+      expect(mockRepository.saveQueue).toHaveBeenCalledWith(queue);
     });
 
     test('should handle empty queues', async () => {
@@ -776,6 +782,52 @@ describe('ReviewQueueWorker', () => {
         expect.any(Error)
       );
     });
+
+    test('should route non-success result to handleProcessingFailure', async () => {
+      const queue = new ReviewQueue('github/test', 2);
+      const item = new QueueItem({
+        id: 'qi_test',
+        instanceKey: 'github/test',
+        repoName: 'repo',
+        prNumber: 123,
+        prTitle: 'Test PR',
+        level: 'medium'
+      });
+
+      mockConfig.instances['github/test'] = {
+        repos: { repo: { thread_id: 123 } }
+      };
+
+      // execute returns failure without throwing
+      mockReviewPRUseCase.execute.mockResolvedValue({
+        success: false,
+        error: 'Agent returned error'
+      });
+
+      await worker._processItem(queue, item);
+
+      // Should route to handleProcessingFailure (retry path)
+      expect(mockQueueUseCase.handleProcessingFailure).toHaveBeenCalledWith(
+        'github/test',
+        'qi_test',
+        expect.any(Error)
+      );
+      // Should NOT call completeProcessing
+      expect(mockQueueUseCase.completeProcessing).not.toHaveBeenCalled();
+      // Should emit failed event, not completed
+      expect(mockEventBus.emitAsync).toHaveBeenCalledWith(
+        'queue.item.failed',
+        expect.objectContaining({
+          instanceKey: 'github/test',
+          itemId: 'qi_test',
+          error: 'Agent returned error'
+        })
+      );
+      expect(mockEventBus.emitAsync).not.toHaveBeenCalledWith(
+        'queue.item.completed',
+        expect.anything()
+      );
+    });
   });
 
   describe('_recoverInterruptedItems', () => {
@@ -818,6 +870,11 @@ describe('ReviewQueueWorker', () => {
         'qi_timedout',
         expect.any(Error)
       );
+
+      // Active item should be requeued, not failed
+      expect(queue2.currentItem).toBeNull();
+      expect(queue2.status).toBe('idle');
+      expect(queue2.items[0]).toBe(item2);
     });
 
     test('should handle error from loadAllQueues', async () => {
