@@ -773,7 +773,7 @@ class CallbackHandler {
     if (!this.reviewQueueUseCase) {
       // Fallback: execute directly if queue not available
       this.logger.warn('[CallbackHandler] Queue not available, executing directly');
-      return await this._executeReviewDirectly(query, instance, repo, pr, level, githubAdapter);
+      return await this._executeReviewDirectly(query, instance, repo, pr, level, githubAdapter, { alreadyAnswered: true });
     }
 
     // Enqueue review
@@ -818,8 +818,10 @@ class CallbackHandler {
    * Execute review directly (fallback when queue is not available)
    * @private
    */
-  async _executeReviewDirectly(query, instance, repo, pr, level, githubAdapter) {
-    await query.answer(`🚀 Running ${level} review...`);
+  async _executeReviewDirectly(query, instance, repo, pr, level, githubAdapter, opts = {}) {
+    if (!opts.alreadyAnswered) {
+      await query.answer(`🚀 Running ${level} review...`);
+    }
 
     // Immediately show processing confirmation and disable buttons
     const timeoutString = instance.agent?.review_timeot_string || '20 minutes';

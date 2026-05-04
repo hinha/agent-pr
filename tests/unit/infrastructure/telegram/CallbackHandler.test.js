@@ -1027,7 +1027,7 @@ describe('CallbackHandler', () => {
       const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
 
       expect(result.success).toBe(true);
-      expect(mockQuery.answer).toHaveBeenCalledWith('🚀 Running low review...');
+      expect(mockQuery.answer).toHaveBeenCalledWith(expect.stringContaining('queue'));
       expect(mockQuery.editMessageText).toHaveBeenCalledTimes(2);
       expect(mockQuery.editMessageText).toHaveBeenNthCalledWith(1,
         expect.stringContaining('LOW Review in progress'),
@@ -1059,7 +1059,7 @@ describe('CallbackHandler', () => {
       const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
 
       expect(result.success).toBe(true);
-      expect(mockQuery.answer).toHaveBeenCalledWith('🚀 Running medium review...');
+      expect(mockQuery.answer).toHaveBeenCalledWith(expect.stringContaining('queue'));
       expect(mockQuery.editMessageText).toHaveBeenCalledTimes(2);
       expect(mockReviewPRUseCase.execute).toHaveBeenCalledWith(
         expect.any(Object),
@@ -1080,7 +1080,7 @@ describe('CallbackHandler', () => {
       const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
 
       expect(result.success).toBe(true);
-      expect(mockQuery.answer).toHaveBeenCalledWith('🚀 Running high review...');
+      expect(mockQuery.answer).toHaveBeenCalledWith(expect.stringContaining('queue'));
       expect(mockQuery.editMessageText).toHaveBeenCalledTimes(2);
       expect(mockReviewPRUseCase.execute).toHaveBeenCalledWith(
         expect.any(Object),
@@ -1896,6 +1896,25 @@ describe('CallbackHandler', () => {
       expect(result.success).toBe(true);
       expect(mockQuery.answer).toHaveBeenCalledWith('Dismissing...');
       expect(mockQuery.editMessageText).toHaveBeenCalledWith('✅ Notification dismissed');
+    });
+  });
+
+  describe('_handleReviewLevel - fallback double answer', () => {
+    test('should not call answer() twice when queue is unavailable', async () => {
+      // No queue use case → falls back to _executeReviewDirectly
+      handler.reviewQueueUseCase = null;
+
+      const mockQuery = {
+        data: 'review_level:0:0:12345:low',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      // answer() should only be called once (from _handleReviewLevel, not _executeReviewDirectly)
+      expect(mockQuery.answer).toHaveBeenCalledTimes(1);
+      expect(mockQuery.answer).toHaveBeenCalledWith(expect.stringContaining('queue'));
     });
   });
 });

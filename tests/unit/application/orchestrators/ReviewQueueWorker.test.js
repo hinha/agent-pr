@@ -11,6 +11,17 @@ jest.mock('../../../../src/config/yamlConfig', () => {
   };
 });
 
+jest.mock('fs', () => ({
+  ...jest.requireActual('fs'),
+  openSync: jest.fn().mockReturnValue(42),
+  writeSync: jest.fn(),
+  closeSync: jest.fn(),
+  existsSync: jest.fn().mockReturnValue(false),
+  readFileSync: jest.fn(),
+  unlinkSync: jest.fn(),
+  mkdirSync: jest.fn()
+}));
+
 const ReviewQueue = require('../../../../src/core/entities/ReviewQueue');
 const QueueItem = require('../../../../src/core/entities/QueueItem');
 const ReviewQueueWorker = require('../../../../src/application/orchestrators/ReviewQueueWorker');
@@ -922,6 +933,75 @@ describe('ReviewQueueWorker', () => {
       expect(mockQueueUseCase.completeProcessing).toHaveBeenCalled();
 
       await worker.stop();
+    });
+  });
+
+  describe('singleton lock', () => {
+    const fs = require('fs');
+
+    beforeEach(() => {
+      fs.openSync.mockReturnValue(42);
+      fs.writeSync.mockReturnValue();
+      fs.closeSync.mockReturnValue();
+      fs.existsSync.mockReturnValue(false);
+      fs.readFileSync.mockReturnValue('');
+      fs.unlinkSync.mockReturnValue();
+      fs.mkdirSync.mockReturnValue();
+    });
+
+    test('should acquire lock and start worker', async () => {
+      mockRepository.loadAllQueues.mockResolvedValue([]);
+
+      await worker.start();
+
+      expect(worker.isRunning).toBe(true);
+      expect(fs.openSync).toHaveBeenCalled();
+      expect(worker.isWorkerOwner).toBe(true);
+    });
+
+    test('should not start when lock is held by another process', async () => {
+      const err = new Error('EEXIST');
+      err.code = 'EEXIST';
+      fs.openSync.mockImplementationOnce(() => { throw err; });
+      // PID is alive
+      fs.readFileSync.mockReturnValueOnce(String(process.pid));
+      // process.kill(pid, 0) succeeds for current process
+
+      await worker.start();
+
+      expect(worker.isRunning).toBe(false);
+    });
+
+    test('should clean stale lock and acquire', async () => {
+      const err = new Error('EEXIST');
+      err.code = 'EEXIST';
+      fs.openSync
+        .mockImplementationOnce(() => { throw err; })  // first attempt fails
+        .mockReturnValue(42);  // retry after cleanup succeeds
+      fs.readFileSync.mockReturnValueOnce('999999'); // stale PID
+      // process.kill(999999, 0) will throw ESRCH in jest
+
+      mockRepository.loadAllQueues.mockResolvedValue([]);
+
+      await worker.start();
+
+      expect(worker.isRunning).toBe(true);
+      expect(fs.unlinkSync).toHaveBeenCalled();
+    });
+
+    test('should release lock on stop', async () => {
+      mockRepository.loadAllQueues.mockResolvedValue([]);
+
+      await worker.start();
+
+      // Lock file exists when stop checks
+      fs.existsSync.mockReturnValue(true);
+
+      await worker.stop();
+
+      expect(fs.closeSync).toHaveBeenCalled();
+      expect(fs.unlinkSync).toHaveBeenCalled();
+      expect(worker.isWorkerOwner).toBe(false);
     });
   });
 });

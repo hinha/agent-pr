@@ -4,8 +4,17 @@
  * Continuously polls for queued review items and processes them one at a time.
  * Handles recovery of interrupted items and graceful shutdown.
  *
+ * Uses file locking to ensure only ONE process runs the worker.
+ * Multiple instances can coexist, but only the lock holder will poll.
+ *
  * @module application/orchestrators/ReviewQueueWorker
  */
+
+const fs = require('fs');
+const path = require('path');
+
+// File lock path - ensures only one process runs the worker
+const LOCK_FILE = path.join(process.cwd(), 'data', '.review-queue-worker.lock');
 
 /**
  * ReviewQueueWorker - Process queued reviews in background
@@ -33,6 +42,11 @@ class ReviewQueueWorker {
     this.isRunning = false;
     this._workerTimer = null;
     this._isProcessing = false;
+
+    // Singleton lock
+    this.lockFd = null;
+    this.isWorkerOwner = false;
+    this._ensureLockDir();
   }
 
   /**
@@ -42,6 +56,11 @@ class ReviewQueueWorker {
   async start() {
     if (this.isRunning) {
       this.logger.warn('[ReviewQueueWorker] Already running');
+      return;
+    }
+
+    if (!this._acquireWorkerLock()) {
+      this.logger.info('[ReviewQueueWorker] Another worker owns lock, skipping');
       return;
     }
 
@@ -84,6 +103,8 @@ class ReviewQueueWorker {
     }
 
     this.logger.info('[ReviewQueueWorker] Stopped');
+
+    this._releaseWorkerLock();
   }
 
   /**
@@ -284,6 +305,78 @@ class ReviewQueueWorker {
           );
         }
       }
+    }
+  }
+
+  /**
+   * Ensure lock directory exists
+   * @private
+   */
+  _ensureLockDir() {
+    const lockDir = path.dirname(LOCK_FILE);
+    if (!fs.existsSync(lockDir)) {
+      fs.mkdirSync(lockDir, { recursive: true });
+    }
+  }
+
+  /**
+   * Try to acquire the worker lock
+   * Returns true if lock acquired, false otherwise
+   * @private
+   */
+  _acquireWorkerLock() {
+    try {
+      this.lockFd = fs.openSync(LOCK_FILE, 'wx');
+      fs.writeSync(this.lockFd, String(process.pid));
+      this.isWorkerOwner = true;
+      this.logger.info(`[ReviewQueueWorker] Acquired worker lock (PID: ${process.pid})`);
+      return true;
+    } catch (err) {
+      if (err.code === 'EEXIST') {
+        try {
+          const pid = parseInt(fs.readFileSync(LOCK_FILE, 'utf8').trim());
+          process.kill(pid, 0);
+          this.logger.info(`[ReviewQueueWorker] Lock held by PID ${pid}, skipping`);
+          return false;
+        } catch (readErr) {
+          if (readErr.code === 'ESRCH' || readErr.code === 'ENOENT') {
+            try {
+              fs.unlinkSync(LOCK_FILE);
+              this.lockFd = fs.openSync(LOCK_FILE, 'wx');
+              fs.writeSync(this.lockFd, String(process.pid));
+              this.isWorkerOwner = true;
+              this.logger.info(`[ReviewQueueWorker] Cleaned stale lock, acquired worker lock (PID: ${process.pid})`);
+              return true;
+            } catch (retryErr) {
+              this.logger.warn(`[ReviewQueueWorker] Could not acquire lock after cleanup: ${retryErr.message}`);
+              return false;
+            }
+          }
+          return false;
+        }
+      }
+      this.logger.warn(`[ReviewQueueWorker] Lock acquisition error: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Release the worker lock
+   * @private
+   */
+  _releaseWorkerLock() {
+    try {
+      if (this.lockFd !== null) {
+        fs.closeSync(this.lockFd);
+        this.lockFd = null;
+      }
+      if (fs.existsSync(LOCK_FILE)) {
+        fs.unlinkSync(LOCK_FILE);
+      }
+      this.isWorkerOwner = false;
+      this.logger.info('[ReviewQueueWorker] Released worker lock');
+    } catch (err) {
+      this.logger.warn(`[ReviewQueueWorker] Lock release error: ${err.message}`);
     }
   }
 
