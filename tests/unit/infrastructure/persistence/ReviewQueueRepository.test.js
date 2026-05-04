@@ -109,6 +109,16 @@ describe('ReviewQueueRepository', () => {
       expect(reloaded.items.length).toBe(1);
       expect(reloaded.items[0].prNumber).toBe(123);
     });
+
+    test('should re-throw non-ENOENT errors', async () => {
+      const readSpy = jest.spyOn(fs, 'readFile').mockRejectedValue(
+        Object.assign(new Error('Permission denied'), { code: 'EACCES' })
+      );
+
+      await expect(repository.getQueue('github/test')).rejects.toThrow('Permission denied');
+      expect(readSpy).toHaveBeenCalled();
+      readSpy.mockRestore();
+    });
   });
 
   describe('saveQueue', () => {
@@ -235,6 +245,40 @@ describe('ReviewQueueRepository', () => {
 
       expect(queues).toEqual([]);
     });
+
+    test('should log warning for non-ENOENT file read errors', async () => {
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      const orgDir = path.join(tempDir, 'github-test');
+      await fs.mkdir(orgDir, { recursive: true });
+
+      // Write invalid JSON to trigger a parse error (non-ENOENT)
+      const queuePath = path.join(orgDir, 'review_queue.json');
+      await fs.writeFile(queuePath, 'not valid json', 'utf8');
+
+      const queues = await repository.loadAllQueues();
+
+      expect(queues).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[ReviewQueueRepository] Failed to load queue'),
+        expect.any(String)
+      );
+      warnSpy.mockRestore();
+    });
+
+    test('should handle errors when reading dataDir', async () => {
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      // Point dataDir to a non-existent path to trigger readdir error
+      repository.dataDir = path.join(tempDir, 'does-not-exist');
+
+      const queues = await repository.loadAllQueues();
+
+      expect(queues).toEqual([]);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy.mock.calls[0][0]).toContain('[ReviewQueueRepository] Error reading queue directory');
+      expect(errorSpy.mock.calls[0][1].message).toContain('ENOENT');
+      errorSpy.mockRestore();
+    });
   });
 
   describe('deleteQueue', () => {
@@ -264,6 +308,16 @@ describe('ReviewQueueRepository', () => {
       const deleted = await repository.deleteQueue('github/nonexistent');
 
       expect(deleted).toBe(false);
+    });
+
+    test('should re-throw non-ENOENT errors', async () => {
+      const unlinkSpy = jest.spyOn(fs, 'unlink').mockRejectedValue(
+        Object.assign(new Error('Permission denied'), { code: 'EACCES' })
+      );
+
+      await expect(repository.deleteQueue('github/test')).rejects.toThrow('Permission denied');
+      expect(unlinkSpy).toHaveBeenCalled();
+      unlinkSpy.mockRestore();
     });
   });
 

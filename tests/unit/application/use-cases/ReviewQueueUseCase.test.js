@@ -258,6 +258,16 @@ describe('ReviewQueueUseCase', () => {
         { instanceKey: 'github/test' }
       );
     });
+
+    test('should return error when queue not found', async () => {
+      mockRepository.getQueue.mockResolvedValue(null);
+
+      const result = await useCase.pauseQueue('github/test');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Queue not found');
+      expect(mockRepository.saveQueue).not.toHaveBeenCalled();
+    });
   });
 
   describe('resumeQueue', () => {
@@ -275,6 +285,16 @@ describe('ReviewQueueUseCase', () => {
         'queue.resumed',
         { instanceKey: 'github/test' }
       );
+    });
+
+    test('should return error when queue not found', async () => {
+      mockRepository.getQueue.mockResolvedValue(null);
+
+      const result = await useCase.resumeQueue('github/test');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Queue not found');
+      expect(mockRepository.saveQueue).not.toHaveBeenCalled();
     });
   });
 
@@ -294,6 +314,21 @@ describe('ReviewQueueUseCase', () => {
       const result = await useCase.dequeueForProcessing('github/test');
 
       expect(result).toBeNull();
+    });
+
+    test('should return null when dequeue returns null despite canProcess being true', async () => {
+      // Edge case: queue.canProcess() returns true but queue.dequeue() returns null
+      // This simulates an inconsistent state where items get cleared between checks
+      const mockQueue = {
+        canProcess: jest.fn().mockReturnValue(true),
+        dequeue: jest.fn().mockReturnValue(null)
+      };
+      mockRepository.getQueue.mockResolvedValue(mockQueue);
+
+      const result = await useCase.dequeueForProcessing('github/test');
+
+      expect(result).toBeNull();
+      expect(mockRepository.saveQueue).not.toHaveBeenCalled();
     });
 
     test('should dequeue and mark as processing', async () => {
@@ -462,6 +497,56 @@ describe('ReviewQueueUseCase', () => {
       expect(result.requeued).toBe(false);
       expect(item.status).toBe('failed');
       expect(item.error).toBe('Permission denied');
+    });
+
+    test('should return success false when queue not found', async () => {
+      mockRepository.getQueue.mockResolvedValue(null);
+
+      const result = await useCase.handleProcessingFailure(
+        'github/test',
+        'item-id',
+        new Error('Some error')
+      );
+
+      expect(result.success).toBe(false);
+      expect(mockRepository.saveQueue).not.toHaveBeenCalled();
+    });
+
+    test('should return success false when item is not current', async () => {
+      const queue = new ReviewQueue('github/test', 2);
+      // No currentItem set, so it's null
+      mockRepository.getQueue.mockResolvedValue(queue);
+
+      const result = await useCase.handleProcessingFailure(
+        'github/test',
+        'non-existent-item-id',
+        new Error('Some error')
+      );
+
+      expect(result.success).toBe(false);
+      expect(mockRepository.saveQueue).not.toHaveBeenCalled();
+    });
+
+    test('should return success false when current item id does not match', async () => {
+      const queue = new ReviewQueue('github/test', 2);
+      const item = new QueueItem({
+        instanceKey: 'github/test',
+        repoName: 'repo',
+        prNumber: 123,
+        level: 'medium'
+      });
+
+      queue.startProcessing(item);
+      mockRepository.getQueue.mockResolvedValue(queue);
+
+      const result = await useCase.handleProcessingFailure(
+        'github/test',
+        'wrong-item-id',
+        new Error('Some error')
+      );
+
+      expect(result.success).toBe(false);
+      expect(mockRepository.saveQueue).not.toHaveBeenCalled();
     });
   });
 

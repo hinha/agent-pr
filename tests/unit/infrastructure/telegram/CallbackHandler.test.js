@@ -1605,4 +1605,297 @@ describe('CallbackHandler', () => {
       expect(handler.bot.deleteMessage).toHaveBeenCalledWith(123, 999);
     });
   });
+
+  describe('handleCallbackQuery - approve_outdated', () => {
+    test('should show confirmation keyboard on approve_outdated', async () => {
+      const originalKeyboard = [[{ text: 'Approve Outdated', callback_data: 'approve_outdated:0:0:12345:review-789' }]];
+      const mockQuery = {
+        data: 'approve_outdated:0:0:12345:review-789',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageReplyMarkup: jest.fn().mockResolvedValue(),
+        message: {
+          message_id: 500,
+          chat: { id: 123 },
+          reply_markup: { inline_keyboard: originalKeyboard }
+        }
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('confirm_pending');
+      expect(mockQuery.answer).toHaveBeenCalledWith('Confirming approval...');
+      expect(mockConfirmationManager.add).toHaveBeenCalledWith(
+        123, 500, originalKeyboard, 'approve_outdated', { reviewId: 'review-789' }
+      );
+      expect(mockQuery.editMessageReplyMarkup).toHaveBeenCalledWith({
+        inline_keyboard: [
+          [
+            { text: '✅ Yes, Approve', callback_data: 'cfm_y:0:0:12345:review-789' },
+            { text: '❌ No', callback_data: 'cfm_n:0:0:12345:review-789' }
+          ]
+        ]
+      });
+    });
+
+    test('should fall back to direct execute when no confirmationManager', async () => {
+      handler.confirmationManager = null;
+
+      const mockStateRepo = {
+        clearReviewState: jest.fn().mockResolvedValue(),
+        markProcessed: jest.fn().mockResolvedValue()
+      };
+      handler.stateRepositoryFactory = {
+        create: jest.fn().mockReturnValue(mockStateRepo)
+      };
+
+      const mockQuery = {
+        data: 'approve_outdated:0:0:12345:review-789',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Approving PR...');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('approved!')
+      );
+      expect(mockStateRepo.clearReviewState).toHaveBeenCalled();
+      expect(mockStateRepo.markProcessed).toHaveBeenCalled();
+    });
+
+    test('should fall back to direct execute when no messageId', async () => {
+      handler.confirmationManager = null;
+
+      const mockQuery = {
+        data: 'approve_outdated:0:0:12345:review-789',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue(),
+        message: {}
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockReviewPRUseCase.approve).toHaveBeenCalled();
+    });
+
+    test('should handle approve_outdated failure', async () => {
+      handler.confirmationManager = null;
+      mockReviewPRUseCase.approve.mockResolvedValue({
+        success: false,
+        error: 'Approve outdated failed'
+      });
+
+      const mockQuery = {
+        data: 'approve_outdated:0:0:12345:review-789',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(false);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Failed to approve: Approve outdated failed', true);
+    });
+  });
+
+  describe('handleCallbackQuery - re_review', () => {
+    test('should show level selection keyboard for re-review', async () => {
+      const mockQuery = {
+        data: 're_review:0:0:12345:review-789',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageReplyMarkup: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('show_re_review_levels');
+      expect(mockQuery.answer).toHaveBeenCalledWith();
+      expect(mockQuery.editMessageReplyMarkup).toHaveBeenCalledWith({
+        inline_keyboard: expect.any(Array)
+      });
+
+      const keyboard = mockQuery.editMessageReplyMarkup.mock.calls[0][0].inline_keyboard;
+      // Default levels: low, medium, high + cancel = 4 rows
+      expect(keyboard).toHaveLength(4);
+      expect(keyboard[0][0].text).toContain('LOW');
+      expect(keyboard[0][0].callback_data).toBe('review_level_outdated:0:0:12345:review-789:low');
+      expect(keyboard[1][0].text).toContain('MEDIUM');
+      expect(keyboard[1][0].callback_data).toBe('review_level_outdated:0:0:12345:review-789:medium');
+      expect(keyboard[2][0].text).toContain('HIGH');
+      expect(keyboard[2][0].callback_data).toBe('review_level_outdated:0:0:12345:review-789:high');
+      expect(keyboard[3][0].text).toBe('❌ Cancel');
+      expect(keyboard[3][0].callback_data).toBe('review_cancel:0:0:12345');
+    });
+
+    test('should build keyboard with custom levels from config for re-review', async () => {
+      const customConfig = {
+        instances: {
+          'github/testorg': {
+            key: 'github/testorg',
+            owner: 'testorg',
+            agent: {
+              level: ['low', 'high']
+            },
+            repos: {
+              'test-repo': { name: 'test-repo', thread_id: 456 }
+            }
+          }
+        }
+      };
+
+      const mockQuery = {
+        data: 're_review:0:0:12345:review-abc',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageReplyMarkup: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, customConfig);
+
+      expect(result.success).toBe(true);
+      const keyboard = mockQuery.editMessageReplyMarkup.mock.calls[0][0].inline_keyboard;
+      expect(keyboard).toHaveLength(3); // low, high + cancel
+      expect(keyboard[0][0].callback_data).toBe('review_level_outdated:0:0:12345:review-abc:low');
+      expect(keyboard[1][0].callback_data).toBe('review_level_outdated:0:0:12345:review-abc:high');
+    });
+  });
+
+  describe('_executeApprove - failure path', () => {
+    test('should answer with error alert when approve fails', async () => {
+      mockReviewPRUseCase.approve.mockResolvedValue({
+        success: false,
+        error: 'Approve failed'
+      });
+
+      handler.confirmationManager = null;
+
+      const mockQuery = {
+        data: 'approve:0:0:67890',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Approve failed');
+      expect(mockQuery.answer).toHaveBeenCalledWith('Failed to approve: Approve failed', true);
+    });
+  });
+
+  describe('_handleReviewLevel - queue integration', () => {
+    test('should show queue full error when reviewQueueUseCase returns failure', async () => {
+      handler.reviewQueueUseCase = {
+        enqueueReview: jest.fn().mockResolvedValue({
+          success: false,
+          error: 'Queue is full',
+          currentSize: 5,
+          maxSize: 5
+        })
+      };
+
+      const mockQuery = {
+        data: 'review_level:0:0:12345:low',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Queue is full');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('Queue Full'),
+        { parse_mode: 'HTML' }
+      );
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('5/5'),
+        { parse_mode: 'HTML' }
+      );
+    });
+
+    test('should show queue status on successful enqueue', async () => {
+      handler.reviewQueueUseCase = {
+        enqueueReview: jest.fn().mockResolvedValue({
+          success: true,
+          position: 2,
+          estimatedWaitTime: 10 * 60 * 1000 // 10 minutes
+        })
+      };
+
+      const mockQuery = {
+        data: 'review_level:0:0:12345:low',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('queued');
+      expect(result.position).toBe(2);
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('Review Queued'),
+        { parse_mode: 'HTML' }
+      );
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('LOW'),
+        { parse_mode: 'HTML' }
+      );
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('#2'),
+        { parse_mode: 'HTML' }
+      );
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('~10 minutes'),
+        { parse_mode: 'HTML' }
+      );
+    });
+
+    test('should show unknown wait time when estimatedWaitTime is not provided', async () => {
+      handler.reviewQueueUseCase = {
+        enqueueReview: jest.fn().mockResolvedValue({
+          success: true,
+          position: 1
+        })
+      };
+
+      const mockQuery = {
+        data: 'review_level:0:0:12345:medium',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('queued');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('~unknown minutes'),
+        { parse_mode: 'HTML' }
+      );
+    });
+  });
+
+  describe('_handleDismissOutdated - fallback', () => {
+    test('should show dismissed message when checkOutdatedReviewsUseCase is null', async () => {
+      handler.checkOutdatedReviewsUseCase = null;
+
+      const mockQuery = {
+        data: 'dismiss_outdated:0:0:12345:review-789',
+        answer: jest.fn().mockResolvedValue(),
+        editMessageText: jest.fn().mockResolvedValue()
+      };
+
+      const result = await handler.handleCallbackQuery(mockQuery, mockConfig);
+
+      expect(result.success).toBe(true);
+      expect(mockQuery.answer).toHaveBeenCalledWith('Dismissing...');
+      expect(mockQuery.editMessageText).toHaveBeenCalledWith('✅ Notification dismissed');
+    });
+  });
 });
