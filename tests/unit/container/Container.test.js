@@ -740,56 +740,6 @@ describe('DI Container', () => {
     });
   });
 
-  describe('loadConfig error handling', () => {
-    test('should throw ConfigurationError when config fails to load', () => {
-      // We need to make require('../config/yamlConfig') inside Container.js throw.
-      // Use jest.isolateModules to avoid polluting other tests' module state.
-      let loadConfigError;
-      jest.isolateModules(() => {
-        jest.doMock('../../../src/config/yamlConfig', () => {
-          throw new Error('Simulated config load failure');
-        });
-
-        // Re-mock all other modules Container.js needs
-        jest.doMock('../../../src/utils/timeoutManager', () => function() {
-          return { setTimeout: jest.fn(), clearAll: jest.fn() };
-        });
-        jest.doMock('../../../src/utils/timeUtils', () => ({
-          shouldSnooze: jest.fn(() => false),
-          getSnoozeReason: jest.fn(() => 'Test reason')
-        }));
-        jest.doMock('../../../src/utils/memoryMonitor', () => ({
-          startMonitoring: jest.fn(),
-          stopMonitoring: jest.fn()
-        }));
-        jest.doMock('../../../src/services/flagsmithSyncService', () => ({
-          init: jest.fn(),
-          start: jest.fn(),
-          stop: jest.fn(),
-          isActive: jest.fn(() => false),
-          getValue: jest.fn()
-        }));
-
-        const freshContainer = require('../../../src/container');
-        const ContainerClass = freshContainer.constructor;
-        const testContainer = new ContainerClass();
-        try {
-          testContainer.loadConfig();
-        } catch (err) {
-          loadConfigError = err;
-        }
-      });
-
-      expect(loadConfigError).toBeDefined();
-      // After jest.isolateModules, the ConfigurationError class is from
-      // a different module realm, so check by name instead of instanceof
-      expect(loadConfigError.name).toBe('ConfigurationError');
-      expect(loadConfigError.message).toContain('Failed to load configuration');
-      expect(loadConfigError.message).toContain('Simulated config load failure');
-      expect(loadConfigError.configPath).toBe('config.yml');
-    });
-  });
-
   describe('registerClass', () => {
     test('should create a lifecycle builder with singleton, scoped, and transient methods', () => {
       const ContainerClass = container.constructor;
@@ -824,6 +774,57 @@ describe('DI Container', () => {
       const instance = testContainer.get('testServiceSingleton');
       expect(instance).toBeDefined();
       expect(instance.name).toBe('test');
+    });
+  });
+
+  // This test MUST be last because jest.resetModules() is destructive
+  // and leaks to subsequent tests within the same file.
+  describe('loadConfig error handling', () => {
+    test('should throw ConfigurationError when config fails to load', () => {
+      // Reset module registry so we can re-register a throwing mock
+      jest.resetModules();
+
+      // Register a mock that throws when the factory is invoked
+      jest.doMock('../../../src/config/yamlConfig', () => {
+        throw new Error('Simulated config load failure');
+      });
+
+      // Re-mock all other modules Container.js needs
+      jest.doMock('../../../src/utils/timeoutManager', () => function() {
+        return { setTimeout: jest.fn(), clearAll: jest.fn() };
+      });
+      jest.doMock('../../../src/utils/timeUtils', () => ({
+        shouldSnooze: jest.fn(() => false),
+        getSnoozeReason: jest.fn(() => 'Test reason')
+      }));
+      jest.doMock('../../../src/utils/memoryMonitor', () => ({
+        startMonitoring: jest.fn(),
+        stopMonitoring: jest.fn()
+      }));
+      jest.doMock('../../../src/services/flagsmithSyncService', () => ({
+        init: jest.fn(),
+        start: jest.fn(),
+        stop: jest.fn(),
+        isActive: jest.fn(() => false),
+        getValue: jest.fn()
+      }));
+
+      const freshContainer = require('../../../src/container');
+      const ContainerClass = freshContainer.constructor;
+      const testContainer = new ContainerClass();
+      let loadConfigError;
+      try {
+        testContainer.loadConfig();
+      } catch (err) {
+        loadConfigError = err;
+      }
+
+      expect(loadConfigError).toBeDefined();
+      // Check by name since jest.resetModules creates a different class instance
+      expect(loadConfigError.name).toBe('ConfigurationError');
+      expect(loadConfigError.message).toContain('Failed to load configuration');
+      expect(loadConfigError.message).toContain('Simulated config load failure');
+      expect(loadConfigError.configPath).toBe('config.yml');
     });
   });
 });
