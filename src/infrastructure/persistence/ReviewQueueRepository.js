@@ -173,6 +173,10 @@ class ReviewQueueRepository {
         try {
           const data = await fs.readFile(queuePath, 'utf8');
           const json = JSON.parse(data);
+          if (!json) {
+            this.logger.debug(`[ReviewQueueRepository] Empty queue file at ${queuePath}, skipping`);
+            continue;
+          }
           const queue = ReviewQueue.fromJSON(json);
           queues.push(queue);
           this.queues.set(queue.instanceKey, queue);
