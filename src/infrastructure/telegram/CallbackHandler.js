@@ -799,15 +799,19 @@ class CallbackHandler {
     // Show queue status
     const waitMinutes = result.estimatedWaitTime
       ? Math.ceil(result.estimatedWaitTime / 60000)
-      : 'unknown';
+      : null;
+
+    const waitText = waitMinutes
+      ? `⏱️ Estimated wait: ~${waitMinutes} minutes\n`
+      : '';
 
     await query.editMessageText(
       `⏳ <b>Review Queued</b>\n\n` +
       `📂 ${this._escapeHtml(`${instance.owner}/${repo.name}`)} PR #${pr.number}\n` +
       `🔍 Level: ${level.toUpperCase()}\n` +
       `📊 Position: #${result.position}\n` +
-      `⏱️ Estimated wait: ~${waitMinutes} minutes\n\n` +
-      `The review will be processed automatically when ready.`,
+      waitText +
+      `\nThe review will be processed automatically when ready.`,
       { parse_mode: 'HTML' }
     );
 

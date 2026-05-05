@@ -1856,7 +1856,7 @@ describe('CallbackHandler', () => {
       );
     });
 
-    test('should show unknown wait time when estimatedWaitTime is not provided', async () => {
+    test('should omit wait time when estimatedWaitTime is not provided', async () => {
       handler.reviewQueueUseCase = {
         enqueueReview: jest.fn().mockResolvedValue({
           success: true,
@@ -1875,7 +1875,7 @@ describe('CallbackHandler', () => {
       expect(result.success).toBe(true);
       expect(result.action).toBe('queued');
       expect(mockQuery.editMessageText).toHaveBeenCalledWith(
-        expect.stringContaining('~unknown minutes'),
+        expect.not.stringContaining('Estimated wait'),
         { parse_mode: 'HTML' }
       );
     });
