@@ -63,7 +63,7 @@ describe('ReviewQueueWorker', () => {
     mockQueueUseCase = {
       dequeueForProcessing: jest.fn(),
       completeProcessing: jest.fn(),
-      handleProcessingFailure: jest.fn()
+      handleProcessingFailure: jest.fn().mockResolvedValue({ success: true, requeued: false })
     };
     mockReviewPRUseCase = {
       execute: jest.fn()
@@ -332,6 +332,51 @@ describe('ReviewQueueWorker', () => {
           itemId: 'qi_test',
           error: 'Processing failed'
         })
+      );
+    });
+
+    test('should not emit failed event when item is requeued for retry', async () => {
+      const queue = new ReviewQueue('github/test', 2);
+      const item = new QueueItem({
+        id: 'qi_test',
+        instanceKey: 'github/test',
+        repoName: 'repo',
+        prNumber: 123,
+        prTitle: 'Test PR',
+        level: 'medium'
+      });
+
+      // Mock config.instances
+      mockConfig.instances['github/test'] = {
+        repos: {
+          repo: { thread_id: 123 }
+        }
+      };
+
+      const error = new Error('ETIMEDOUT - Connection timeout');
+      mockReviewPRUseCase.execute.mockRejectedValue(error);
+
+      // Mock handleProcessingFailure to return requeued: true (transient error)
+      let callCount = 0;
+      mockQueueUseCase.handleProcessingFailure.mockImplementation(async () => {
+        callCount++;
+        return { success: true, requeued: true };
+      });
+
+      await worker._processItem(queue, item);
+
+      // Should call handleProcessingFailure
+      expect(mockQueueUseCase.handleProcessingFailure).toHaveBeenCalledWith(
+        'github/test',
+        'qi_test',
+        expect.any(Error)
+      );
+      expect(callCount).toBe(1);
+
+      // Should NOT emit queue.item.failed (item was requeued)
+      expect(mockEventBus.emitAsync).not.toHaveBeenCalledWith(
+        'queue.item.failed',
+        expect.any(Object)
       );
     });
 

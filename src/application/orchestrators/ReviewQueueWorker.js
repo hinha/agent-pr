@@ -218,12 +218,21 @@ class ReviewQueueWorker {
       if (!result?.success) {
         const err = new Error(result?.error || 'Review execution failed');
 
-        await this.queueUseCase.handleProcessingFailure(
+        const failureResult = await this.queueUseCase.handleProcessingFailure(
           queue.instanceKey,
           item.id,
           err
         );
 
+        // If item was requeued for retry, don't emit failed event
+        if (failureResult?.requeued) {
+          this.logger.warn(
+            `[ReviewQueueWorker] Transient failure for ${item.instanceKey}/${item.repoName} PR #${item.prNumber}, requeued for retry: ${err.message}`
+          );
+          return;
+        }
+
+        // Final failure - emit failed event for notification
         await this.eventBus.emitAsync('queue.item.failed', {
           instanceKey: queue.instanceKey,
           itemId: item.id,
@@ -237,7 +246,7 @@ class ReviewQueueWorker {
         });
 
         this.logger.error(
-          `[ReviewQueueWorker] Review failed for ${item.instanceKey}/${item.repoName} PR #${item.prNumber}: ${err.message}`
+          `[ReviewQueueWorker] Final failure for ${item.instanceKey}/${item.repoName} PR #${item.prNumber}: ${err.message}`
         );
 
         return;
@@ -273,12 +282,21 @@ class ReviewQueueWorker {
         error
       );
 
-      await this.queueUseCase.handleProcessingFailure(
+      const failureResult = await this.queueUseCase.handleProcessingFailure(
         queue.instanceKey,
         item.id,
         error
       );
 
+      // If item was requeued for retry, don't emit failed event
+      if (failureResult?.requeued) {
+        this.logger.warn(
+          `[ReviewQueueWorker] Transient failure for ${item.instanceKey}/${item.repoName} PR #${item.prNumber}, requeued for retry: ${error.message}`
+        );
+        return;
+      }
+
+      // Final failure - emit failed event for notification
       await this.eventBus.emitAsync('queue.item.failed', {
         instanceKey: queue.instanceKey,
         itemId: item.id,
