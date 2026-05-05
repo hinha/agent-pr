@@ -76,9 +76,12 @@ github/your-org-or-user:
   # Repositories in this instance
   repos:
     your-repo-name-1:
+      # Set to true to enable PR monitoring for this repo (default: false)
+      enable: true
       # Telegram thread ID for this repo's notifications
       thread_id: "<THREAD_ID>"
     your-repo-name-2:
+      enable: true
       thread_id: "<THREAD_ID>"
     your-repo-name-3:
       thread_id: "<THREAD_ID>"
@@ -96,4 +99,5 @@ github/another-org-or-user:
     review_timeot_string: "20 menit"
   repos:
     your-repo-name-1:
+      enable: true
       thread_id: "<THREAD_ID>"

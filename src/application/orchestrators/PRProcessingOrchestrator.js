@@ -272,6 +272,12 @@ class PRProcessingOrchestrator {
 
       for (const [repoName, repoConfig] of repos) {
         try {
+          // Skip disabled repos
+          if (repoConfig.enabled !== true) {
+            this.logger.info(`[PRProcessingOrchestrator] Repo ${repoName} is disabled, skipping`);
+            continue;
+          }
+
           this.logger.info(`[PRProcessingOrchestrator] Processing repo ${repoName}...`);
 
           const repo = {

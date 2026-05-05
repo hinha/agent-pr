@@ -139,8 +139,9 @@ class Bootstrap {
 
       // Log instance and repo details
       for (const [instanceKey, instance] of Object.entries(config.instances || {})) {
-        const repoCount = Object.keys(instance.repos || {}).length;
-        logger.info(`   - ${instanceKey}: ${repoCount} repo(s)`);
+        const repos = Object.entries(instance.repos || {});
+        const enabledCount = repos.filter(([, r]) => r.enabled === true).length;
+        logger.info(`   - ${instanceKey}: ${enabledCount}/${repos.length} repo(s) active`);
       }
 
       logger.info('[Bootstrap] ===== APPLICATION STARTUP COMPLETE =====');

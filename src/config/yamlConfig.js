@@ -116,11 +116,18 @@ function buildInstances(config) {
           reviewTimeoutSeconds: config[key].agent.review_timeout_seconds,
           reviewTimeoutMessage: config[key].agent.review_timeot_string || '10 menit'
         },
-        repos: config[key].repos
+        repos: Object.fromEntries(
+          Object.entries(config[key].repos || {}).map(([repoName, repoConf]) => [
+            repoName,
+            { ...repoConf, enabled: repoConf.enable === true }
+          ])
+        )
       };
 
-      const repoCount = Object.keys(config[key].repos || {}).length;
-      logger.info(`Instance ${key}: owner=${owner}, mcp=${config[key].mcp_name}, queue_max=${queueMaxSize}, repos=${repoCount}`);
+      const repos = Object.entries(config[key].repos || {});
+      const enabledCount = repos.filter(([, r]) => r.enable === true).length;
+      const repoCount = repos.length;
+      logger.info(`Instance ${key}: owner=${owner}, mcp=${config[key].mcp_name}, queue_max=${queueMaxSize}, repos=${enabledCount}/${repoCount} active`);
     }
   }
 
