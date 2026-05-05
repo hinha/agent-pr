@@ -279,31 +279,39 @@ class ReviewQueueWorker {
     const timeout = 30 * 60 * 1000; // 30 minutes
 
     for (const queue of queues) {
-      if (queue.currentItem) {
-        const item = queue.currentItem;
-        const elapsed = Date.now() - new Date(item.startedAt).getTime();
+      if (!queue.currentItem) continue;
 
-        if (elapsed > timeout) {
-          this.logger.warn(
-            `[ReviewQueueWorker] Found timed out item ${item.id} for ${queue.instanceKey}`
-          );
+      const item = queue.currentItem;
+      const elapsed = Date.now() - new Date(item.startedAt).getTime();
 
-          await this.queueUseCase.handleProcessingFailure(
-            queue.instanceKey,
-            item.id,
-            new Error('Processing timeout - recovery')
-          );
-        } else {
-          // Requeue item so worker can pick it up normally
-          queue.currentItem = null;
-          queue.status = 'idle';
-          queue.items.unshift(item);
-          await this.queueRepository.saveQueue(queue);
+      if (elapsed > timeout) {
+        this.logger.warn(
+          `[ReviewQueueWorker] Found timed out item ${item.id} for ${queue.instanceKey}`
+        );
 
-          this.logger.info(
-            `[ReviewQueueWorker] Requeued interrupted item ${item.id} for ${queue.instanceKey}`
-          );
-        }
+        // handleProcessingFailure acquires its own lock -- call OUTSIDE withInstanceLock
+        await this.queueUseCase.handleProcessingFailure(
+          queue.instanceKey,
+          item.id,
+          new Error('Processing timeout - recovery')
+        );
+      } else {
+        // Requeue -- use withInstanceLock for atomic read-modify-write
+        await this.queueRepository.withInstanceLock(
+          queue.instanceKey,
+          async (freshQueue) => {
+            if (!freshQueue?.currentItem) return null;
+            const freshItem = freshQueue.currentItem;
+            freshQueue.currentItem = null;
+            freshQueue.status = 'idle';
+            freshQueue.items.unshift(freshItem);
+            return freshQueue;
+          }
+        );
+
+        this.logger.info(
+          `[ReviewQueueWorker] Requeued interrupted item ${item.id} for ${queue.instanceKey}`
+        );
       }
     }
   }

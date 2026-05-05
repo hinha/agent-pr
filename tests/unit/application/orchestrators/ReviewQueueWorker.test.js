@@ -41,7 +41,24 @@ describe('ReviewQueueWorker', () => {
     mockRepository = {
       getAllQueues: jest.fn(),
       loadAllQueues: jest.fn(),
-      saveQueue: jest.fn()
+      saveQueue: jest.fn(),
+      withInstanceLock: jest.fn(async (instanceKey, fn) => {
+        // For recovery tests, find the queue from the most recent loadAllQueues result
+        const queues = mockRepository.loadAllQueues.mock.results[
+          mockRepository.loadAllQueues.mock.results.length - 1
+        ]?.value;
+        const resolvedQueues = await Promise.resolve(queues);
+        const queue = resolvedQueues?.find(q => q.instanceKey === instanceKey) || null;
+        const result = await fn(queue);
+
+        const ReviewQueue = require('../../../../src/core/entities/ReviewQueue');
+        let toSave = null;
+        if (result instanceof ReviewQueue) toSave = result;
+        else if (result?.save instanceof ReviewQueue) toSave = result.save;
+        if (toSave) await mockRepository.saveQueue(toSave);
+
+        return result;
+      })
     };
     mockQueueUseCase = {
       dequeueForProcessing: jest.fn(),

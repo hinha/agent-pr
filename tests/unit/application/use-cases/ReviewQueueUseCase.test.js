@@ -17,7 +17,22 @@ describe('ReviewQueueUseCase', () => {
       saveQueue: jest.fn(),
       getAllQueues: jest.fn(),
       loadAllQueues: jest.fn(),
-      deleteQueue: jest.fn()
+      deleteQueue: jest.fn(),
+      // withInstanceLock delegates to getQueue for the callback,
+      // matching the real implementation's behavior of reading fresh + saving
+      withInstanceLock: jest.fn(async (instanceKey, fn) => {
+        const queue = await mockRepository.getQueue(instanceKey);
+        const result = await fn(queue);
+
+        // Mimic real withInstanceLock save behavior
+        const ReviewQueue = require('../../../../src/core/entities/ReviewQueue');
+        let toSave = null;
+        if (result instanceof ReviewQueue) toSave = result;
+        else if (result?.save instanceof ReviewQueue) toSave = result.save;
+        if (toSave) await mockRepository.saveQueue(toSave);
+
+        return result;
+      })
     };
     mockEventBus = {
       emitAsync: jest.fn()

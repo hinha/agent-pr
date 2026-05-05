@@ -9,6 +9,7 @@
 
 const fs = require('fs').promises;
 const path = require('path');
+const lockfile = require('proper-lockfile');
 const ReviewQueue = require('../../core/entities/ReviewQueue');
 const logger = require('../../utils/logger');
 
@@ -55,6 +56,9 @@ class ReviewQueueRepository {
     try {
       const data = await fs.readFile(filePath, 'utf8');
       const json = JSON.parse(data);
+      if (!json) {
+        return null;
+      }
       const queue = ReviewQueue.fromJSON(json);
       this.queues.set(instanceKey, queue);
       return queue;
@@ -88,6 +92,61 @@ class ReviewQueueRepository {
     this.queues.set(queue.instanceKey, queue);
 
     this.logger.debug(`[ReviewQueueRepository] Saved queue for ${queue.instanceKey}`);
+  }
+
+  /**
+   * Execute a function with an exclusive lock for the given instance.
+   * Reads fresh from disk (bypasses cache), runs the callback, saves the result.
+   *
+   * @param {string} instanceKey - GitHub instance key
+   * @param {Function} fn - Async callback: (queue: ReviewQueue|null) => ReviewQueue|{save: ReviewQueue}|any
+   *   Return a ReviewQueue to save it, { save: ReviewQueue, ...data } to save and return extra data,
+   *   or any other value to skip saving.
+   * @param {Object} options - Lock options
+   * @param {number} options.stale - Stale lock age in ms (default: 15000)
+   * @returns {Promise<*>} Whatever fn() returns
+   */
+  async withInstanceLock(instanceKey, fn, options = {}) {
+    const queuePath = this._getQueuePath(instanceKey);
+    const dir = path.dirname(queuePath);
+    await fs.mkdir(dir, { recursive: true });
+
+    // proper-lockfile requires the target file to exist
+    try {
+      await fs.access(queuePath);
+    } catch {
+      await fs.writeFile(queuePath, 'null', 'utf8');
+    }
+
+    const release = await lockfile.lock(queuePath, {
+      lockfilePath: `${queuePath}.lock`,
+      stale: options.stale || 15000,
+      retries: { retries: 5, minTimeout: 200, maxTimeout: 2000 }
+    });
+
+    try {
+      // Bypass cache, read fresh from disk
+      this.queues.delete(instanceKey);
+      const queue = await this.getQueue(instanceKey);
+
+      const result = await fn(queue);
+
+      // Determine if we need to save
+      let toSave = null;
+      if (result instanceof ReviewQueue) {
+        toSave = result;
+      } else if (result?.save instanceof ReviewQueue) {
+        toSave = result.save;
+      }
+
+      if (toSave) {
+        await this.saveQueue(toSave);
+      }
+
+      return result;
+    } finally {
+      await release();
+    }
   }
 
   /**

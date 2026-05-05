@@ -365,4 +365,144 @@ describe('ReviewQueueRepository', () => {
       expect(filePath).toContain('review_queue.json');
     });
   });
+
+  describe('withInstanceLock', () => {
+    test('should read fresh from disk and save returned queue', async () => {
+      const queue = new ReviewQueue('github/test', 2);
+      const item = new QueueItem({
+        instanceKey: 'github/test',
+        repoName: 'repo',
+        prNumber: 123,
+        level: 'medium'
+      });
+      queue.enqueue(item);
+      await repository.saveQueue(queue);
+
+      const result = await repository.withInstanceLock(
+        'github/test',
+        async (freshQueue) => {
+          // Should have read from disk, not cache
+          expect(freshQueue).toBeDefined();
+          expect(freshQueue.items.length).toBe(1);
+          freshQueue.enqueue(new QueueItem({
+            instanceKey: 'github/test',
+            repoName: 'repo',
+            prNumber: 456,
+            level: 'high'
+          }));
+          return freshQueue;
+        }
+      );
+
+      expect(result.items.length).toBe(2);
+
+      // Verify saved to disk
+      repository.clearCache('github/test');
+      const reloaded = await repository.getQueue('github/test');
+      expect(reloaded.items.length).toBe(2);
+    });
+
+    test('should pass null when queue does not exist on disk', async () => {
+      let receivedQueue = 'not-null';
+      await repository.withInstanceLock(
+        'github/nonexistent',
+        async (queue) => {
+          receivedQueue = queue;
+          return null;
+        }
+      );
+
+      expect(receivedQueue).toBeNull();
+    });
+
+    test('should save queue when callback returns { save: queue }', async () => {
+      const result = await repository.withInstanceLock(
+        'github/test',
+        async (queue) => {
+          const newQueue = new ReviewQueue('github/test', 2);
+          newQueue.enqueue(new QueueItem({
+            instanceKey: 'github/test',
+            repoName: 'repo',
+            prNumber: 100,
+            level: 'low'
+          }));
+          return { save: newQueue, extraData: 'test' };
+        }
+      );
+
+      expect(result.extraData).toBe('test');
+
+      // Verify saved
+      const loaded = await repository.getQueue('github/test');
+      expect(loaded.items.length).toBe(1);
+    });
+
+    test('should not save when callback returns non-queue value', async () => {
+      const result = await repository.withInstanceLock(
+        'github/test',
+        async () => {
+          return { success: false, error: 'something' };
+        }
+      );
+
+      expect(result.success).toBe(false);
+
+      // File may exist as a placeholder for proper-lockfile but should not contain queue data
+      const filePath = repository._getQueuePath('github/test');
+      const data = await fs.readFile(filePath, 'utf8');
+      expect(data).toBe('null');
+    });
+
+    test('should release lock even when callback throws', async () => {
+      await expect(
+        repository.withInstanceLock('github/test', async () => {
+          throw new Error('callback error');
+        })
+      ).rejects.toThrow('callback error');
+
+      // Should be able to acquire lock again
+      await repository.withInstanceLock('github/test', async () => null);
+    });
+
+    test('should serialize concurrent callers', async () => {
+      const queue = new ReviewQueue('github/test', 10);
+      await repository.saveQueue(queue);
+
+      const concurrentCalls = 5;
+      const order = [];
+
+      const promises = Array.from({ length: concurrentCalls }, (_, i) =>
+        repository.withInstanceLock('github/test', async (freshQueue) => {
+          order.push(`start-${i}`);
+          freshQueue.enqueue(new QueueItem({
+            instanceKey: 'github/test',
+            repoName: 'repo',
+            prNumber: i,
+            level: 'low'
+          }));
+          // Small delay to encourage interleaving
+          await new Promise(r => setTimeout(r, 10));
+          order.push(`end-${i}`);
+          return freshQueue;
+        })
+      );
+
+      await Promise.all(promises);
+
+      // Verify all items were saved (no lost updates)
+      repository.clearCache('github/test');
+      const finalQueue = await repository.getQueue('github/test');
+      expect(finalQueue.items.length).toBe(concurrentCalls);
+
+      // Verify serialization: no start should appear between another start and end
+      // (each operation should complete before the next begins)
+      for (let i = 0; i < order.length - 1; i += 2) {
+        const startMatch = order[i].match(/^start-(\d+)$/);
+        const endMatch = order[i + 1].match(/^end-(\d+)$/);
+        if (startMatch && endMatch) {
+          expect(startMatch[1]).toBe(endMatch[1]);
+        }
+      }
+    });
+  });
 });

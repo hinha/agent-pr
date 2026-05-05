@@ -4,6 +4,9 @@
  * Orchestrates queue operations including enqueueing, status checking,
  * cancellation, and processing lifecycle management.
  *
+ * All mutating operations use withInstanceLock() to ensure mutual exclusion
+ * and prevent lost updates in multi-process deployments.
+ *
  * @module application/use-cases/ReviewQueueUseCase
  */
 
@@ -36,56 +39,60 @@ class ReviewQueueUseCase {
    */
   async enqueueReview(instance, repo, pr, level) {
     const instanceKey = instance.key;
+    const maxSize = instance.queue?.maxSize || 2;
 
-    // Get or create queue
-    let queue = await this.queueRepository.getQueue(instanceKey);
-    if (!queue) {
-      const maxSize = instance.queue?.maxSize || 2;
-      queue = new ReviewQueue(instanceKey, maxSize);
-    }
-
-    // Check if full
-    if (queue.isFull()) {
-      return {
-        success: false,
-        error: 'Queue is full',
-        maxSize: queue.maxSize,
-        currentSize: queue.items.length
-      };
-    }
-
-    // Create queue item
-    const item = new QueueItem({
+    const result = await this.queueRepository.withInstanceLock(
       instanceKey,
-      repoName: repo.name,
-      prId: pr.id?.toString(),
-      prNumber: pr.number,
-      prTitle: pr.title,
-      level
-    });
+      async (queue) => {
+        if (!queue) {
+          queue = new ReviewQueue(instanceKey, maxSize);
+        }
 
-    // Enqueue
-    queue.enqueue(item);
-    await this.queueRepository.saveQueue(queue);
+        if (queue.isFull()) {
+          return {
+            success: false,
+            error: 'Queue is full',
+            maxSize: queue.maxSize,
+            currentSize: queue.items.length
+          };
+        }
 
-    // Emit event
-    await this.eventBus.emitAsync('queue.item.enqueued', {
-      instanceKey,
-      itemId: item.id,
-      position: queue.getPosition(item.id)
-    });
+        const item = new QueueItem({
+          instanceKey,
+          repoName: repo.name,
+          prId: pr.id?.toString(),
+          prNumber: pr.number,
+          prTitle: pr.title,
+          level
+        });
 
-    this.logger.info(
-      `[ReviewQueueUseCase] Enqueued review for ${instanceKey}/${repo.name} PR #${pr.number} (${level})`
+        queue.enqueue(item);
+
+        return {
+          save: queue,
+          success: true,
+          item,
+          position: queue.getPosition(item.id),
+          estimatedWaitTime: queue.getEstimatedWaitTime(),
+          queueSize: queue.items.length
+        };
+      }
     );
 
-    return {
-      success: true,
-      item,
-      position: queue.getPosition(item.id),
-      estimatedWaitTime: queue.getEstimatedWaitTime(),
-      queueSize: queue.items.length
-    };
+    // Emit event outside lock
+    if (result.success) {
+      await this.eventBus.emitAsync('queue.item.enqueued', {
+        instanceKey,
+        itemId: result.item.id,
+        position: result.position
+      });
+
+      this.logger.info(
+        `[ReviewQueueUseCase] Enqueued review for ${instanceKey}/${repo.name} PR #${pr.number} (${level})`
+      );
+    }
+
+    return result;
   }
 
   /**
@@ -120,29 +127,35 @@ class ReviewQueueUseCase {
    * @returns {Promise<Object>} Cancel result
    */
   async cancelQueueItem(instanceKey, itemId) {
-    const queue = await this.queueRepository.getQueue(instanceKey);
-    if (!queue) {
-      return { success: false, error: 'Queue not found' };
-    }
-
-    const index = queue.items.findIndex(item => item.id === itemId);
-    if (index === -1) {
-      return { success: false, error: 'Item not found' };
-    }
-
-    const item = queue.items.splice(index, 1)[0];
-    await this.queueRepository.saveQueue(queue);
-
-    await this.eventBus.emitAsync('queue.item.cancelled', {
+    const result = await this.queueRepository.withInstanceLock(
       instanceKey,
-      itemId
-    });
+      async (queue) => {
+        if (!queue) {
+          return { success: false, error: 'Queue not found' };
+        }
 
-    this.logger.info(
-      `[ReviewQueueUseCase] Cancelled item ${itemId} for ${instanceKey}`
+        const index = queue.items.findIndex(item => item.id === itemId);
+        if (index === -1) {
+          return { success: false, error: 'Item not found' };
+        }
+
+        const item = queue.items.splice(index, 1)[0];
+        return { save: queue, success: true, item };
+      }
     );
 
-    return { success: true, item };
+    if (result.success) {
+      await this.eventBus.emitAsync('queue.item.cancelled', {
+        instanceKey,
+        itemId
+      });
+
+      this.logger.info(
+        `[ReviewQueueUseCase] Cancelled item ${itemId} for ${instanceKey}`
+      );
+    }
+
+    return result;
   }
 
   /**
@@ -151,19 +164,24 @@ class ReviewQueueUseCase {
    * @returns {Promise<Object>} Pause result
    */
   async pauseQueue(instanceKey) {
-    const queue = await this.queueRepository.getQueue(instanceKey);
-    if (!queue) {
-      return { success: false, error: 'Queue not found' };
+    const result = await this.queueRepository.withInstanceLock(
+      instanceKey,
+      async (queue) => {
+        if (!queue) {
+          return { success: false, error: 'Queue not found' };
+        }
+
+        queue.pause();
+        return { save: queue, success: true };
+      }
+    );
+
+    if (result.success) {
+      await this.eventBus.emitAsync('queue.paused', { instanceKey });
+      this.logger.info(`[ReviewQueueUseCase] Paused queue for ${instanceKey}`);
     }
 
-    queue.pause();
-    await this.queueRepository.saveQueue(queue);
-
-    await this.eventBus.emitAsync('queue.paused', { instanceKey });
-
-    this.logger.info(`[ReviewQueueUseCase] Paused queue for ${instanceKey}`);
-
-    return { success: true };
+    return result;
   }
 
   /**
@@ -172,19 +190,24 @@ class ReviewQueueUseCase {
    * @returns {Promise<Object>} Resume result
    */
   async resumeQueue(instanceKey) {
-    const queue = await this.queueRepository.getQueue(instanceKey);
-    if (!queue) {
-      return { success: false, error: 'Queue not found' };
+    const result = await this.queueRepository.withInstanceLock(
+      instanceKey,
+      async (queue) => {
+        if (!queue) {
+          return { success: false, error: 'Queue not found' };
+        }
+
+        queue.resume();
+        return { save: queue, success: true };
+      }
+    );
+
+    if (result.success) {
+      await this.eventBus.emitAsync('queue.resumed', { instanceKey });
+      this.logger.info(`[ReviewQueueUseCase] Resumed queue for ${instanceKey}`);
     }
 
-    queue.resume();
-    await this.queueRepository.saveQueue(queue);
-
-    await this.eventBus.emitAsync('queue.resumed', { instanceKey });
-
-    this.logger.info(`[ReviewQueueUseCase] Resumed queue for ${instanceKey}`);
-
-    return { success: true };
+    return result;
   }
 
   /**
@@ -193,24 +216,26 @@ class ReviewQueueUseCase {
    * @returns {Promise<Object|null>} Queue and item, or null if nothing to process
    */
   async dequeueForProcessing(instanceKey) {
-    const queue = await this.queueRepository.getQueue(instanceKey);
-    if (!queue) {
-      return null;
-    }
+    return await this.queueRepository.withInstanceLock(
+      instanceKey,
+      async (queue) => {
+        if (!queue) {
+          return null;
+        }
 
-    if (!queue.canProcess()) {
-      return null;
-    }
+        if (!queue.canProcess()) {
+          return null;
+        }
 
-    const item = queue.dequeue();
-    if (!item) {
-      return null;
-    }
+        const item = queue.dequeue();
+        if (!item) {
+          return null;
+        }
 
-    queue.startProcessing(item);
-    await this.queueRepository.saveQueue(queue);
-
-    return { queue, item };
+        queue.startProcessing(item);
+        return { save: queue, queue, item };
+      }
+    );
   }
 
   /**
@@ -222,25 +247,31 @@ class ReviewQueueUseCase {
    * @returns {Promise<Object>} Complete result
    */
   async completeProcessing(instanceKey, itemId, result, duration) {
-    const queue = await this.queueRepository.getQueue(instanceKey);
-    if (!queue) {
-      return { success: false, error: 'Queue not found' };
-    }
+    const outcome = await this.queueRepository.withInstanceLock(
+      instanceKey,
+      async (queue) => {
+        if (!queue) {
+          return { success: false, error: 'Queue not found' };
+        }
 
-    const item = queue.currentItem;
-    if (!item || item.id !== itemId) {
-      return { success: false, error: 'Item not found as current' };
-    }
+        const item = queue.currentItem;
+        if (!item || item.id !== itemId) {
+          return { success: false, error: 'Item not found as current' };
+        }
 
-    queue.completeProcessing(item, result.success);
-    queue.updateAverageProcessingTime(duration);
-    await this.queueRepository.saveQueue(queue);
-
-    this.logger.info(
-      `[ReviewQueueUseCase] Completed processing ${itemId} for ${instanceKey} (${duration}ms)`
+        queue.completeProcessing(item, result.success);
+        queue.updateAverageProcessingTime(duration);
+        return { save: queue, success: true };
+      }
     );
 
-    return { success: true };
+    if (outcome.success) {
+      this.logger.info(
+        `[ReviewQueueUseCase] Completed processing ${itemId} for ${instanceKey} (${duration}ms)`
+      );
+    }
+
+    return outcome;
   }
 
   /**
@@ -251,46 +282,48 @@ class ReviewQueueUseCase {
    * @returns {Promise<Object>} Handle result with requeued flag
    */
   async handleProcessingFailure(instanceKey, itemId, error) {
-    const queue = await this.queueRepository.getQueue(instanceKey);
-    if (!queue) {
-      return { success: false };
-    }
+    const result = await this.queueRepository.withInstanceLock(
+      instanceKey,
+      async (queue) => {
+        if (!queue) {
+          return { success: false };
+        }
 
-    const item = queue.currentItem;
-    if (!item || item.id !== itemId) {
-      return { success: false };
-    }
+        const item = queue.currentItem;
+        if (!item || item.id !== itemId) {
+          return { success: false };
+        }
 
-    item.retryCount = (item.retryCount || 0) + 1;
+        item.retryCount = (item.retryCount || 0) + 1;
 
-    const maxRetries = this.config.app?.review_queue?.max_retries || 2;
+        const maxRetries = this.config.app?.review_queue?.max_retries || 2;
 
-    if (item.retryCount < maxRetries && this._isTransientError(error)) {
-      // Requeue with delay
-      queue.currentItem = null;
-      queue.status = 'idle';
-      queue.items.unshift(item); // Add to front
+        if (item.retryCount < maxRetries && this._isTransientError(error)) {
+          queue.currentItem = null;
+          queue.status = 'idle';
+          queue.items.unshift(item);
 
-      await this.queueRepository.saveQueue(queue);
+          return { save: queue, success: true, requeued: true };
+        }
 
-      this.logger.warn(
-        `[ReviewQueueUseCase] Requeued item ${itemId} for ${instanceKey} (retry ${item.retryCount}/${maxRetries})`
-      );
-
-      return { success: true, requeued: true };
-    }
-
-    // Mark as failed
-    item.error = error.message;
-    queue.completeProcessing(item, false);
-    await this.queueRepository.saveQueue(queue);
-
-    this.logger.error(
-      `[ReviewQueueUseCase] Failed to process item ${itemId} for ${instanceKey}:`,
-      error.message
+        item.error = error.message;
+        queue.completeProcessing(item, false);
+        return { save: queue, success: true, requeued: false };
+      }
     );
 
-    return { success: true, requeued: false };
+    if (result.success && result.requeued) {
+      this.logger.warn(
+        `[ReviewQueueUseCase] Requeued item ${itemId} for ${instanceKey} (retry ${this.config.app?.review_queue?.max_retries || 2})`
+      );
+    } else if (result.success && !result.requeued) {
+      this.logger.error(
+        `[ReviewQueueUseCase] Failed to process item ${itemId} for ${instanceKey}:`,
+        error.message
+      );
+    }
+
+    return result;
   }
 
   /**
