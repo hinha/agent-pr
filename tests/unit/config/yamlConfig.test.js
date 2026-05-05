@@ -279,4 +279,162 @@ describe('yamlConfig', () => {
       expect(result).toBeUndefined();
     });
   });
+
+  describe('toBool helper', () => {
+    const toBool = (value) => {
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'number') return value === 1;
+      if (typeof value === 'string') {
+        const v = value.trim().toLowerCase();
+        return ['true', '1', 'yes', 'on'].includes(v);
+      }
+      return false;
+    };
+
+    test('should pass through boolean true', () => expect(toBool(true)).toBe(true));
+    test('should pass through boolean false', () => expect(toBool(false)).toBe(false));
+    test('should accept "true"', () => expect(toBool('true')).toBe(true));
+    test('should accept "TRUE" (case-insensitive)', () => expect(toBool('TRUE')).toBe(true));
+    test('should accept "True" (case-insensitive)', () => expect(toBool('True')).toBe(true));
+    test('should accept 1 (number)', () => expect(toBool(1)).toBe(true));
+    test('should accept "1" (string)', () => expect(toBool('1')).toBe(true));
+    test('should accept "yes"', () => expect(toBool('yes')).toBe(true));
+    test('should accept "YES"', () => expect(toBool('YES')).toBe(true));
+    test('should accept "on"', () => expect(toBool('on')).toBe(true));
+    test('should accept "ON"', () => expect(toBool('ON')).toBe(true));
+    test('should reject 0', () => expect(toBool(0)).toBe(false));
+    test('should reject "false"', () => expect(toBool('false')).toBe(false));
+    test('should reject "no"', () => expect(toBool('no')).toBe(false));
+    test('should reject "off"', () => expect(toBool('off')).toBe(false));
+    test('should reject null', () => expect(toBool(null)).toBe(false));
+    test('should reject undefined', () => expect(toBool(undefined)).toBe(false));
+    test('should reject empty string', () => expect(toBool('')).toBe(false));
+    test('should reject random string', () => expect(toBool('maybe')).toBe(false));
+    test('should reject object', () => expect(toBool({})).toBe(false));
+  });
+
+  describe('resolveEnabled alias', () => {
+    const resolveEnabled = (repoConf) => {
+      const raw = repoConf.enabled !== undefined ? repoConf.enabled : repoConf.enable;
+      const toBool = (value) => {
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'number') return value === 1;
+        if (typeof value === 'string') {
+          const v = value.trim().toLowerCase();
+          return ['true', '1', 'yes', 'on'].includes(v);
+        }
+        return false;
+      };
+      return toBool(raw);
+    };
+
+    test('should work with enable: true', () => {
+      expect(resolveEnabled({ enable: true })).toBe(true);
+    });
+
+    test('should work with enabled: true as alias', () => {
+      expect(resolveEnabled({ enabled: true })).toBe(true);
+    });
+
+    test('should prefer enabled over enable when both present', () => {
+      expect(resolveEnabled({ enable: false, enabled: true })).toBe(true);
+    });
+
+    test('should work with enabled: "yes" via alias', () => {
+      expect(resolveEnabled({ enabled: 'yes' })).toBe(true);
+    });
+
+    test('should default to false when neither field present', () => {
+      expect(resolveEnabled({ thread_id: '100' })).toBe(false);
+    });
+  });
+
+  describe('Repo enable field parsing', () => {
+    const toBool = (value) => {
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'number') return value === 1;
+      if (typeof value === 'string') {
+        const v = value.trim().toLowerCase();
+        return ['true', '1', 'yes', 'on'].includes(v);
+      }
+      return false;
+    };
+
+    const resolveEnabled = (repoConf) => {
+      const raw = repoConf.enabled !== undefined ? repoConf.enabled : repoConf.enable;
+      return toBool(raw);
+    };
+
+    test('should set enabled to true when repo config has enable: true', () => {
+      const repoConf = { enable: true, thread_id: '100' };
+      expect(resolveEnabled(repoConf)).toBe(true);
+    });
+
+    test('should set enabled to true when repo config has enable as string "true"', () => {
+      const repoConf = { enable: 'true', thread_id: '100' };
+      expect(resolveEnabled(repoConf)).toBe(true);
+    });
+
+    test('should set enabled to true for "TRUE" (case-insensitive)', () => {
+      const repoConf = { enable: 'TRUE', thread_id: '100' };
+      expect(resolveEnabled(repoConf)).toBe(true);
+    });
+
+    test('should set enabled to true for numeric 1', () => {
+      const repoConf = { enable: 1, thread_id: '100' };
+      expect(resolveEnabled(repoConf)).toBe(true);
+    });
+
+    test('should set enabled to true for "yes"', () => {
+      const repoConf = { enable: 'yes', thread_id: '100' };
+      expect(resolveEnabled(repoConf)).toBe(true);
+    });
+
+    test('should set enabled to true for "on"', () => {
+      const repoConf = { enable: 'on', thread_id: '100' };
+      expect(resolveEnabled(repoConf)).toBe(true);
+    });
+
+    test('should set enabled to false when repo config has enable: false', () => {
+      const repoConf = { enable: false, thread_id: '100' };
+      expect(resolveEnabled(repoConf)).toBe(false);
+    });
+
+    test('should set enabled to false when repo config has no enable field', () => {
+      const repoConf = { thread_id: '100' };
+      expect(resolveEnabled(repoConf)).toBe(false);
+    });
+
+    test('should transform repos map with enabled field', () => {
+      const rawRepos = {
+        'active-repo': { enable: true, thread_id: '100' },
+        'string-true-repo': { enable: 'true', thread_id: '101' },
+        'disabled-repo': { enable: false, thread_id: '200' },
+        'no-field-repo': { thread_id: '300' }
+      };
+
+      const transformed = Object.fromEntries(
+        Object.entries(rawRepos).map(([name, conf]) => [
+          name,
+          { ...conf, enabled: resolveEnabled(conf) }
+        ])
+      );
+
+      expect(transformed['active-repo'].enabled).toBe(true);
+      expect(transformed['string-true-repo'].enabled).toBe(true);
+      expect(transformed['disabled-repo'].enabled).toBe(false);
+      expect(transformed['no-field-repo'].enabled).toBe(false);
+    });
+
+    test('should count enabled repos correctly', () => {
+      const repos = {
+        'repo-a': { enabled: true },
+        'repo-b': { enabled: false },
+        'repo-c': { enabled: true }
+      };
+
+      const enabledCount = Object.values(repos).filter(r => r.enabled === true).length;
+      expect(enabledCount).toBe(2);
+    });
+  });
 });

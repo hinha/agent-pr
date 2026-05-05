@@ -4,6 +4,33 @@ const yaml = require('js-yaml');
 const logger = require('../utils/logger');
 
 /**
+ * Normalize a value to boolean.
+ * Accepts: true, "true", "TRUE", 1, "1", "yes", "on" (case-insensitive)
+ * @param {*} value - Value to test
+ * @returns {boolean}
+ */
+function toBool(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const v = value.trim().toLowerCase();
+    return ['true', '1', 'yes', 'on'].includes(v);
+  }
+  return false;
+}
+
+/**
+ * Resolve enabled status from repo config, supporting both `enable` and `enabled` keys.
+ * `enabled` takes precedence when both are present.
+ * @param {Object} repoConf - Repo config object
+ * @returns {boolean}
+ */
+function resolveEnabled(repoConf) {
+  const raw = repoConf.enabled !== undefined ? repoConf.enabled : repoConf.enable;
+  return toBool(raw);
+}
+
+/**
  * Load YAML configuration file
  */
 function loadYamlConfig() {
@@ -98,6 +125,7 @@ function buildInstances(config) {
 
       const maxAgeHours = config[key].max_age_hours || 48;
       const skipCacheHours = config[key].skip_cache_duration_hours || 3;
+      const queueMaxSize = config[key].queue?.max_size || 2;
 
       instances[key] = {
         key: key,
@@ -105,6 +133,9 @@ function buildInstances(config) {
         mcpName: config[key].mcp_name,
         maxAgeMs: maxAgeHours * 60 * 60 * 1000,
         skipDurationMs: skipCacheHours * 60 * 60 * 1000,
+        queue: {
+          maxSize: queueMaxSize
+        },
         agent: {
           reviewAgent: config[key].agent.review,
           summaryAgent: config[key].agent.summary,
@@ -112,11 +143,18 @@ function buildInstances(config) {
           reviewTimeoutSeconds: config[key].agent.review_timeout_seconds,
           reviewTimeoutMessage: config[key].agent.review_timeot_string || '10 menit'
         },
-        repos: config[key].repos
+        repos: Object.fromEntries(
+          Object.entries(config[key].repos || {}).map(([repoName, repoConf]) => [
+            repoName,
+            { ...repoConf, enabled: resolveEnabled(repoConf) }
+          ])
+        )
       };
 
-      const repoCount = Object.keys(config[key].repos || {}).length;
-      logger.info(`Instance ${key}: owner=${owner}, mcp=${config[key].mcp_name}, repos=${repoCount}`);
+      const repos = Object.entries(config[key].repos || {});
+      const enabledCount = repos.filter(([, r]) => resolveEnabled(r)).length;
+      const repoCount = repos.length;
+      logger.info(`Instance ${key}: owner=${owner}, mcp=${config[key].mcp_name}, queue_max=${queueMaxSize}, repos=${enabledCount}/${repoCount} active`);
     }
   }
 

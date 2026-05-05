@@ -215,6 +215,45 @@ class Container {
       );
     }).singleton();
 
+    // ===== Review Queue System =====
+    this.registerFunction('reviewQueueRepository', (cradle) => {
+      const ReviewQueueRepository = require('../infrastructure/persistence/ReviewQueueRepository');
+      return new ReviewQueueRepository({ logger: cradle.logger });
+    }).singleton();
+
+    this.registerFunction('reviewQueueUseCase', (cradle) => {
+      const ReviewQueueUseCase = require('../application/use-cases/ReviewQueueUseCase');
+      return new ReviewQueueUseCase(
+        cradle.reviewQueueRepository,
+        cradle.eventBus,
+        { logger: cradle.logger, config: cradle.config }
+      );
+    }).singleton();
+
+    this.registerFunction('reviewQueueWorker', (cradle) => {
+      const ReviewQueueWorker = require('../application/orchestrators/ReviewQueueWorker');
+      return new ReviewQueueWorker(
+        cradle.reviewQueueRepository,
+        cradle.reviewQueueUseCase,
+        cradle.reviewPRUseCase,
+        cradle.eventBus,
+        {
+          logger: cradle.logger,
+          pollInterval: 5000,
+          githubAdapterFactory: cradle.githubAdapter
+        }
+      );
+    }).singleton();
+
+    this.registerFunction('queueNotificationSubscriber', (cradle) => {
+      const QueueNotificationSubscriber = require('../infrastructure/telegram/QueueNotificationSubscriber');
+      return new QueueNotificationSubscriber(
+        cradle.telegramAdapter,
+        cradle.eventBus,
+        { logger: cradle.logger }
+      );
+    }).singleton();
+
     this.registerFunction('checkOutdatedReviewsUseCase', (cradle) => {
       const CheckOutdatedReviewsUseCase = require('../application/use-cases/CheckOutdatedReviewsUseCase');
 
@@ -298,7 +337,10 @@ class Container {
           skipManager: cradle.skipManager,
           stateRepositoryFactory: cradle.stateRepositoryFactory,
           checkOutdatedReviewsUseCase: cradle.checkOutdatedReviewsUseCase,
-          confirmationManager: cradle.confirmationManager
+          confirmationManager: cradle.confirmationManager,
+          reviewQueueUseCase: cradle.reviewQueueUseCase,
+          bot: cradle.telegramAdapter.getBot(),
+          chatId: cradle.telegramAdapter.chatId
         }
       );
     }).singleton();

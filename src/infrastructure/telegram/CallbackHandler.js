@@ -21,6 +21,8 @@ class CallbackHandler {
    * @param {Object} options.skipManager - SkipManager instance
    * @param {Object} options.stateRepositoryFactory - StateRepository factory
    * @param {Object} options.checkOutdatedReviewsUseCase - CheckOutdatedReviewsUseCase instance
+   * @param {Object} options.confirmationManager - ConfirmationManager instance
+   * @param {Object} options.reviewQueueUseCase - ReviewQueueUseCase instance
    * @param {Object} options.bot - Telegram bot instance
    * @param {Object} options.chatId - Telegram chat ID
    */
@@ -35,6 +37,7 @@ class CallbackHandler {
     this.stateRepositoryFactory = options.stateRepositoryFactory || null;
     this.checkOutdatedReviewsUseCase = options.checkOutdatedReviewsUseCase || null;
     this.confirmationManager = options.confirmationManager || null;
+    this.reviewQueueUseCase = options.reviewQueueUseCase || null;
     this.bot = options.bot || null;
     this.chatId = options.chatId || null;
   }
@@ -752,18 +755,77 @@ class CallbackHandler {
   }
 
   /**
-   * Handle review level selection
+   * Handle review level selection - enqueue instead of execute
    * @private
    */
   async _handleReviewLevel(query, instance, repo, pr, level) {
     this.logger.info(
-      `[CallbackHandler] Starting ${level} review for PR with id=${pr.id}`
+      `[CallbackHandler] Queueing ${level} review for PR with id=${pr.id}`
     );
 
-    await query.answer(`🚀 Running ${level} review...`);
+    await query.answer('📋 Adding to queue...');
 
+    // Resolve fresh PR data
     const githubAdapter = this.githubAdapter.create(instance.key);
     pr = await this._resolveFreshPR(pr, repo, githubAdapter);
+
+    // Check if queue is enabled
+    if (!this.reviewQueueUseCase) {
+      // Fallback: execute directly if queue not available
+      this.logger.warn('[CallbackHandler] Queue not available, executing directly');
+      return await this._executeReviewDirectly(query, instance, repo, pr, level, githubAdapter, { alreadyAnswered: true });
+    }
+
+    // Enqueue review
+    const result = await this.reviewQueueUseCase.enqueueReview(
+      instance,
+      repo,
+      pr,
+      level
+    );
+
+    if (!result.success) {
+      // Queue full - show error
+      await query.editMessageText(
+        `❌ <b>Queue Full</b>\n\n` +
+        `📂 ${this._escapeHtml(`${instance.owner}/${repo.name}`)} PR #${pr.number}\n\n` +
+        `The review queue is currently full (${result.currentSize}/${result.maxSize}).\n` +
+        `Please try again later or wait for current reviews to complete.`,
+        { parse_mode: 'HTML' }
+      );
+      return { success: false, error: result.error };
+    }
+
+    // Show queue status
+    const waitMinutes = result.estimatedWaitTime
+      ? Math.ceil(result.estimatedWaitTime / 60000)
+      : null;
+
+    const waitText = waitMinutes
+      ? `⏱️ Estimated wait: ~${waitMinutes} minutes\n`
+      : '';
+
+    await query.editMessageText(
+      `⏳ <b>Review Queued</b>\n\n` +
+      `📂 ${this._escapeHtml(`${instance.owner}/${repo.name}`)} PR #${pr.number}\n` +
+      `🔍 Level: ${level.toUpperCase()}\n` +
+      `📊 Position: #${result.position}\n` +
+      waitText +
+      `\nThe review will be processed automatically when ready.`,
+      { parse_mode: 'HTML' }
+    );
+
+    return { success: true, action: 'queued', position: result.position };
+  }
+
+  /**
+   * Execute review directly (fallback when queue is not available)
+   * @private
+   */
+  async _executeReviewDirectly(query, instance, repo, pr, level, githubAdapter, opts = {}) {
+    if (!opts.alreadyAnswered) {
+      await query.answer(`🚀 Running ${level} review...`);
+    }
 
     // Immediately show processing confirmation and disable buttons
     const timeoutString = instance.agent?.review_timeot_string || '20 minutes';

@@ -182,19 +182,18 @@ class PRProcessingOrchestrator {
       this.logger.info('[PRProcessingOrchestrator] Starting poll cycle');
       this.stats.lastPollTime = new Date();
 
-      // Process all instances
+      // Process all instances in parallel
       const instances = this.config.instances || {};
       const instanceKeys = Object.keys(instances);
-      this.logger.info(`[PRProcessingOrchestrator] Processing ${instanceKeys.length} instance(s): ${instanceKeys.join(', ')}`);
+      this.logger.info(`[PRProcessingOrchestrator] Processing ${instanceKeys.length} instance(s) in parallel: ${instanceKeys.join(', ')}`);
 
-      const results = [];
-
-      for (const instance of Object.values(instances)) {
+      // Create promises for each instance
+      const instancePromises = Object.values(instances).map(async (instance) => {
         try {
           this.logger.info(`[PRProcessingOrchestrator] Processing instance ${instance.key}...`);
           const instanceResult = await this._processInstance(instance);
           this.logger.info(`[PRProcessingOrchestrator] Instance ${instance.key} processing complete: ${instanceResult.length} results`);
-          results.push(...instanceResult);
+          return { success: true, instanceKey: instance.key, results: instanceResult };
         } catch (error) {
           this.logger.error(
             `[PRProcessingOrchestrator] Error processing instance ${instance.key}:`,
@@ -202,6 +201,21 @@ class PRProcessingOrchestrator {
           );
           this.logger.error(`[PRProcessingOrchestrator] Error stack: ${error.stack}`);
           this.stats.totalErrors++;
+          return { success: false, instanceKey: instance.key, error: error.message };
+        }
+      });
+
+      // Wait for all instances to complete (using allSettled for error isolation)
+      const outcomes = await Promise.allSettled(instancePromises);
+
+      // Collect results from successful instances
+      const results = [];
+      for (const outcome of outcomes) {
+        if (outcome.status === 'fulfilled') {
+          const result = outcome.value;
+          if (result.success) {
+            results.push(...result.results);
+          }
         }
       }
 
@@ -258,6 +272,12 @@ class PRProcessingOrchestrator {
 
       for (const [repoName, repoConfig] of repos) {
         try {
+          // Skip disabled repos
+          if (repoConfig.enabled !== true) {
+            this.logger.info(`[PRProcessingOrchestrator] Repo ${repoName} is disabled, skipping`);
+            continue;
+          }
+
           this.logger.info(`[PRProcessingOrchestrator] Processing repo ${repoName}...`);
 
           const repo = {

@@ -458,6 +458,15 @@ EventBus.Events = {
   REVIEW_CREATED: 'review.created',
   REVIEW_OUTDATED: 'review.outdated',
 
+  // Queue events
+  QUEUE_ITEM_ENQUEUED: 'queue.item.enqueued',
+  QUEUE_ITEM_STARTED: 'queue.item.started',
+  QUEUE_ITEM_COMPLETED: 'queue.item.completed',
+  QUEUE_ITEM_FAILED: 'queue.item.failed',
+  QUEUE_ITEM_CANCELLED: 'queue.item.cancelled',
+  QUEUE_PAUSED: 'queue.paused',
+  QUEUE_RESUMED: 'queue.resumed',
+
   // State events
   STATE_CHANGED: 'state.changed',
   STATE_PERSISTED: 'state.persisted',

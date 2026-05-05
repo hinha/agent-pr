@@ -55,6 +55,21 @@ class ReviewPRUseCase {
       const prDetails = await githubAdapter.getPRDetails(repoName, prNumber);
       const { files, totalChanges } = prDetails;
 
+      // Step 1a: Ensure headSha is available for review submission
+      if (!pr.headSha) {
+        try {
+          const openPRs = await githubAdapter.getOpenPRs(repoName);
+          const freshPR = openPRs.find(p => p.number === prNumber);
+          if (freshPR?.headSha) {
+            pr.headSha = freshPR.headSha;
+          }
+        } catch (err) {
+          this.logger.warn(
+            `[ReviewPRUseCase] Could not fetch headSha for PR #${prNumber}: ${err.message}`
+          );
+        }
+      }
+
       this.logger.debug(
         `[ReviewPRUseCase] PR #${prNumber} has ${files.length} files, ${totalChanges} changes`
       );

@@ -87,7 +87,7 @@ describe('PRProcessingOrchestrator', () => {
           key: 'github/testorg',
           owner: 'testorg',
           repos: {
-            'test-repo': { thread_id: '12345' }
+            'test-repo': { thread_id: '12345', enabled: true }
           }
         }
       },
@@ -302,8 +302,8 @@ describe('PRProcessingOrchestrator', () => {
             key: 'github/testorg',
             owner: 'testorg',
             repos: {
-              'repo-a': { thread_id: '111' },
-              'repo-b': { thread_id: '222' }
+              'repo-a': { thread_id: '111', enabled: true },
+              'repo-b': { thread_id: '222', enabled: true }
             }
           }
         }
@@ -456,6 +456,103 @@ describe('PRProcessingOrchestrator', () => {
       expect(stats).toHaveProperty('totalNotified', 0);
       expect(stats).toHaveProperty('totalErrors', 0);
       expect(stats).toHaveProperty('isRunning', false);
+    });
+  });
+
+  describe('disabled repos', () => {
+    test('should skip repo when enabled is false', async () => {
+      const configWithDisabled = {
+        ...mockConfig,
+        instances: {
+          'github/testorg': {
+            key: 'github/testorg',
+            owner: 'testorg',
+            repos: {
+              'disabled-repo': { thread_id: '99999', enabled: false }
+            }
+          }
+        }
+      };
+
+      const testOrchestrator = new PRProcessingOrchestrator(
+        mockUseCases,
+        configWithDisabled,
+        mockEventBus,
+        { logger: mockLogger, pollInterval: 60000 }
+      );
+
+      await testOrchestrator._poll();
+
+      // Should NOT process PRs or run outdated review checks for disabled repo
+      expect(mockUseCases.processPR.shouldProcess).not.toHaveBeenCalled();
+      expect(mockUseCases.checkOutdatedReviews.execute).not.toHaveBeenCalled();
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('disabled-repo is disabled, skipping')
+      );
+    });
+
+    test('should skip repo when enabled is undefined (default false)', async () => {
+      const configWithUndefined = {
+        ...mockConfig,
+        instances: {
+          'github/testorg': {
+            key: 'github/testorg',
+            owner: 'testorg',
+            repos: {
+              'no-enable-field': { thread_id: '88888' }
+            }
+          }
+        }
+      };
+
+      const testOrchestrator = new PRProcessingOrchestrator(
+        mockUseCases,
+        configWithUndefined,
+        mockEventBus,
+        { logger: mockLogger, pollInterval: 60000 }
+      );
+
+      await testOrchestrator._poll();
+
+      expect(mockUseCases.checkOutdatedReviews.execute).not.toHaveBeenCalled();
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('no-enable-field is disabled, skipping')
+      );
+    });
+
+    test('should process enabled repo and skip disabled repo in same instance', async () => {
+      const configWithMixed = {
+        ...mockConfig,
+        instances: {
+          'github/testorg': {
+            key: 'github/testorg',
+            owner: 'testorg',
+            repos: {
+              'active-repo': { thread_id: '111', enabled: true },
+              'disabled-repo': { thread_id: '222', enabled: false }
+            }
+          }
+        }
+      };
+
+      const testOrchestrator = new PRProcessingOrchestrator(
+        mockUseCases,
+        configWithMixed,
+        mockEventBus,
+        { logger: mockLogger, pollInterval: 60000 }
+      );
+
+      mockUseCases.processPR.shouldProcess.mockResolvedValue({ shouldProcess: false, reason: 'Test skip' });
+
+      await testOrchestrator._poll();
+
+      // Disabled repo should be skipped
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('disabled-repo is disabled, skipping')
+      );
+
+      // Active repo should still be processed (outdated review check)
+      expect(mockUseCases.checkOutdatedReviews.execute).toHaveBeenCalledTimes(1);
     });
   });
 });

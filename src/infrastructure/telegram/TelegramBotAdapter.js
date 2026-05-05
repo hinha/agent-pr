@@ -239,6 +239,26 @@ class TelegramBotAdapter extends ITelegramService {
   }
 
   /**
+   * Send a plain text message to a specific thread
+   * @param {number} threadId - Thread ID to send to
+   * @param {string} message - HTML message text
+   * @returns {Promise<Object>} Sent message
+   */
+  async sendToThread(threadId, message) {
+    if (!this.bot) {
+      throw new Error('Telegram bot not initialized');
+    }
+
+    return await this.retryHelper.retry(async () => {
+      return await this.bot.sendMessage(this.chatId, message, {
+        message_thread_id: threadId,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true
+      });
+    });
+  }
+
+  /**
    * Send an outdated review notification to Telegram
    * @param {OutdatedReviewNotification} notification - Outdated review notification data
    * @returns {Promise<void>}
