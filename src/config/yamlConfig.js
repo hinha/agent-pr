@@ -4,6 +4,33 @@ const yaml = require('js-yaml');
 const logger = require('../utils/logger');
 
 /**
+ * Normalize a value to boolean.
+ * Accepts: true, "true", "TRUE", 1, "1", "yes", "on" (case-insensitive)
+ * @param {*} value - Value to test
+ * @returns {boolean}
+ */
+function toBool(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const v = value.trim().toLowerCase();
+    return ['true', '1', 'yes', 'on'].includes(v);
+  }
+  return false;
+}
+
+/**
+ * Resolve enabled status from repo config, supporting both `enable` and `enabled` keys.
+ * `enabled` takes precedence when both are present.
+ * @param {Object} repoConf - Repo config object
+ * @returns {boolean}
+ */
+function resolveEnabled(repoConf) {
+  const raw = repoConf.enabled !== undefined ? repoConf.enabled : repoConf.enable;
+  return toBool(raw);
+}
+
+/**
  * Load YAML configuration file
  */
 function loadYamlConfig() {
@@ -119,13 +146,13 @@ function buildInstances(config) {
         repos: Object.fromEntries(
           Object.entries(config[key].repos || {}).map(([repoName, repoConf]) => [
             repoName,
-            { ...repoConf, enabled: repoConf.enable === true || repoConf.enable === 'true' }
+            { ...repoConf, enabled: resolveEnabled(repoConf) }
           ])
         )
       };
 
       const repos = Object.entries(config[key].repos || {});
-      const enabledCount = repos.filter(([, r]) => r.enable === true || r.enable === 'true').length;
+      const enabledCount = repos.filter(([, r]) => resolveEnabled(r)).length;
       const repoCount = repos.length;
       logger.info(`Instance ${key}: owner=${owner}, mcp=${config[key].mcp_name}, queue_max=${queueMaxSize}, repos=${enabledCount}/${repoCount} active`);
     }
