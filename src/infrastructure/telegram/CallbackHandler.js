@@ -807,7 +807,7 @@ class CallbackHandler {
       `🔍 Level: ${level.toUpperCase()}\n` +
       `📊 Position: #${result.position}\n` +
       `⏱️ Estimated wait: ~${waitMinutes} minutes\n\n` +
-      `You will be notified when the review starts and completes.`,
+      `The review will be processed automatically when ready.`,
       { parse_mode: 'HTML' }
     );
 
