@@ -119,13 +119,13 @@ function buildInstances(config) {
         repos: Object.fromEntries(
           Object.entries(config[key].repos || {}).map(([repoName, repoConf]) => [
             repoName,
-            { ...repoConf, enabled: repoConf.enable === true }
+            { ...repoConf, enabled: repoConf.enable === true || repoConf.enable === 'true' }
           ])
         )
       };
 
       const repos = Object.entries(config[key].repos || {});
-      const enabledCount = repos.filter(([, r]) => r.enable === true).length;
+      const enabledCount = repos.filter(([, r]) => r.enable === true || r.enable === 'true').length;
       const repoCount = repos.length;
       logger.info(`Instance ${key}: owner=${owner}, mcp=${config[key].mcp_name}, queue_max=${queueMaxSize}, repos=${enabledCount}/${repoCount} active`);
     }

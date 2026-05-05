@@ -283,25 +283,32 @@ describe('yamlConfig', () => {
   describe('Repo enable field parsing', () => {
     test('should set enabled to true when repo config has enable: true', () => {
       const repoConf = { enable: true, thread_id: '100' };
-      const enabled = repoConf.enable === true;
+      const enabled = repoConf.enable === true || repoConf.enable === 'true';
+      expect(enabled).toBe(true);
+    });
+
+    test('should set enabled to true when repo config has enable as string "true"', () => {
+      const repoConf = { enable: 'true', thread_id: '100' };
+      const enabled = repoConf.enable === true || repoConf.enable === 'true';
       expect(enabled).toBe(true);
     });
 
     test('should set enabled to false when repo config has enable: false', () => {
       const repoConf = { enable: false, thread_id: '100' };
-      const enabled = repoConf.enable === true;
+      const enabled = repoConf.enable === true || repoConf.enable === 'true';
       expect(enabled).toBe(false);
     });
 
     test('should set enabled to false when repo config has no enable field', () => {
       const repoConf = { thread_id: '100' };
-      const enabled = repoConf.enable === true;
+      const enabled = repoConf.enable === true || repoConf.enable === 'true';
       expect(enabled).toBe(false);
     });
 
     test('should transform repos map with enabled field', () => {
       const rawRepos = {
         'active-repo': { enable: true, thread_id: '100' },
+        'string-true-repo': { enable: 'true', thread_id: '101' },
         'disabled-repo': { enable: false, thread_id: '200' },
         'no-field-repo': { thread_id: '300' }
       };
@@ -309,11 +316,12 @@ describe('yamlConfig', () => {
       const transformed = Object.fromEntries(
         Object.entries(rawRepos).map(([name, conf]) => [
           name,
-          { ...conf, enabled: conf.enable === true }
+          { ...conf, enabled: conf.enable === true || conf.enable === 'true' }
         ])
       );
 
       expect(transformed['active-repo'].enabled).toBe(true);
+      expect(transformed['string-true-repo'].enabled).toBe(true);
       expect(transformed['disabled-repo'].enabled).toBe(false);
       expect(transformed['no-field-repo'].enabled).toBe(false);
     });
