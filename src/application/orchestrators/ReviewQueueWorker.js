@@ -158,24 +158,33 @@ class ReviewQueueWorker {
   async _processItem(queue, item) {
     const startTime = Date.now();
 
+    // Get instance and repo config (before try so catch can access)
+    const config = require('../../config/yamlConfig');
+    const instance = config.instances[queue.instanceKey];
+    const repoConfig = instance?.repos?.[item.repoName];
+
     try {
       this.logger.info(
         `[ReviewQueueWorker] Processing ${item.instanceKey}/${item.repoName} PR #${item.prNumber} (${item.level})`
       );
 
-      await this.eventBus.emitAsync('queue.item.started', {
-        instanceKey: queue.instanceKey,
-        itemId: item.id
-      });
-
-      // Get instance and repo config
-      const config = require('../../config/yamlConfig');
-      const instance = config.instances[queue.instanceKey];
-      const repoConfig = instance.repos[item.repoName];
+      if (!repoConfig) {
+        throw new Error(`Repo config not found: ${item.repoName}`);
+      }
 
       if (!repoConfig) {
         throw new Error(`Repo config not found: ${item.repoName}`);
       }
+
+      await this.eventBus.emitAsync('queue.item.started', {
+        instanceKey: queue.instanceKey,
+        itemId: item.id,
+        repoName: item.repoName,
+        prNumber: item.prNumber,
+        prTitle: item.prTitle,
+        level: item.level,
+        threadId: repoConfig.thread_id
+      });
 
       // Create PR entity
       const PullRequest = require('../../core/entities/PullRequest');
@@ -219,7 +228,12 @@ class ReviewQueueWorker {
           instanceKey: queue.instanceKey,
           itemId: item.id,
           error: err.message,
-          duration
+          duration,
+          repoName: item.repoName,
+          prNumber: item.prNumber,
+          prTitle: item.prTitle,
+          level: item.level,
+          threadId: repoConfig.thread_id
         });
 
         this.logger.error(
@@ -240,7 +254,13 @@ class ReviewQueueWorker {
       await this.eventBus.emitAsync('queue.item.completed', {
         instanceKey: queue.instanceKey,
         itemId: item.id,
-        duration
+        duration,
+        repoName: item.repoName,
+        prNumber: item.prNumber,
+        prTitle: item.prTitle,
+        level: item.level,
+        threadId: repoConfig.thread_id,
+        reviewUrl: result.review?.html_url
       });
 
       this.logger.info(
@@ -262,7 +282,13 @@ class ReviewQueueWorker {
       await this.eventBus.emitAsync('queue.item.failed', {
         instanceKey: queue.instanceKey,
         itemId: item.id,
-        error: error.message
+        error: error.message,
+        duration: Date.now() - startTime,
+        repoName: item.repoName,
+        prNumber: item.prNumber,
+        prTitle: item.prTitle,
+        level: item.level,
+        threadId: repoConfig?.thread_id
       });
     }
   }

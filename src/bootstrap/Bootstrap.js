@@ -98,6 +98,10 @@ class Bootstrap {
       logger.info('✅ Review queue worker started');
       this._reviewQueueWorker = reviewQueueWorker;
 
+      // Step 8.6: Subscribe queue notifications
+      const queueNotificationSubscriber = this.container.get('queueNotificationSubscriber');
+      queueNotificationSubscriber.subscribe();
+
       // Step 9: Initialize Flagsmith sync if configured
       logger.info('[Bootstrap] Step 9: Checking Flagsmith configuration...');
       if (config.app?.flagsmith?.enabled) {

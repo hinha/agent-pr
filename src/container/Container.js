@@ -245,6 +245,15 @@ class Container {
       );
     }).singleton();
 
+    this.registerFunction('queueNotificationSubscriber', (cradle) => {
+      const QueueNotificationSubscriber = require('../infrastructure/telegram/QueueNotificationSubscriber');
+      return new QueueNotificationSubscriber(
+        cradle.telegramAdapter,
+        cradle.eventBus,
+        { logger: cradle.logger }
+      );
+    }).singleton();
+
     this.registerFunction('checkOutdatedReviewsUseCase', (cradle) => {
       const CheckOutdatedReviewsUseCase = require('../application/use-cases/CheckOutdatedReviewsUseCase');
 
