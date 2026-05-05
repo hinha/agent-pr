@@ -524,3 +524,4 @@ MemoryMonitor three-tier thresholds:
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
+
