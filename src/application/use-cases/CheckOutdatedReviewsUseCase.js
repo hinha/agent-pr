@@ -48,6 +48,16 @@ class CheckOutdatedReviewsUseCase {
 
       // Check each PR for outdated reviews
       for (const pr of pullRequests) {
+        // Skip PRs older than max_age_hours
+        const maxAgeMs = instance.maxAgeMs || (instance.maxAgeHours || 48) * 60 * 60 * 1000;
+        const prAgeMs = typeof pr.getAgeInMs === 'function' ? pr.getAgeInMs() : (Date.now() - new Date(pr.createdAt).getTime());
+        if (prAgeMs > maxAgeMs) {
+          this.logger.debug(
+            `[CheckOutdatedReviewsUseCase] Skipping PR #${pr.number} - too old (${Math.floor(prAgeMs / (60 * 60 * 1000))}h > ${Math.floor(maxAgeMs / (60 * 60 * 1000))}h)`
+          );
+          continue;
+        }
+
         const reviews = await githubAdapter.getPRReviews(repoName, pr.number);
 
         for (const review of reviews) {
