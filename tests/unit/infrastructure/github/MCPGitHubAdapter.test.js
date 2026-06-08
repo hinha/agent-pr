@@ -73,6 +73,24 @@ describe('MCPGitHubAdapter', () => {
       expect(adapter.mcpBaseCmd).toBe('mcporter');
     });
 
+    test('should use default mcporter when mcpClient not provided', () => {
+      const adapterNoClient = new MCPGitHubAdapter(
+        { key: 'github/test', owner: 'test', mcpName: 'test-mcp' },
+        mockLogger,
+        mockRetryHelper
+      );
+      expect(adapterNoClient.mcpBaseCmd).toBe('mcporter');
+    });
+
+    test('should use custom mcpClient when provided', () => {
+      const adapterCustom = new MCPGitHubAdapter(
+        { key: 'github/test', owner: 'test', mcpName: 'test-mcp', mcpClient: 'openclaw mcp' },
+        mockLogger,
+        mockRetryHelper
+      );
+      expect(adapterCustom.mcpBaseCmd).toBe('openclaw mcp');
+    });
+
     test('should log initialization', () => {
       expect(mockLogger.info).toHaveBeenCalledWith(
         expect.stringContaining('Initialized with server=github-work')

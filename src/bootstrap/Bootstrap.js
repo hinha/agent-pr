@@ -37,7 +37,7 @@ class Bootstrap {
     console.log('[Bootstrap] Current time:', new Date().toISOString());
 
     let logger = null;
-    let config = null;
+    let config;
 
     try {
       // Step 1: Get logger

@@ -41,7 +41,11 @@ class GitHubAdapterFactory {
       }
 
       const logger = this.loggerFactory(`MCPGitHub:${instanceKey}`);
-      const adapter = new MCPGitHubAdapter(instance, logger, this.retryHelper);
+      const adapter = new MCPGitHubAdapter(
+        { ...instance, mcpClient: this.config.app.mcpClient },
+        logger,
+        this.retryHelper
+      );
       this.adapters.set(instanceKey, adapter);
     }
 

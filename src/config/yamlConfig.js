@@ -60,6 +60,7 @@ function loadYamlConfig() {
 function buildInternalConfig(config) {
   const internalConfig = {
     app: {
+      mcpClient: config.app.mcp_client || 'mcporter',
       checkIntervalMs: config.app.check_interval_minutes * 60 * 1000,
       outdatedReviewCheckIntervalMs: (config.app.outdated_review_check_minutes || 10) * 60 * 1000,
       snoozeTime: {

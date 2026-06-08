@@ -25,6 +25,7 @@ describe('GitHubAdapterFactory', () => {
 
   beforeEach(() => {
     config = {
+      app: { mcpClient: 'mcporter' },
       instances: {
         'github/myorg': { mcp_name: 'github-work', owner: 'myorg' },
         'github/otherorg': { mcp_name: 'github-other', owner: 'otherorg' }
@@ -40,7 +41,8 @@ describe('GitHubAdapterFactory', () => {
       const adapter = factory.create('github/myorg');
 
       expect(adapter).toBeDefined();
-      expect(adapter.instance).toEqual(config.instances['github/myorg']);
+      expect(adapter.instance).toEqual(expect.objectContaining(config.instances['github/myorg']));
+      expect(adapter.instance.mcpClient).toBe('mcporter');
       expect(loggerFactory).toHaveBeenCalledWith('MCPGitHub:github/myorg');
     });
 
@@ -70,7 +72,8 @@ describe('GitHubAdapterFactory', () => {
       const adapter = factory.createForOwner('myorg');
 
       expect(adapter).toBeDefined();
-      expect(adapter.instance).toEqual(config.instances['github/myorg']);
+      expect(adapter.instance).toEqual(expect.objectContaining(config.instances['github/myorg']));
+      expect(adapter.instance.mcpClient).toBe('mcporter');
     });
 
     it('should throw for unknown owner', () => {

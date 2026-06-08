@@ -171,6 +171,7 @@ Uses YAML-based configuration in `config.yml`:
 
 ```yaml
 app:
+  mcp_client: mcporter  # or "openclaw mcp" for native OpenClaw
   check_interval_minutes: 7
   telegram:
     bot_token: xxx
@@ -201,7 +202,11 @@ github/organization-name:
 
 ### MCP-First Design
 
-All GitHub operations use MCP tools via `mcporter` CLI - no direct GitHub REST API calls:
+All GitHub operations use MCP tools via a configurable CLI client (`app.mcp_client` in config.yml):
+- Default: `mcporter` CLI
+- Alternative: `openclaw mcp` for native OpenClaw MCP support
+
+Both clients use the same format: `<client> call <server.tool> --output json key=value`
 - `list_pull_requests` - Fetch open PRs
 - `get_pull_request_files` - Get changed file metadata
 - `create_pull_request_review` - Submit reviews with line comments

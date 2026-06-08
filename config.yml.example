@@ -2,6 +2,10 @@
 # Copy this file to config.yml and update with your values
 
 app:
+  # MCP client CLI to use for GitHub operations
+  # Options: "mcporter" (default) or "openclaw mcp" (native OpenClaw)
+  mcp_client: "openclaw mcp"
+
   # How often to check for new PRs (in minutes)
   check_interval_minutes: 7
 

@@ -25,7 +25,7 @@ class MCPGitHubAdapter extends IGitHubService {
    */
   constructor(instanceConfig, logger, retryHelper) {
     super();
-    this.mcpBaseCmd = 'mcporter';
+    this.mcpBaseCmd = instanceConfig.mcpClient || 'mcporter';
     this.serverName = instanceConfig.mcpName;
     this.owner = instanceConfig.owner;
     this.instanceKey = instanceConfig.key;
