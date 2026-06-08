@@ -172,6 +172,7 @@ Uses YAML-based configuration in `config.yml`:
 ```yaml
 app:
   mcp_client: mcporter  # or "openclaw mcp" for native OpenClaw
+  mcp_output_flag: --output json  # Leave empty for openclaw mcp (JSON by default)
   check_interval_minutes: 7
   telegram:
     bot_token: xxx
@@ -203,10 +204,12 @@ github/organization-name:
 ### MCP-First Design
 
 All GitHub operations use MCP tools via a configurable CLI client (`app.mcp_client` in config.yml):
-- Default: `mcporter` CLI
-- Alternative: `openclaw mcp` for native OpenClaw MCP support
+- Default: `mcporter` CLI with `--output json` flag
+- Alternative: `openclaw mcp` with empty output flag (JSON by default)
 
-Both clients use the same format: `<client> call <server.tool> --output json key=value`
+Command formats:
+- mcporter: `mcporter call <server.tool> --output json key=value`
+- openclaw mcp: `openclaw mcp call <server.tool> key=value` (JSON output by default)
 - `list_pull_requests` - Fetch open PRs
 - `get_pull_request_files` - Get changed file metadata
 - `create_pull_request_review` - Submit reviews with line comments

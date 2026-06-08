@@ -26,6 +26,7 @@ class MCPGitHubAdapter extends IGitHubService {
   constructor(instanceConfig, logger, retryHelper) {
     super();
     this.mcpBaseCmd = instanceConfig.mcpClient || 'mcporter';
+    this.mcpOutputFlag = instanceConfig.mcpOutputFlag !== undefined ? instanceConfig.mcpOutputFlag : '--output json';
     this.serverName = instanceConfig.mcpName;
     this.owner = instanceConfig.owner;
     this.instanceKey = instanceConfig.key;
@@ -49,7 +50,12 @@ class MCPGitHubAdapter extends IGitHubService {
       const startTime = Date.now();
       this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Calling ${this.serverName}.${method}`);
 
-      const spawnArgs = ['call', `${this.serverName}.${method}`, '--output', 'json'];
+      const spawnArgs = ['call', `${this.serverName}.${method}`];
+
+      // Add output format flag if configured (e.g., '--output json' for mcporter, empty for openclaw mcp)
+      if (this.mcpOutputFlag) {
+        spawnArgs.push(...this.mcpOutputFlag.split(' '));
+      }
 
       // Build command arguments (shell: true requires proper escaping for dynamic values)
       for (const [key, value] of Object.entries(args)) {

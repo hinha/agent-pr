@@ -25,7 +25,7 @@ describe('GitHubAdapterFactory', () => {
 
   beforeEach(() => {
     config = {
-      app: { mcpClient: 'mcporter' },
+      app: { mcpClient: 'mcporter', mcpOutputFlag: '--output json' },
       instances: {
         'github/myorg': { mcp_name: 'github-work', owner: 'myorg' },
         'github/otherorg': { mcp_name: 'github-other', owner: 'otherorg' }

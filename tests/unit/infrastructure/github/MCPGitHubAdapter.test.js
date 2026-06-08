@@ -91,6 +91,24 @@ describe('MCPGitHubAdapter', () => {
       expect(adapterCustom.mcpBaseCmd).toBe('openclaw mcp');
     });
 
+    test('should use default mcpOutputFlag when not provided', () => {
+      const adapterNoFlag = new MCPGitHubAdapter(
+        { key: 'github/test', owner: 'test', mcpName: 'test-mcp' },
+        mockLogger,
+        mockRetryHelper
+      );
+      expect(adapterNoFlag.mcpOutputFlag).toBe('--output json');
+    });
+
+    test('should use custom mcpOutputFlag when provided', () => {
+      const adapterCustomFlag = new MCPGitHubAdapter(
+        { key: 'github/test', owner: 'test', mcpName: 'test-mcp', mcpOutputFlag: '' },
+        mockLogger,
+        mockRetryHelper
+      );
+      expect(adapterCustomFlag.mcpOutputFlag).toBe('');
+    });
+
     test('should log initialization', () => {
       expect(mockLogger.info).toHaveBeenCalledWith(
         expect.stringContaining('Initialized with server=github-work')

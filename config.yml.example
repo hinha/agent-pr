@@ -4,7 +4,10 @@
 app:
   # MCP client CLI to use for GitHub operations
   # Options: "mcporter" (default) or "openclaw mcp" (native OpenClaw)
-  mcp_client: "openclaw mcp"
+  mcp_client: "mcporter"
+
+  # Output format flag for MCP client (empty for openclaw mcp, "--output json" for mcporter)
+  mcp_output_flag: "--output json"
 
   # How often to check for new PRs (in minutes)
   check_interval_minutes: 7

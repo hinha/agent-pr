@@ -133,7 +133,8 @@ class Container {
               key: instanceKey,
               owner: instance.owner,
               mcpName: instance.mcpName,
-              mcpClient: config.app.mcpClient
+              mcpClient: config.app.mcpClient,
+              mcpOutputFlag: config.app.mcpOutputFlag
             },
             cradle.logger,
             cradle.retryHelper
@@ -150,7 +151,8 @@ class Container {
               key: instanceKey,
               owner: instance.owner,
               mcpName: instance.mcpName,
-              mcpClient: config.app.mcpClient
+              mcpClient: config.app.mcpClient,
+              mcpOutputFlag: config.app.mcpOutputFlag
             },
             cradle.logger,
             cradle.retryHelper
