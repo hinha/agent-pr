@@ -60,6 +60,7 @@ function loadYamlConfig() {
 function buildInternalConfig(config) {
   const internalConfig = {
     app: {
+      providerAgent: config.app.provider_agent || 'openclaw',
       mcpClient: config.app.mcp_client || 'mcporter',
       mcpOutputFlag: config.app.mcp_output_flag || '--output json',
       checkIntervalMs: config.app.check_interval_minutes * 60 * 1000,
@@ -143,7 +144,9 @@ function buildInstances(config) {
           summaryAgent: config[key].agent.summary,
           levels: config[key].agent.level,
           reviewTimeoutSeconds: config[key].agent.review_timeout_seconds,
-          reviewTimeoutMessage: config[key].agent.review_timeot_string || '10 menit'
+          reviewTimeoutMessage: config[key].agent.review_timeot_string || '10 menit',
+          hermesProfile: config[key].agent.hermes_profile,
+          hermesMaxTurns: parseInt(config[key].agent.hermes_max_turns, 10) || 90
         },
         repos: Object.fromEntries(
           Object.entries(config[key].repos || {}).map(([repoName, repoConf]) => [

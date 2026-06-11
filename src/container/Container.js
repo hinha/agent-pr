@@ -175,11 +175,10 @@ class Container {
       );
     }).singleton();
 
-    // Agent Adapter (implements IAgentService)
+    // Agent Adapter (implements IAgentService) - factory selects provider
     this.registerFunction('agentAdapter', (cradle) => {
-      const OpenClawAgentAdapter = require('../infrastructure/agents/OpenClawAgentAdapter');
-
-      return new OpenClawAgentAdapter(cradle.config, cradle.logger, cradle.retryHelper);
+      const AgentAdapterFactory = require('../infrastructure/agents/AgentAdapterFactory');
+      return AgentAdapterFactory.create(cradle.config, cradle.logger, cradle.retryHelper);
     }).singleton();
 
     // ===== Application Layer =====

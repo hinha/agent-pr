@@ -2,6 +2,10 @@
 # Copy this file to config.yml and update with your values
 
 app:
+  # AI agent provider for code reviews
+  # Options: "openclaw" (default) or "hermes"
+  provider_agent: openclaw
+
   # MCP client CLI to use for GitHub operations
   # Options: "mcporter" (default) or "openclaw mcp" (native OpenClaw)
   mcp_client: "mcporter"
@@ -73,6 +77,10 @@ github/your-org-or-user:
     # Use 'openclaw agents list' to see available agents
     review: please-create-agent-first
     summary: please-create-agent-first
+    # Hermes profile (used when provider_agent=hermes)
+    hermes_profile: your-hermes-profile
+    # Hermes max turns (used when provider_agent=hermes, default: 90)
+    hermes_max_turns: 90
     # Available review levels
     level: [low, medium, high]
     # Review timeout in seconds
@@ -101,6 +109,8 @@ github/another-org-or-user:
   agent:
     review: please-create-agent-first
     summary: please-create-agent-first
+    hermes_profile: your-hermes-profile
+    hermes_max_turns: 90
     level: [low, medium, high]
     review_timeout_seconds: 1200
     review_timeot_string: "20 menit"
