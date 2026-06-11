@@ -83,4 +83,29 @@ describe('QueueNotificationSubscriber', () => {
     );
     expect(fallbackRouter.sendToThread.mock.calls[0][1]).toContain('Add &lt;API&gt;');
   });
+
+  test('falls back to failed message and logs router errors', async () => {
+    const logger = { info: jest.fn(), error: jest.fn() };
+    const fallbackRouter = {
+      sendToThread: jest.fn().mockRejectedValue(new Error('down'))
+    };
+    const fallbackSubscriber = new QueueNotificationSubscriber(fallbackRouter, eventBus, { logger });
+
+    await fallbackSubscriber._onFailed({
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 7,
+      prTitle: 'Add & API',
+      level: 'high',
+      threadId: 10,
+      error: 'bad <state>'
+    });
+
+    expect(fallbackRouter.sendToThread).toHaveBeenCalledWith(
+      10,
+      expect.stringContaining('Review Failed')
+    );
+    expect(fallbackRouter.sendToThread.mock.calls[0][1]).toContain('bad &lt;state&gt;');
+    expect(logger.error).toHaveBeenCalledWith('[QueueNotificationSubscriber] Failed to send failure notification: down');
+  });
 });

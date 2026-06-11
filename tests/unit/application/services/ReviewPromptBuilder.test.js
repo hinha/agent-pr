@@ -46,4 +46,51 @@ describe('ReviewPromptBuilder', () => {
 
     fs.unlinkSync(tmpFile);
   });
+
+  test('uses default placeholders when comments, commits, and branch data are absent', () => {
+    const tmpFile = path.join(os.tmpdir(), `review-template-${Date.now()}-minimal.txt`);
+    fs.writeFileSync(tmpFile, '{{SOURCE_BRANCH}} {{TARGET_BRANCH}} {{PREVIOUS_COMMENTS}} {{LAST_COMMITS}}');
+
+    const builder = new ReviewPromptBuilder({
+      templatePath: tmpFile,
+      logger: { info: jest.fn(), error: jest.fn() }
+    });
+
+    const prompt = builder.build({
+      owner: 'acme',
+      repo: 'api',
+      pr: { number: 8, url: 'https://example.com' },
+      level: 'high',
+      levelConfig: { focusAreas: [], maxCommentsPerFile: 3 }
+    });
+
+    expect(prompt).toContain('unknown main');
+    expect(prompt).toContain('(Tidak ada komentar review sebelumnya)');
+    expect(prompt).toContain('(Tidak ada commit info)');
+
+    fs.unlinkSync(tmpFile);
+  });
+
+  test('throws for invalid review level config and missing template', () => {
+    const builder = new ReviewPromptBuilder({
+      templatePath: path.join(os.tmpdir(), `missing-template-${Date.now()}.txt`),
+      logger: { info: jest.fn(), error: jest.fn() }
+    });
+
+    expect(() => builder.build({
+      owner: 'acme',
+      repo: 'api',
+      pr: { number: 8, url: 'https://example.com' },
+      level: 'high',
+      levelConfig: null
+    })).toThrow('Invalid review level: high');
+
+    expect(() => builder._loadTemplate('acme', 'api')).toThrow('Prompt template not found');
+  });
+
+  test('replaceAll swaps missing values with empty strings', () => {
+    const builder = new ReviewPromptBuilder();
+
+    expect(builder._replaceAll('{{A}} {{B}}', { A: 'x', B: null })).toBe('x ');
+  });
 });

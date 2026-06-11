@@ -391,4 +391,43 @@ describe('OpenClawAgentAdapter', () => {
       expect(adapter._escapeShellString('path\\to\\file')).toBe('path\\\\to\\\\file');
     });
   });
+
+  describe('reviewPR and summarizePR', () => {
+    const pr = {
+      number: 42,
+      title: 'Improve API',
+      description: 'Refactor handlers',
+      url: 'https://github.com/testorg/repo/pull/42',
+      headBranch: 'feature/api',
+      baseBranch: 'main'
+    };
+
+    test('reviewPR builds prompt, strips markdown fences, and parses result', async () => {
+      adapter._spawnWithTimeout = jest.fn().mockResolvedValue({
+        stdout: '```json\n' + JSON.stringify({ summary: 'Looks good', comments: [] }) + '\n```',
+        stderr: ''
+      });
+
+      const result = await adapter.reviewPR('testorg', 'repo', pr, [{ filename: 'src/index.js' }], 'high');
+
+      expect(result.success).toBe(true);
+      expect(mockRetryHelper.retry).toHaveBeenCalled();
+      expect(adapter._spawnWithTimeout).toHaveBeenCalledWith(expect.stringContaining('openclaw agent --agent code-reviewer'), 120000);
+    });
+
+    test('summarizePR uses summaryAgent fallback and plain text fallback', async () => {
+      adapter._spawnWithTimeout = jest.fn()
+        .mockResolvedValueOnce({ stdout: JSON.stringify({ summary: 'Short summary' }) })
+        .mockResolvedValueOnce({ stdout: 'Plain summary' });
+
+      await expect(adapter.summarizePR('unknown', 'repo', pr, [])).rejects.toThrow('No instance found for owner: unknown');
+      await expect(adapter.summarizePR('testorg', 'repo', pr, [{ filename: 'src/a.js' }])).resolves.toBe('Short summary');
+      await expect(adapter.summarizePR('testorg', 'repo', pr, [{ filename: 'src/a.js' }])).resolves.toBe('Plain summary');
+    });
+
+    test('reviewPR throws for invalid level and unknown owner', async () => {
+      await expect(adapter.reviewPR('testorg', 'repo', pr, [], 'missing')).rejects.toThrow('Invalid review level: missing');
+      await expect(adapter.reviewPR('unknown', 'repo', pr, [], 'high')).rejects.toThrow('No instance found for owner: unknown');
+    });
+  });
 });

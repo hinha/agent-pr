@@ -90,4 +90,85 @@ describe('NotificationRouter', () => {
     expect(result.success).toBe(true);
     expect(telegramAdapter.sendToThread).toHaveBeenCalledWith(10, expect.stringContaining('Review Failed'));
   });
+
+  test('uses queue completed fallback and escapes HTML', async () => {
+    const telegramAdapter = {
+      sendToThread: jest.fn().mockResolvedValue({ message_id: 11 })
+    };
+    const router = new NotificationRouter({
+      telegramAdapter,
+      config: { app: { telegram: { enabled: true }, discord: { enabled: false } } }
+    });
+
+    const result = await router.sendQueueCompletedNotification({
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 9,
+      prTitle: 'Add <API> & auth',
+      level: 'high',
+      threadId: 10,
+      duration: 61000,
+      reviewUrl: 'https://example.com/review'
+    });
+
+    expect(result.success).toBe(true);
+    expect(telegramAdapter.sendToThread).toHaveBeenCalledWith(10, expect.stringContaining('Add &lt;API&gt; &amp; auth'));
+  });
+
+  test('routes sendToThread only through telegram when supported', async () => {
+    const telegramAdapter = {
+      sendToThread: jest.fn().mockResolvedValue({ message_id: 99 })
+    };
+    const discordAdapter = {
+      sendToThread: jest.fn()
+    };
+    const router = new NotificationRouter({
+      telegramAdapter,
+      discordAdapter,
+      config: { app: { telegram: { enabled: true }, discord: { enabled: true } } }
+    });
+
+    const result = await router.sendToThread(33, 'hello');
+
+    expect(result.success).toBe(true);
+    expect(result.message_id).toBe(99);
+    expect(telegramAdapter.sendToThread).toHaveBeenCalledWith(33, 'hello');
+    expect(discordAdapter.sendToThread).not.toHaveBeenCalled();
+  });
+
+  test('returns aggregated error when all enabled targets fail', async () => {
+    const router = new NotificationRouter({
+      telegramAdapter: {
+        sendPRNotification: jest.fn().mockRejectedValue(new Error('telegram broken'))
+      },
+      discordAdapter: {
+        sendPRNotification: jest.fn().mockResolvedValue({ success: false, error: 'discord broken' })
+      },
+      logger: { error: jest.fn() },
+      config: { app: { telegram: { enabled: true }, discord: { enabled: true } } }
+    });
+
+    const result = await router.sendPRNotification(notification);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('telegram: telegram broken');
+    expect(result.error).toContain('discord: discord broken');
+  });
+
+  test('routes outdated review notifications to Discord-only target', async () => {
+    const discordAdapter = {
+      sendOutdatedReviewNotification: jest.fn().mockResolvedValue({ id: 'd-outdated' })
+    };
+    const router = new NotificationRouter({
+      discordAdapter,
+      config: { app: { telegram: { enabled: false }, discord: { enabled: true } } }
+    });
+
+    const result = await router.sendOutdatedReviewNotification(notification);
+
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      message_id: 'd-outdated'
+    }));
+  });
 });
