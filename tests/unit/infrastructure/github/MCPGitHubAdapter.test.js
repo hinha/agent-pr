@@ -70,43 +70,39 @@ describe('MCPGitHubAdapter', () => {
       expect(adapter.instanceKey).toBe('github/testorg');
       expect(adapter.owner).toBe('testorg');
       expect(adapter.serverName).toBe('github-work');
-      expect(adapter.mcpBaseCmd).toBe('mcporter');
+      expect(adapter.mcpBaseCmd).toBe('openclaw mcp');
+      expect(adapter.runtime).toBe('openclaw');
     });
 
-    test('should use default mcporter when mcpClient not provided', () => {
+    test('should default to openclaw runtime when providerAgent is not provided', () => {
       const adapterNoClient = new MCPGitHubAdapter(
         { key: 'github/test', owner: 'test', mcpName: 'test-mcp' },
         mockLogger,
         mockRetryHelper
       );
-      expect(adapterNoClient.mcpBaseCmd).toBe('mcporter');
+      expect(adapterNoClient.mcpBaseCmd).toBe('openclaw mcp');
     });
 
-    test('should use custom mcpClient when provided', () => {
+    test('should use Hermes runtime when providerAgent is hermes', () => {
       const adapterCustom = new MCPGitHubAdapter(
-        { key: 'github/test', owner: 'test', mcpName: 'test-mcp', mcpClient: 'openclaw mcp' },
+        {
+          key: 'github/test',
+          owner: 'test',
+          mcpName: 'test-mcp',
+          providerAgent: 'hermes',
+          githubRuntime: 'hermes',
+          agent: {
+            hermesProfile: 'test-profile',
+            hermesMaxTurns: 45
+          }
+        },
         mockLogger,
         mockRetryHelper
       );
-      expect(adapterCustom.mcpBaseCmd).toBe('openclaw mcp');
-    });
-
-    test('should use default mcpOutputFlag when not provided', () => {
-      const adapterNoFlag = new MCPGitHubAdapter(
-        { key: 'github/test', owner: 'test', mcpName: 'test-mcp' },
-        mockLogger,
-        mockRetryHelper
-      );
-      expect(adapterNoFlag.mcpOutputFlag).toBe('--output json');
-    });
-
-    test('should use custom mcpOutputFlag when provided', () => {
-      const adapterCustomFlag = new MCPGitHubAdapter(
-        { key: 'github/test', owner: 'test', mcpName: 'test-mcp', mcpOutputFlag: '' },
-        mockLogger,
-        mockRetryHelper
-      );
-      expect(adapterCustomFlag.mcpOutputFlag).toBe('');
+      expect(adapterCustom.mcpBaseCmd).toBe('hermes');
+      expect(adapterCustom.runtime).toBe('hermes');
+      expect(adapterCustom.hermesProfile).toBe('test-profile');
+      expect(adapterCustom.hermesMaxTurns).toBe(45);
     });
 
     test('should log initialization', () => {
@@ -136,7 +132,6 @@ describe('MCPGitHubAdapter', () => {
 
       // Set up spawn to return mock data
       let onDataCallback;
-      let onErrorDataCallback;
       let onCloseCallback;
 
       mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
@@ -159,12 +154,10 @@ describe('MCPGitHubAdapter', () => {
 
       adapter.getOpenPRs('test-repo').then((result) => {
         expect(spawn).toHaveBeenCalledWith(
-          'mcporter',
+          'openclaw mcp',
           expect.arrayContaining([
             'call',
-            'github-work.list_pull_requests',
-            '--output',
-            'json'
+            'github-work.list_pull_requests'
           ]),
           expect.objectContaining({
             maxBuffer: 10 * 1024 * 1024,
@@ -202,15 +195,13 @@ describe('MCPGitHubAdapter', () => {
       mockSpawnProcess.stdout.on.mockImplementation(() => {});
       mockSpawnProcess.stderr.on.mockImplementation(() => {});
 
-      let callCount = 0;
       mockRetryHelper.retryIf.mockImplementation(async (fn, _shouldRetry) => {
-        callCount++;
         return await fn();
       });
 
       try {
         await adapter.getOpenPRs('test-repo');
-      } catch (e) {
+      } catch (_e) {
         // Expected to fail due to empty output
       }
 
@@ -240,6 +231,62 @@ describe('MCPGitHubAdapter', () => {
           onErrorCallback(new Error('Spawn failed'));
         }
       }, 10);
+    });
+
+    test('should call Hermes CLI in hermes runtime', async () => {
+      const hermesAdapter = new MCPGitHubAdapter(
+        {
+          key: 'github/testorg',
+          owner: 'testorg',
+          mcpName: 'github-work',
+          providerAgent: 'hermes',
+          githubRuntime: 'hermes',
+          agent: {
+            hermesProfile: 'anto',
+            hermesMaxTurns: 90
+          }
+        },
+        mockLogger,
+        mockRetryHelper
+      );
+
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') onCloseCallback = cb;
+      });
+
+      const promise = hermesAdapter.getOpenPRs('test-repo');
+
+      setTimeout(() => {
+        onDataCallback(JSON.stringify([]));
+        onCloseCallback(0);
+      }, 10);
+
+      await promise;
+
+      expect(spawn).toHaveBeenCalledWith(
+        'hermes',
+        expect.arrayContaining([
+          '--profile',
+          'anto',
+          'chat',
+          '-q',
+          '-Q',
+          '--yolo',
+          '--ignore-rules',
+          '--source',
+          'tool',
+          '--max-turns',
+          '90'
+        ]),
+        expect.any(Object)
+      );
     });
   });
 
@@ -428,7 +475,7 @@ describe('MCPGitHubAdapter', () => {
         }
       });
 
-      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
+      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((_result) => {
         expect(spawn).toHaveBeenCalled();
         done();
       });
@@ -800,7 +847,7 @@ describe('MCPGitHubAdapter', () => {
 
       adapter.approvePR('test-repo', 456, 'Approved!').then(() => {
         expect(spawn).toHaveBeenCalledWith(
-          'mcporter',
+          'openclaw mcp',
           expect.arrayContaining([
             'call',
             'github-work.create_pull_request_review',
@@ -843,7 +890,7 @@ describe('MCPGitHubAdapter', () => {
 
       adapter.requestChanges('test-repo', 456, 'Please fix').then(() => {
         expect(spawn).toHaveBeenCalledWith(
-          'mcporter',
+          'openclaw mcp',
           expect.arrayContaining([
             'call',
             'github-work.create_pull_request_review',
@@ -886,7 +933,7 @@ describe('MCPGitHubAdapter', () => {
 
       adapter.closePR('test-repo', 456).then(() => {
         expect(spawn).toHaveBeenCalledWith(
-          'mcporter',
+          'openclaw mcp',
           expect.arrayContaining([
             'call',
             'github-work.update_pull_request',
@@ -982,10 +1029,10 @@ describe('MCPGitHubAdapter', () => {
 
     test('should handle injection attempt with single quotes', () => {
       // This was the original bug: single quote in value breaks out of single-quote wrapping
-      const malicious = "'; rm -rf /; echo '";
+      const malicious = '\'; rm -rf /; echo \'';
       const escaped = adapter._shellEscape(malicious);
       // Single quotes are safe inside double quotes — shell treats it as literal string
-      expect(escaped).toBe(`"'; rm -rf /; echo '"`);
+      expect(escaped).toBe(`"${malicious}"`);
       // Verify no unescaped $ or ` that could cause substitution
       expect(escaped).not.toMatch(/(?<!\\)\$/);
       expect(escaped).not.toMatch(/(?<!\\)`/);

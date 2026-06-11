@@ -13,7 +13,7 @@ module.exports = {
   mcp: {
     configPath: process.env.MCP_CONFIG_PATH,
     serverName: process.env.MCP_SERVER_NAME || 'github-work',
-    baseCommand: 'mcporter'
+    baseCommand: 'openclaw mcp'
   },
   openclaw: {
     summaryAgent: process.env.OPENCLAW_AGENT_SUMMARY,

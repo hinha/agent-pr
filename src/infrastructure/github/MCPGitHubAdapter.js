@@ -6,9 +6,9 @@ const { MCPError } = require('../../shared/errors');
 /**
  * MCPGitHubAdapter - GitHub operations via MCP (Model Context Protocol)
  *
- * This adapter implements the IGitHubService interface using the MCP tools
- * through the mcporter CLI. It provides a clean abstraction layer for GitHub
- * operations, making it easy to test and swap implementations.
+ * This adapter implements the IGitHubService interface using:
+ * - `openclaw mcp` when the app runs in OpenClaw mode
+ * - Hermes native MCP via `hermes chat -q` when the app runs in Hermes mode
  *
  * @example
  * const adapter = new MCPGitHubAdapter(instanceConfig, logger, retryHelper);
@@ -25,16 +25,19 @@ class MCPGitHubAdapter extends IGitHubService {
    */
   constructor(instanceConfig, logger, retryHelper) {
     super();
-    this.mcpBaseCmd = instanceConfig.mcpClient || 'mcporter';
-    this.mcpOutputFlag = instanceConfig.mcpOutputFlag !== undefined ? instanceConfig.mcpOutputFlag : '--output json';
     this.serverName = instanceConfig.mcpName;
     this.owner = instanceConfig.owner;
     this.instanceKey = instanceConfig.key;
+    this.providerAgent = instanceConfig.providerAgent || 'openclaw';
+    this.runtime = instanceConfig.githubRuntime || (this.providerAgent === 'hermes' ? 'hermes' : 'openclaw');
+    this.mcpBaseCmd = this.runtime === 'hermes' ? 'hermes' : 'openclaw mcp';
+    this.hermesProfile = instanceConfig.agent?.hermesProfile || instanceConfig.hermesProfile || null;
+    this.hermesMaxTurns = instanceConfig.agent?.hermesMaxTurns || instanceConfig.hermesMaxTurns || 90;
     this.logger = logger;
     this.retryHelper = retryHelper;
     this.tempFiles = [];
 
-    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Initialized with server=${this.serverName}, owner=${this.owner}`);
+    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Initialized with server=${this.serverName}, owner=${this.owner}, runtime=${this.runtime}`);
   }
 
   /**
@@ -47,83 +50,10 @@ class MCPGitHubAdapter extends IGitHubService {
   async _callMCP(method, args = {}) {
     return this.retryHelper.retryIf(async () => {
       const timeoutMs = 60000;
-      const startTime = Date.now();
-      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Calling ${this.serverName}.${method}`);
-
-      const spawnArgs = ['call', `${this.serverName}.${method}`];
-
-      // Add output format flag if configured (e.g., '--output json' for mcporter, empty for openclaw mcp)
-      if (this.mcpOutputFlag) {
-        spawnArgs.push(...this.mcpOutputFlag.split(' '));
+      if (this.runtime === 'hermes') {
+        return this._callMCPViaHermes(method, args, timeoutMs);
       }
-
-      // Build command arguments (shell: true requires proper escaping for dynamic values)
-      for (const [key, value] of Object.entries(args)) {
-        if (value === null || value === undefined) {
-          spawnArgs.push(`${key}=null`);
-        } else if (typeof value === 'object') {
-          if (key === 'comments' && Array.isArray(value)) {
-            // Use temporary file for comments to avoid shell parsing issues
-            const substitution = this._writeCommentsToTempFile(value);
-            spawnArgs.push(`${key}=${substitution}`);
-          } else {
-            spawnArgs.push(`${key}=${this._shellEscape(JSON.stringify(value))}`);
-          }
-        } else if (typeof value === 'string') {
-          spawnArgs.push(`${key}=${this._shellEscape(value)}`);
-        } else {
-          spawnArgs.push(`${key}=${value}`);
-        }
-      }
-
-      this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}] mcporter command: ${this.mcpBaseCmd} ${spawnArgs.slice(0, 5).join(' ')}... (${spawnArgs.length} args total)`);
-
-      const result = await this._spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
-
-      // Log stderr for debugging
-      if (result.stderr && result.stderr.length > 0) {
-        this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] stderr: ${result.stderr.substring(0, 500)}`);
-      }
-
-      try {
-        const parsed = JSON.parse(result.stdout);
-
-        // Clean up temp comments file if exists
-        const tempFileMatch = spawnArgs.find(arg => arg.includes('$(cat /tmp/comments-'));
-        if (tempFileMatch) {
-          const tempFile = tempFileMatch.match(/\$\(cat\s+(\/tmp\/comments-[^\)]+)\)/)?.[1];
-          if (tempFile && fs.existsSync(tempFile)) {
-            fs.unlinkSync(tempFile);
-            this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}] Cleaned up temp file: ${tempFile}`);
-          }
-        }
-
-        if (parsed.error) {
-          const errorMsg = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
-          this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}] Error for ${method}: ${errorMsg}`);
-          throw new MCPError(
-            `MCP error: ${errorMsg}`,
-            this.serverName,
-            method,
-            true,
-            { originalError: parsed.error }
-          );
-        }
-
-        return parsed;
-      } catch (parseErr) {
-        if (parseErr instanceof MCPError) {
-          throw parseErr;
-        }
-        this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}] Failed to parse output for ${method}: ${result.stdout}`);
-        throw new MCPError(
-          `MCP response parse failed: ${parseErr.message}`,
-          this.serverName,
-          method,
-          false,
-          { stdout: result.stdout }
-        );
-      }
+      return this._callMCPViaOpenClaw(method, args, timeoutMs);
     }, (err) => {
       // Don't retry non-retryable errors like "Unknown tool"
       if (err.message && err.message.includes('Unknown tool')) {
@@ -136,6 +66,71 @@ class MCPGitHubAdapter extends IGitHubService {
       factor: 2,
       context: `MCP:${this.instanceKey}.${method}`
     });
+  }
+
+  async _callMCPViaOpenClaw(method, args, timeoutMs) {
+    const startTime = Date.now();
+    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Calling ${this.serverName}.${method} via openclaw mcp`);
+
+    const spawnArgs = ['call', `${this.serverName}.${method}`];
+
+    for (const [key, value] of Object.entries(args)) {
+      if (value === null || value === undefined) {
+        spawnArgs.push(`${key}=null`);
+      } else if (typeof value === 'object') {
+        if (key === 'comments' && Array.isArray(value)) {
+          const substitution = this._writeCommentsToTempFile(value);
+          spawnArgs.push(`${key}=${substitution}`);
+        } else {
+          spawnArgs.push(`${key}=${this._shellEscape(JSON.stringify(value))}`);
+        }
+      } else if (typeof value === 'string') {
+        spawnArgs.push(`${key}=${this._shellEscape(value)}`);
+      } else {
+        spawnArgs.push(`${key}=${value}`);
+      }
+    }
+
+    this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}] OpenClaw MCP command: ${this.mcpBaseCmd} ${spawnArgs.slice(0, 5).join(' ')}... (${spawnArgs.length} args total)`);
+    const result = await this._spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
+
+    if (result.stderr && result.stderr.length > 0) {
+      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] stderr: ${result.stderr.substring(0, 500)}`);
+    }
+
+    return this._parseMCPJsonResponse(method, result.stdout, spawnArgs);
+  }
+
+  async _callMCPViaHermes(method, args, timeoutMs) {
+    const startTime = Date.now();
+    const prompt = this._buildHermesMcpPrompt(method, args);
+    const spawnArgs = [];
+
+    if (this.hermesProfile) {
+      spawnArgs.push('--profile', this.hermesProfile);
+    }
+
+    spawnArgs.push(
+      'chat',
+      '-q',
+      prompt,
+      '-Q',
+      '--yolo',
+      '--ignore-rules',
+      '--source',
+      'tool',
+      '--max-turns',
+      String(this.hermesMaxTurns)
+    );
+
+    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Calling ${this.serverName}.${method} via Hermes native MCP`);
+    const result = await this._spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
+
+    if (result.stderr && result.stderr.length > 0) {
+      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] stderr: ${result.stderr.substring(0, 500)}`);
+    }
+
+    return this._parseMCPJsonResponse(method, result.stdout);
   }
 
   /**
@@ -155,7 +150,6 @@ class MCPGitHubAdapter extends IGitHubService {
         spawnProcess.off('close', onClose);
         spawnProcess.off('error', onError);
         spawnProcess.kill('SIGTERM');
-        const elapsed = Date.now() - startTime;
         this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}] Timeout after ${timeoutMs}ms`);
         reject(new MCPError(
           `MCP command timeout after ${timeoutMs}ms`,
@@ -239,6 +233,121 @@ class MCPGitHubAdapter extends IGitHubService {
       .replace(/`/g, '\\`')
       .replace(/\n/g, '\\n');
     return `"${escaped}"`;
+  }
+
+  _buildHermesMcpPrompt(method, args) {
+    return [
+      'You are a machine bridge for a background Node.js daemon.',
+      `Use the GitHub MCP tools available in the active Hermes profile. The configured MCP server alias is "${this.serverName}".`,
+      `Perform the GitHub operation whose canonical method name is "${method}" using these exact arguments:`,
+      JSON.stringify(args, null, 2),
+      'Rules:',
+      '- Actually call the MCP tool. Do not simulate the result.',
+      '- Return ONLY the raw JSON result from the tool call.',
+      '- No markdown fences, no prose, no explanation.',
+      '- If the tool is unavailable or the call fails, return exactly {"error":"<exact error message>"}'
+    ].join('\n');
+  }
+
+  _parseMCPJsonResponse(method, stdout, spawnArgs = []) {
+    const cleanStdout = (stdout || '')
+      .replace(/```json\s*/g, '')
+      .replace(/```\s*/g, '')
+      .trim();
+
+    let parsed;
+    try {
+      parsed = JSON.parse(cleanStdout);
+    } catch {
+      const jsonStr = this._extractJSON(cleanStdout);
+      if (!jsonStr) {
+        this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}] Failed to parse output for ${method}: ${stdout}`);
+        throw new MCPError(
+          'MCP response parse failed: no valid JSON found',
+          this.serverName,
+          method,
+          false,
+          { stdout }
+        );
+      }
+      parsed = JSON.parse(jsonStr);
+    }
+
+    const tempFileMatch = spawnArgs.find(arg => arg.includes('$(cat /tmp/comments-'));
+    if (tempFileMatch) {
+      const tempFile = tempFileMatch.match(/\$\(cat\s+(\/tmp\/comments-[^)]+)\)/)?.[1];
+      if (tempFile && fs.existsSync(tempFile)) {
+        fs.unlinkSync(tempFile);
+        this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}] Cleaned up temp file: ${tempFile}`);
+      }
+    }
+
+    if (parsed && parsed.error) {
+      const errorMsg = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
+      this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}] Error for ${method}: ${errorMsg}`);
+      throw new MCPError(
+        `MCP error: ${errorMsg}`,
+        this.serverName,
+        method,
+        true,
+        { originalError: parsed.error }
+      );
+    }
+
+    return parsed;
+  }
+
+  _extractJSON(text) {
+    if (!text) return null;
+
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] !== '{' && text[i] !== '[') {
+        continue;
+      }
+
+      const openChar = text[i];
+      const closeChar = openChar === '{' ? '}' : ']';
+      let depth = 1;
+      let inString = false;
+      let escapeNext = false;
+
+      for (let j = i + 1; j < text.length; j++) {
+        const char = text[j];
+
+        if (escapeNext) {
+          escapeNext = false;
+          continue;
+        }
+
+        if (char === '\\') {
+          escapeNext = true;
+          continue;
+        }
+
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+
+        if (!inString) {
+          if (char === openChar) depth++;
+          if (char === closeChar) {
+            depth--;
+            if (depth === 0) {
+              const candidate = text.substring(i, j + 1);
+              try {
+                JSON.parse(candidate);
+                return candidate;
+              } catch {
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -783,9 +892,9 @@ class MCPGitHubAdapter extends IGitHubService {
     let currentPosition = 1;
 
     while ((match = hunkRegex.exec(patch)) !== null) {
-      const oldStart = parseInt(match[1], 10);
+      const _oldStart = parseInt(match[1], 10);
       const newStart = parseInt(match[3], 10);
-      const newCount = match[4] ? parseInt(match[4], 10) : 1;
+      const _newCount = match[4] ? parseInt(match[4], 10) : 1;
 
       const hunkEnd = match.index + match[0].length;
       const nextHunkStart = patch.indexOf('@@', hunkEnd);
@@ -897,7 +1006,7 @@ class MCPGitHubAdapter extends IGitHubService {
    * @returns {Object} Validation result
    * @private
    */
-  _validateAndSanitizeComments(comments, repo, prNumber) {
+  _validateAndSanitizeComments(comments, repo, _prNumber) {
     const stats = {
       total: 0,
       valid: 0,
@@ -968,7 +1077,7 @@ class MCPGitHubAdapter extends IGitHubService {
    */
   _extractReviewUrlFromOutput(output) {
     if (!output) return null;
-    const urlMatch = output.match(/https:\/\/github\.com\/[^\/]+\/[^\/]+\/pull\/\d+#pullrequestreview-\d+/);
+    const urlMatch = output.match(/https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+#pullrequestreview-\d+/);
     return urlMatch ? urlMatch[0] : null;
   }
 }

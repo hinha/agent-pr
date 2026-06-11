@@ -31,8 +31,6 @@ describe('yamlConfig', () => {
       fs.writeFileSync(path.join(dir, 'config.yml'), `
 app:
   provider_agent: openclaw
-  mcp_client: mcporter
-  mcp_output_flag: "--output json"
   check_interval_minutes: 7
   outdated_review_check_minutes: 10
   ${platformBlock}
@@ -126,7 +124,6 @@ github/acme:
       const flagsmithSyncService = require('../../../src/services/flagsmithSyncService');
       flagsmithSyncService.isActive.mockReturnValue(false);
 
-      const path = 'app.checkIntervalMs';
       const localValue = 420000;
 
       if (!flagsmithSyncService.isActive()) {
@@ -139,11 +136,8 @@ github/acme:
       flagsmithSyncService.isActive.mockReturnValue(true);
       flagsmithSyncService.getValue.mockReturnValue(300000);
 
-      const path = 'app.checkIntervalMs';
-      const localValue = 420000;
-
       if (flagsmithSyncService.isActive()) {
-        const remoteValue = flagsmithSyncService.getValue(path);
+        const remoteValue = flagsmithSyncService.getValue('app.checkIntervalMs');
         expect(remoteValue).toBe(300000);
       }
     });
@@ -173,9 +167,7 @@ github/acme:
 
   describe('reloadConfig logic', () => {
     test('should clear cache and reload config', () => {
-      let cachedConfig = { app: { checkIntervalMs: 420000 } };
-
-      cachedConfig = null;
+      const cachedConfig = null;
       const newConfig = { app: { checkIntervalMs: 360000 } };
 
       expect(cachedConfig).toBeNull();

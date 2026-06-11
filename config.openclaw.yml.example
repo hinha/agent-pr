@@ -1,5 +1,8 @@
 # Multi-Instance GitHub PR Monitor Configuration
 # Copy this file to config.yml and update with your values
+# Example preset: OpenClaw
+# This preset is for the internal OpenClaw adapter.
+# If Discord is enabled, keep review_mode=internal_queue so review requests use provider_agent=openclaw.
 
 app:
   # AI agent provider for code reviews
@@ -54,8 +57,8 @@ app:
     # Recommended value is the literal Discord mention token for Hermes, e.g. "<@123456789012345678>".
     # A plain value like "Hermes" is sent as @Hermes but may not trigger a real Discord mention.
     mention_bot_name: "<@HERMES_BOT_USER_ID>"
-    # Options: "mention_hermes" (default Discord handoff) or "internal_queue" (agent-pr queue).
-    review_mode: mention_hermes
+    # Keep "internal_queue" to use the internal OpenClaw agent selected by app.provider_agent.
+    review_mode: internal_queue
 
 # List of allowed repository patterns (for validation)
 repos:
@@ -69,9 +72,7 @@ log:
 # GitHub Instance Configuration
 # Format: github/{organization-name}
 github/your-org-or-user:
-  # MCP server alias:
-  # - OpenClaw mode: server alias used by `openclaw mcp`
-  # - Hermes mode: MCP server alias configured in the selected Hermes profile
+  # MCP server alias used by `openclaw mcp`
   mcp_name: your-mcp-name
 
   # Maximum age of PRs to process (in hours)
@@ -80,14 +81,14 @@ github/your-org-or-user:
   # How long to skip notifications for a PR when user clicks "Skip" (in hours)
   skip_cache_duration_hours: 3
 
-  # OpenClaw agent configuration
+  # Agent configuration
   agent:
     # Use 'openclaw agents list' to see available agents
-    review: please-create-agent-first
-    summary: please-create-agent-first
-    # Hermes profile (used when provider_agent=hermes)
-    hermes_profile: your-hermes-profile
-    # Hermes max turns (used when provider_agent=hermes, default: 90)
+    review: code-reviewer
+    summary: pr-summarizer
+    # Unused in OpenClaw mode
+    hermes_profile: unused-in-openclaw-mode
+    # Unused in OpenClaw mode
     hermes_max_turns: 90
     # Available review levels
     level: [low, medium, high]
@@ -120,9 +121,9 @@ github/another-org-or-user:
   max_age_hours: 48
   skip_cache_duration_hours: 3
   agent:
-    review: please-create-agent-first
-    summary: please-create-agent-first
-    hermes_profile: your-hermes-profile
+    review: code-reviewer
+    summary: pr-summarizer
+    hermes_profile: unused-in-openclaw-mode
     hermes_max_turns: 90
     level: [low, medium, high]
     review_timeout_seconds: 1200
