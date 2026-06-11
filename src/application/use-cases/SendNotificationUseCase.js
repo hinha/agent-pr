@@ -68,6 +68,10 @@ class SendNotificationUseCase {
         threadId: repo.threadId
       });
 
+      if (result?.success === false) {
+        throw new Error(result?.error || 'Notification delivery failed');
+      }
+
       // Emit success event
       await this.eventBus.emitAsync('notification.sent', {
         instanceKey,
@@ -142,6 +146,10 @@ class SendNotificationUseCase {
         currentCommit: commitInfo.currentCommit,
         threadId: repo.threadId
       });
+
+      if (result?.success === false) {
+        throw new Error(result?.error || 'Outdated review notification delivery failed');
+      }
 
       // Emit event
       await this.eventBus.emitAsync('review.outdated', {

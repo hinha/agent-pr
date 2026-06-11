@@ -31,6 +31,19 @@ function resolveEnabled(repoConf) {
 }
 
 /**
+ * Resolve platform enabled status, with a configurable default for legacy configs.
+ * @param {Object|undefined} platformConfig - Platform config object
+ * @param {boolean} defaultValue - Value when `enabled` is omitted
+ * @returns {boolean}
+ */
+function resolvePlatformEnabled(platformConfig, defaultValue) {
+  if (!platformConfig || platformConfig.enabled === undefined) {
+    return defaultValue;
+  }
+  return toBool(platformConfig.enabled);
+}
+
+/**
  * Load YAML configuration file
  */
 function loadYamlConfig() {
@@ -58,6 +71,13 @@ function loadYamlConfig() {
  * Transform YAML structure to internal config format
  */
 function buildInternalConfig(config) {
+  const telegramEnabled = resolvePlatformEnabled(config.app.telegram, true);
+  const discordEnabled = resolvePlatformEnabled(config.app.discord, false);
+
+  if (!telegramEnabled && !discordEnabled) {
+    throw new Error('At least one notification platform must be enabled: app.telegram.enabled or app.discord.enabled');
+  }
+
   const internalConfig = {
     app: {
       providerAgent: config.app.provider_agent || 'openclaw',
@@ -73,8 +93,16 @@ function buildInternalConfig(config) {
         dayNames: config.app.snooze_time?.day_names || ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat']
       },
       telegram: {
-        botToken: config.app.telegram.bot_token,
-        chatId: parseInt(config.app.telegram.chat_id, 10)
+        enabled: telegramEnabled,
+        botToken: config.app.telegram?.bot_token,
+        chatId: parseInt(config.app.telegram?.chat_id, 10)
+      },
+      discord: {
+        enabled: discordEnabled,
+        botToken: config.app.discord?.bot_token || process.env.DISCORD_BOT_TOKEN || null,
+        guildId: config.app.discord?.guild_id || null,
+        mentionBotName: config.app.discord?.mention_bot_name || '@Hermes',
+        reviewMode: config.app.discord?.review_mode || 'mention_hermes'
       },
       flagsmith: {
         enabled: config.app.flagsmith?.enabled || false,
@@ -151,7 +179,13 @@ function buildInstances(config) {
         repos: Object.fromEntries(
           Object.entries(config[key].repos || {}).map(([repoName, repoConf]) => [
             repoName,
-            { ...repoConf, enabled: resolveEnabled(repoConf) }
+            {
+              ...repoConf,
+              enabled: resolveEnabled(repoConf),
+              threadId: repoConf.thread_id !== undefined ? parseInt(repoConf.thread_id, 10) : undefined,
+              discordChannelId: repoConf.discord_channel_id || repoConf.discordChannelId,
+              discordThreadId: repoConf.discord_thread_id || repoConf.discordThreadId
+            }
           ])
         )
       };

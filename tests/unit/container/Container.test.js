@@ -17,8 +17,12 @@ jest.mock('../../../src/config/yamlConfig', () => {
     app: {
       checkIntervalMs: 420000,
       telegram: {
+        enabled: true,
         bot_token: 'test-token',
         chatId: 456
+      },
+      discord: {
+        enabled: false
       }
     },
     log: {

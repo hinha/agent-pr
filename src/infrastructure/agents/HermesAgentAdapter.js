@@ -1,8 +1,7 @@
 const { spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
 const IAgentService = require('../../interfaces/IAgentService');
 const { MCPError } = require('../../shared/errors');
+const ReviewPromptBuilder = require('../../application/services/ReviewPromptBuilder');
 
 /**
  * HermesAgentAdapter - AI code review agent via Hermes CLI
@@ -28,6 +27,7 @@ class HermesAgentAdapter extends IAgentService {
     this.config = config;
     this.logger = logger;
     this.retryHelper = retryHelper;
+    this.reviewPromptBuilder = new ReviewPromptBuilder({ logger });
     this.logger.info('HermesAgentAdapter initialized');
   }
 
@@ -167,80 +167,17 @@ class HermesAgentAdapter extends IAgentService {
    * @private
    */
   _buildReviewPrompt(owner, repo, pr, level, levelConfig, files, previousComments = [], lastCommits = []) {
-    const focusAreas = levelConfig.focusAreas.join(', ');
-
-    const possiblePaths = [
-      path.join(process.cwd(), 'src/prompts/review.txt'),
-      path.join(process.cwd(), 'prompts/review.txt'),
-      path.join(__dirname, '../../prompts/review.txt')
-    ];
-
-    let template;
-    for (const tryPath of possiblePaths) {
-      try {
-        template = fs.readFileSync(tryPath, 'utf-8');
-        this.logger.info(`[HermesAgentAdapter:${owner}/${repo}] Prompt template loaded from: ${tryPath}`);
-        break;
-      } catch {
-        // Try next path
-      }
-    }
-
-    if (!template) {
-      this.logger.error(`[HermesAgentAdapter:${owner}/${repo}] Failed to read prompt template`);
-      throw new Error('Prompt template not found');
-    }
-
     const instance = this._getInstanceByOwner(owner);
-    const mcpName = instance?.mcpName || 'github';
-
-    // Build previous comments block
-    let previousCommentsBlock = '';
-    if (previousComments && previousComments.length > 0) {
-      const formattedComments = previousComments
-        .map(c => `- File: ${c.path || 'unknown'}, Line: ${c.line || '?'} - "${c.body?.substring(0, 200) || ''}"`)
-        .join('\n');
-
-      previousCommentsBlock =
-        'KOMENTAR REVIEW SEBELUMNYA (sudah pernah diberikan di PR ini):\n' +
-        'PENTING: JANGAN ulangi komentar yang sama pada file dan baris yang sama kecuali issue belum diperbaiki.\n' +
-        'Jika developer sudah memperbaiki issue yang disebutkan di komentar sebelumnya, SKIP komentar tersebut.\n' +
-        formattedComments;
-      this.logger.info(`[HermesAgentAdapter:${owner}/${repo}] Including ${previousComments.length} previous comments in prompt`);
-    } else {
-      previousCommentsBlock = '(Tidak ada komentar review sebelumnya)';
-    }
-
-    // Build last commits block
-    let lastCommitsBlock = '';
-    if (lastCommits && lastCommits.length > 0) {
-      const formattedCommits = lastCommits
-        .map(c => `- [${c.sha}] ${c.message} (oleh ${c.author})`)
-        .join('\n');
-
-      lastCommitsBlock =
-        'COMMIT TERAKHIR DI PR INI (perubahan yang baru saja dilakukan developer):\n' +
-        'Gunakan informasi ini untuk memahami apa yang sudah diperbaiki. Jika commit terakhir sudah memperbaiki issue yang sama dengan komentar sebelumnya, JANGAN ulangi komentar tersebut.\n' +
-        'Gunakan MCP ' + mcpName + ' untuk melihat detail diff commit jika perlu (tool get_commit dengan sha lengkap).\n' +
-        formattedCommits;
-      this.logger.info(`[HermesAgentAdapter:${owner}/${repo}] Including ${lastCommits.length} last commits in prompt`);
-    } else {
-      lastCommitsBlock = '(Tidak ada commit info)';
-    }
-
-    return template
-      .replace('{{PR_NUMBER}}', pr.number)
-      .replace('{{LEVEL}}', level.toUpperCase())
-      .replace('{{FOCUS_AREAS}}', focusAreas)
-      .replace('{{MAX_COMMENTS}}', levelConfig.maxCommentsPerFile)
-      .replace('{{OWNER}}', owner)
-      .replace('{{REPO}}', repo)
-      .replace('{{SOURCE_BRANCH}}', pr.headBranch || 'unknown')
-      .replace('{{TARGET_BRANCH}}', pr.baseBranch || 'main')
-      .replace('{{PR_URL}}', pr.url)
-      .replace('{{MCP_NAME}}', mcpName)
-      .replace('{{PREVIOUS_COMMENTS}}', previousCommentsBlock)
-      .replace('{{LAST_COMMITS}}', lastCommitsBlock);
+    return this.reviewPromptBuilder.build({
+      owner,
+      repo,
+      pr,
+      level,
+      levelConfig,
+      mcpName: instance?.mcpName || 'github',
+      previousComments,
+      lastCommits
+    });
   }
 
   /**

@@ -163,9 +163,13 @@ class Container {
 
     // Telegram Adapter (implements ITelegramService) - MUST be registered as singleton
     this.registerFunction('telegramAdapter', (cradle) => {
+      if (cradle.config.app?.telegram?.enabled !== true) {
+        return null;
+      }
+
       const TelegramBotAdapter = require('../infrastructure/telegram/TelegramBotAdapter');
       return new TelegramBotAdapter(
-        cradle.config.app.telegram.botToken,
+        cradle.config.app.telegram.botToken || cradle.config.app.telegram.bot_token,
         {
           logger: cradle.logger,
           retryHelper: cradle.retryHelper,
@@ -173,6 +177,38 @@ class Container {
           eventBus: cradle.eventBus
         }
       );
+    }).singleton();
+
+    this.registerFunction('discordAdapter', (cradle) => {
+      if (cradle.config.app?.discord?.enabled !== true) {
+        return null;
+      }
+
+      const DiscordBotAdapter = require('../infrastructure/discord/DiscordBotAdapter');
+      return new DiscordBotAdapter(
+        cradle.config.app.discord.botToken,
+        {
+          logger: cradle.logger,
+          retryHelper: cradle.retryHelper,
+          config: cradle.config,
+          eventBus: cradle.eventBus
+        }
+      );
+    }).singleton();
+
+    this.registerFunction('notificationRouter', (cradle) => {
+      const NotificationRouter = require('../application/services/NotificationRouter');
+      return new NotificationRouter({
+        telegramAdapter: cradle.telegramAdapter,
+        discordAdapter: cradle.discordAdapter,
+        config: cradle.config,
+        logger: cradle.logger
+      });
+    }).singleton();
+
+    this.registerFunction('reviewPromptBuilder', (cradle) => {
+      const ReviewPromptBuilder = require('../application/services/ReviewPromptBuilder');
+      return new ReviewPromptBuilder({ logger: cradle.logger });
     }).singleton();
 
     // Agent Adapter (implements IAgentService) - factory selects provider
@@ -190,7 +226,7 @@ class Container {
       return new ProcessPRUseCase(
         cradle.stateMachine,
         cradle.prAnalyzerService,
-        cradle.telegramAdapter,
+        cradle.notificationRouter,
         cradle.eventBus,
         { logger: cradle.logger }
       );
@@ -200,7 +236,7 @@ class Container {
       const SendNotificationUseCase = require('../application/use-cases/SendNotificationUseCase');
 
       return new SendNotificationUseCase(
-        cradle.telegramAdapter,
+        cradle.notificationRouter,
         cradle.stateMachine,
         cradle.eventBus,
         { logger: cradle.logger }
@@ -251,7 +287,7 @@ class Container {
     this.registerFunction('queueNotificationSubscriber', (cradle) => {
       const QueueNotificationSubscriber = require('../infrastructure/telegram/QueueNotificationSubscriber');
       return new QueueNotificationSubscriber(
-        cradle.telegramAdapter,
+        cradle.notificationRouter,
         cradle.eventBus,
         { logger: cradle.logger }
       );
@@ -342,10 +378,30 @@ class Container {
           checkOutdatedReviewsUseCase: cradle.checkOutdatedReviewsUseCase,
           confirmationManager: cradle.confirmationManager,
           reviewQueueUseCase: cradle.reviewQueueUseCase,
-          bot: cradle.telegramAdapter.getBot(),
-          chatId: cradle.telegramAdapter.chatId
+          bot: cradle.telegramAdapter?.getBot(),
+          chatId: cradle.telegramAdapter?.chatId
         }
       );
+    }).singleton();
+
+    this.registerFunction('prActionHandler', (cradle) => {
+      const PRActionHandler = require('../application/services/PRActionHandler');
+      const DiscordMessageFormatter = require('../infrastructure/discord/DiscordMessageFormatter');
+
+      return new PRActionHandler({
+        reviewPRUseCase: cradle.reviewPRUseCase,
+        stateMachine: cradle.stateMachine,
+        eventBus: cradle.eventBus,
+        githubAdapter: cradle.githubAdapter,
+        reviewQueueUseCase: cradle.reviewQueueUseCase,
+        checkOutdatedReviewsUseCase: cradle.checkOutdatedReviewsUseCase,
+        stateRepositoryFactory: cradle.stateRepositoryFactory,
+        discordAdapter: cradle.discordAdapter,
+        reviewPromptBuilder: cradle.reviewPromptBuilder,
+        formatter: new DiscordMessageFormatter(),
+        config: cradle.config,
+        logger: cradle.logger
+      });
     }).singleton();
 
     // Command Handler (Telegram text commands)
@@ -358,8 +414,8 @@ class Container {
         {
           logger: cradle.logger,
           config: cradle.config,
-          bot: cradle.telegramAdapter.getBot(),
-          chatId: cradle.telegramAdapter.chatId
+          bot: cradle.telegramAdapter?.getBot(),
+          chatId: cradle.telegramAdapter?.chatId
         }
       );
     }).singleton();

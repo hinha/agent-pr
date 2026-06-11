@@ -16,6 +16,81 @@ jest.mock('../../../src/services/flagsmithSyncService', () => ({
 }));
 
 describe('yamlConfig', () => {
+  describe('notification platform loading', () => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const originalCwd = process.cwd();
+
+    afterEach(() => {
+      process.chdir(originalCwd);
+      jest.resetModules();
+    });
+
+    function writeConfig(dir, platformBlock) {
+      fs.writeFileSync(path.join(dir, 'config.yml'), `
+app:
+  provider_agent: openclaw
+  mcp_client: mcporter
+  mcp_output_flag: "--output json"
+  check_interval_minutes: 7
+  outdated_review_check_minutes: 10
+  ${platformBlock}
+  flagsmith:
+    enabled: false
+log:
+  level: info
+github/acme:
+  mcp_name: github-work
+  agent:
+    review: reviewer
+    summary: summarizer
+    level: [low, medium, high]
+  repos:
+    api:
+      enable: true
+      thread_id: "123"
+`);
+    }
+
+    test('defaults Telegram to enabled for legacy configs', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-pr-config-'));
+      writeConfig(dir, `
+  telegram:
+    bot_token: "token"
+    chat_id: "123"
+  discord:
+    enabled: false`);
+      process.chdir(dir);
+      jest.resetModules();
+
+      const yamlConfig = require('../../../src/config/yamlConfig');
+      const config = yamlConfig.loadYamlConfig();
+
+      expect(config.app.telegram.enabled).toBe(true);
+      expect(config.app.discord.enabled).toBe(false);
+    });
+
+    test('throws when Telegram and Discord are both disabled', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-pr-config-'));
+      writeConfig(dir, `
+  telegram:
+    enabled: false
+    bot_token: "token"
+    chat_id: "123"
+  discord:
+    enabled: false`);
+      process.chdir(dir);
+      jest.resetModules();
+
+      const yamlConfig = require('../../../src/config/yamlConfig');
+
+      expect(() => yamlConfig.loadYamlConfig()).toThrow(
+        'At least one notification platform must be enabled'
+      );
+    });
+  });
+
   describe('getRepoKey logic', () => {
     test('should return correct repo key format', () => {
       const key1 = `${'owner'}/${'repo'}`;

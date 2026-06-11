@@ -46,10 +46,23 @@ app:
       - Jumat
 
   telegram:
+    # Set false to run without Telegram. At least one of telegram.enabled or discord.enabled must be true.
+    enabled: true
     # Telegram bot token (from @BotFather)
     bot_token: "<YOUR_TELEGRAM_BOT_TOKEN>"
     # Telegram chat ID for notifications
     chat_id: "<YOUR_TELEGRAM_CHAT_ID>"
+
+  discord:
+    # Discord uses a dedicated bot token for agent-pr. Do not use a personal account token.
+    enabled: false
+    bot_token: "<YOUR_DISCORD_BOT_TOKEN>"
+    guild_id: "<YOUR_DISCORD_GUILD_ID>"
+    # Recommended value is the literal Discord mention token for Hermes, e.g. "<@123456789012345678>".
+    # A plain value like "Hermes" is sent as @Hermes but may not trigger a real Discord mention.
+    mention_bot_name: "<@HERMES_BOT_USER_ID>"
+    # Options: "mention_hermes" (default Discord handoff) or "internal_queue" (agent-pr queue).
+    review_mode: mention_hermes
 
 # List of allowed repository patterns (for validation)
 repos:
@@ -95,9 +108,14 @@ github/your-org-or-user:
       enable: true
       # Telegram thread ID for this repo's notifications
       thread_id: "<THREAD_ID>"
+      # Discord channel for PR notifications and Hermes handoff
+      discord_channel_id: "<DISCORD_CHANNEL_ID>"
+      # Optional Discord thread under the channel; if present, messages go here
+      discord_thread_id: "<DISCORD_THREAD_ID>"
     your-repo-name-2:
       enable: true
       thread_id: "<THREAD_ID>"
+      discord_channel_id: "<DISCORD_CHANNEL_ID>"
     your-repo-name-3:
       thread_id: "<THREAD_ID>"
 
