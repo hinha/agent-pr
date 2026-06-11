@@ -275,6 +275,7 @@ describe('MCPGitHubAdapter', () => {
         expect.arrayContaining([
           '--profile',
           'anto',
+          '--cli',
           'chat',
           '-q',
           '-Q',
@@ -285,7 +286,9 @@ describe('MCPGitHubAdapter', () => {
           '--max-turns',
           '90'
         ]),
-        expect.any(Object)
+        expect.objectContaining({
+          shell: false
+        })
       );
     });
   });
@@ -817,7 +820,6 @@ describe('MCPGitHubAdapter', () => {
 
         const lastSpawnArgs = spawn.mock.calls[1][1];
         const bodyArg = lastSpawnArgs.find(arg => arg.startsWith('body='));
-        // Python language detection (backticks are escaped by _shellEscape)
         expect(bodyArg).toContain('\\`\\`\\`python');
         expect(bodyArg).toContain('result = [x for x in items if x > 0]');
 
@@ -1028,12 +1030,9 @@ describe('MCPGitHubAdapter', () => {
     });
 
     test('should handle injection attempt with single quotes', () => {
-      // This was the original bug: single quote in value breaks out of single-quote wrapping
       const malicious = '\'; rm -rf /; echo \'';
       const escaped = adapter._shellEscape(malicious);
-      // Single quotes are safe inside double quotes — shell treats it as literal string
       expect(escaped).toBe(`"${malicious}"`);
-      // Verify no unescaped $ or ` that could cause substitution
       expect(escaped).not.toMatch(/(?<!\\)\$/);
       expect(escaped).not.toMatch(/(?<!\\)`/);
     });

@@ -36,7 +36,6 @@ class MCPGitHubAdapter extends IGitHubService {
     this.logger = logger;
     this.retryHelper = retryHelper;
     this.tempFiles = [];
-
     this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Initialized with server=${this.serverName}, owner=${this.owner}, runtime=${this.runtime}`);
   }
 
@@ -111,6 +110,7 @@ class MCPGitHubAdapter extends IGitHubService {
     }
 
     spawnArgs.push(
+      '--cli',
       'chat',
       '-q',
       prompt,
@@ -124,7 +124,9 @@ class MCPGitHubAdapter extends IGitHubService {
     );
 
     this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Calling ${this.serverName}.${method} via Hermes native MCP`);
-    const result = await this._spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
+    const result = await this._spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime, {
+      shell: false
+    });
 
     if (result.stderr && result.stderr.length > 0) {
       this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] stderr: ${result.stderr.substring(0, 500)}`);
@@ -142,7 +144,7 @@ class MCPGitHubAdapter extends IGitHubService {
    * @returns {Promise<{stdout: string, stderr: string}>}
    * @private
    */
-  _spawnWithTimeout(command, args, timeoutMs, startTime) {
+  _spawnWithTimeout(command, args, timeoutMs, startTime, spawnOptions = {}) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         spawnProcess.stdout.off('data', onData);
@@ -161,7 +163,7 @@ class MCPGitHubAdapter extends IGitHubService {
 
       const spawnProcess = spawn(command, args, {
         maxBuffer: 10 * 1024 * 1024,
-        shell: true
+        shell: spawnOptions.shell !== undefined ? spawnOptions.shell : true
       });
 
       let stdout = '';
@@ -225,7 +227,6 @@ class MCPGitHubAdapter extends IGitHubService {
    * @private
    */
   _shellEscape(str) {
-    // Escape characters special inside double quotes: $ ` " \ and newline
     const escaped = str
       .replace(/\\/g, '\\\\')
       .replace(/"/g, '\\"')
@@ -800,7 +801,6 @@ class MCPGitHubAdapter extends IGitHubService {
    * @returns {void}
    */
   cleanup() {
-    // Clean up any remaining temp files
     for (const tempFile of this.tempFiles) {
       try {
         if (fs.existsSync(tempFile)) {
