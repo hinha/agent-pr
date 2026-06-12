@@ -9,6 +9,8 @@
  * await handler.handleCallbackQuery(query, config);
  */
 
+const ActionPayloadCodec = require('../../application/services/ActionPayloadCodec');
+
 class CallbackHandler {
   /**
    * @param {Object} reviewPRUseCase - ReviewPRUseCase instance
@@ -180,50 +182,7 @@ class CallbackHandler {
    * @private
    */
   _parseCallbackData(data) {
-    // Standard format: action:instanceIdx:repoIdx:prId
-    // Review level format: review_level:instanceIdx:repoIdx:prId:level
-    // Outdated format: action:instanceIdx:repoIdx:prId:reviewId
-    // Outdated review level: review_level_outdated:instanceIdx:repoIdx:prId:reviewId:level
-
-    const parts = data.split(':');
-
-    if (parts.length < 4) {
-      return null;
-    }
-
-    const callback = {
-      action: parts[0],
-      instanceIdx: parseInt(parts[1], 10),
-      repoIdx: parseInt(parts[2], 10),
-      prId: parts[3]
-    };
-
-    // Handle actions with 5 parts
-    if (parts.length >= 5) {
-      if (callback.action === 'review_level' || callback.action === 'review_level_outdated') {
-        callback.level = parts[4];
-      } else if (callback.action === 'silent_dur') {
-        const parsedHours = parseInt(parts[4], 10);
-        const allowedHours = new Set([1, 2, 3, 4, 6, 8, 12, 24, 48]);
-
-        if (!Number.isInteger(parsedHours) || !allowedHours.has(parsedHours)) {
-          return null; // reject malformed/tampered callback
-        }
-
-        callback.hours = parsedHours;
-      } else {
-        // For approve_outdated, re_review, dismiss_outdated: parts[4] is reviewId
-        callback.reviewId = parts[4];
-      }
-    }
-
-    // Handle actions with 6 parts (review_level_outdated has both level and reviewId)
-    if (parts.length >= 6 && callback.action === 'review_level_outdated') {
-      callback.reviewId = parts[4];
-      callback.level = parts[5];
-    }
-
-    return callback;
+    return ActionPayloadCodec.parse(data);
   }
 
   /**

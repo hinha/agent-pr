@@ -38,6 +38,9 @@ class ReviewQueueWorker {
     this.logger = options.logger || console;
     this.pollInterval = options.pollInterval || 5000;
     this.githubAdapterFactory = options.githubAdapterFactory;
+    this.discordAdapter = options.discordAdapter || null;
+    this.reviewPromptBuilder = options.reviewPromptBuilder || null;
+    this.externalReviewSessionService = options.externalReviewSessionService || null;
 
     this.isRunning = false;
     this._workerTimer = null;
@@ -203,14 +206,16 @@ class ReviewQueueWorker {
       // Create GitHub adapter
       const githubAdapter = this.githubAdapterFactory.create(queue.instanceKey);
 
-      // Execute review
-      const result = await this.reviewPRUseCase.execute(
-        instance,
-        repo,
-        pr,
-        item.level,
-        githubAdapter
-      );
+      const reviewMode = config.app?.discord?.reviewMode || 'mention_hermes';
+      const result = reviewMode === 'handoff_reply_submit'
+        ? await this._processExternalHandoff(instance, repo, pr, item, githubAdapter)
+        : await this.reviewPRUseCase.execute(
+          instance,
+          repo,
+          pr,
+          item.level,
+          githubAdapter
+        );
 
       const duration = Date.now() - startTime;
 
@@ -309,6 +314,92 @@ class ReviewQueueWorker {
         threadId: repoConfig?.thread_id
       });
     }
+  }
+
+  async _processExternalHandoff(instance, repo, pr, item, githubAdapter) {
+    if (!this.discordAdapter || !this.reviewPromptBuilder || !this.externalReviewSessionService) {
+      throw new Error('External handoff dependencies are not available');
+    }
+
+    const freshPR = await this._resolveFreshPR(pr, repo, githubAdapter);
+    const { previousComments, lastCommits } = await this._loadPromptContext(githubAdapter, repo.name, freshPR.number);
+    const config = require('../../config/yamlConfig');
+    const levelConfig = config.reviewLevels?.[item.level];
+    const prompt = this.reviewPromptBuilder.build({
+      owner: instance.owner,
+      repo: repo.name,
+      pr: freshPR,
+      level: item.level,
+      levelConfig,
+      mcpName: instance.mcpName || 'github',
+      previousComments,
+      lastCommits
+    });
+    const handoffPrompt = this.reviewPromptBuilder.buildDiscordHandoff({
+      mentionBotName: instance.mentionBotName,
+      basePrompt: prompt,
+      sessionId: item.id
+    });
+
+    const trigger = await this.discordAdapter.sendHermesMention({
+      instance,
+      repo,
+      mentionBotName: instance.mentionBotName,
+      content: handoffPrompt.triggerContent
+    });
+
+    this.externalReviewSessionService.startSession({
+      queueItemId: item.id,
+      sessionId: item.id,
+      instanceKey: item.instanceKey,
+      repoName: item.repoName,
+      prNumber: item.prNumber,
+      level: item.level,
+      triggerMessageId: trigger.id,
+      trustedBotUserId: instance.mentionBotUserId,
+      timeoutMs: (instance.agent?.reviewTimeoutSeconds || 600) * 1000
+    });
+
+    const promptRequestMessage = await this.externalReviewSessionService.awaitPromptRequest(item.id);
+    if (promptRequestMessage) {
+      const promptMessages = await this.discordAdapter.sendReplyChunks(
+        promptRequestMessage,
+        handoffPrompt.detailContent,
+        { prefix: 'Prompt review' }
+      );
+      this.externalReviewSessionService.registerReplyTargets(item.id, [promptRequestMessage, ...promptMessages]);
+    }
+
+    const externalResult = await this.externalReviewSessionService.awaitResult(item.id);
+
+    return this.reviewPRUseCase.submitExternalResult(
+      instance,
+      repo,
+      freshPR,
+      item.level,
+      externalResult.reviewResult,
+      githubAdapter
+    );
+  }
+
+  async _resolveFreshPR(pr, repo, githubAdapter) {
+    const openPRs = await githubAdapter.getOpenPRs(repo.name);
+    const freshPR = openPRs.find(candidate => candidate.number === pr.number || String(candidate.id) === String(pr.id));
+
+    if (!freshPR) {
+      throw new Error(`Could not load fresh PR #${pr.number} for ${repo.name}`);
+    }
+
+    return freshPR;
+  }
+
+  async _loadPromptContext(githubAdapter, repoName, prNumber) {
+    const [previousComments, lastCommits] = await Promise.all([
+      githubAdapter.getPRComments(repoName, prNumber).catch(() => []),
+      githubAdapter.getPRCommits(repoName, prNumber, 3).catch(() => [])
+    ]);
+
+    return { previousComments, lastCommits };
   }
 
   /**

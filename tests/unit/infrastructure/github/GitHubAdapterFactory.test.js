@@ -25,12 +25,13 @@ describe('GitHubAdapterFactory', () => {
 
   beforeEach(() => {
     config = {
+      app: { mcpClient: 'mcporter', mcpOutputFlag: '--output json' },
       instances: {
         'github/myorg': { mcp_name: 'github-work', owner: 'myorg' },
         'github/otherorg': { mcp_name: 'github-other', owner: 'otherorg' }
       }
     };
-    loggerFactory = jest.fn((name) => ({ info: jest.fn(), error: jest.fn(), debug: jest.fn() }));
+    loggerFactory = jest.fn((_name) => ({ info: jest.fn(), error: jest.fn(), debug: jest.fn() }));
     retryHelper = { retry: jest.fn(), retryIf: jest.fn() };
     factory = new GitHubAdapterFactory(config, loggerFactory, retryHelper);
   });
@@ -40,7 +41,9 @@ describe('GitHubAdapterFactory', () => {
       const adapter = factory.create('github/myorg');
 
       expect(adapter).toBeDefined();
-      expect(adapter.instance).toEqual(config.instances['github/myorg']);
+      expect(adapter.instance).toEqual(expect.objectContaining(config.instances['github/myorg']));
+      expect(adapter.instance.mcpClient).toBe('mcporter');
+      expect(adapter.instance.mcpOutputFlag).toBe('--output json');
       expect(loggerFactory).toHaveBeenCalledWith('MCPGitHub:github/myorg');
     });
 
@@ -70,7 +73,8 @@ describe('GitHubAdapterFactory', () => {
       const adapter = factory.createForOwner('myorg');
 
       expect(adapter).toBeDefined();
-      expect(adapter.instance).toEqual(config.instances['github/myorg']);
+      expect(adapter.instance).toEqual(expect.objectContaining(config.instances['github/myorg']));
+      expect(adapter.instance.mcpClient).toBe('mcporter');
     });
 
     it('should throw for unknown owner', () => {

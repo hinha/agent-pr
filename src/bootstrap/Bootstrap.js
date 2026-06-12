@@ -24,6 +24,7 @@ class Bootstrap {
     this.isShuttingDown = false;
     this._callbackQueryHandler = null; // Store for cleanup
     this._messageHandler = null; // Store for cleanup
+    this._discordInteractionHandler = null; // Store for cleanup
   }
 
   /**
@@ -37,7 +38,7 @@ class Bootstrap {
     console.log('[Bootstrap] Current time:', new Date().toISOString());
 
     let logger = null;
-    let config = null;
+    let config;
 
     try {
       // Step 1: Get logger
@@ -67,19 +68,33 @@ class Bootstrap {
       this._setupErrorHandlers(logger);
       logger.info('[Bootstrap] ✓ Error handlers set up');
 
-      // Step 4: Initialize Telegram bot
-      logger.info('[Bootstrap] Step 4: Getting Telegram adapter...');
-      const telegramAdapter = this.container.get('telegramAdapter');
-      logger.info('[Bootstrap] ✓ Telegram adapter obtained');
+      if (config.app?.telegram?.enabled === true) {
+        // Step 4: Initialize Telegram bot
+        logger.info('[Bootstrap] Step 4: Getting Telegram adapter...');
+        const telegramAdapter = this.container.get('telegramAdapter');
+        logger.info('[Bootstrap] ✓ Telegram adapter obtained');
 
-      logger.info('[Bootstrap] Step 5: Starting Telegram bot...');
-      await telegramAdapter.start();
-      logger.info('📱 Telegram bot started');
+        logger.info('[Bootstrap] Step 5: Starting Telegram bot...');
+        await telegramAdapter.start();
+        logger.info('📱 Telegram bot started');
 
-      // Step 6: Register Telegram callback handler
-      logger.info('[Bootstrap] Step 6: Setting up Telegram callbacks...');
-      this._setupTelegramCallbacks(logger, config);
-      logger.info('[Bootstrap] ✓ Telegram callbacks set up');
+        // Step 6: Register Telegram callback handler
+        logger.info('[Bootstrap] Step 6: Setting up Telegram callbacks...');
+        this._setupTelegramCallbacks(logger, config);
+        logger.info('[Bootstrap] ✓ Telegram callbacks set up');
+      } else {
+        logger.info('[Bootstrap] Telegram is not enabled, skipping');
+      }
+
+      if (config.app?.discord?.enabled === true) {
+        logger.info('[Bootstrap] Step 6.5: Starting Discord bot...');
+        const discordAdapter = this.container.get('discordAdapter');
+        await discordAdapter.start();
+        this._setupDiscordInteractions(logger, config);
+        logger.info('💬 Discord bot started');
+      } else {
+        logger.info('[Bootstrap] Discord is not enabled, skipping');
+      }
 
       // Step 7: Start PR processing orchestrator
       logger.info('[Bootstrap] Step 7: Getting PR processing orchestrator...');
@@ -197,17 +212,30 @@ class Bootstrap {
         logger.info('   ✓ Review queue worker stopped');
       }
 
-      // Remove Telegram callback handler before stopping bot
       const telegramAdapter = this.container.get('telegramAdapter');
       if (this._callbackQueryHandler) {
-        telegramAdapter.off('callback_query', this._callbackQueryHandler);
+        if (telegramAdapter) {
+          telegramAdapter.off('callback_query', this._callbackQueryHandler);
+        }
         this._callbackQueryHandler = null;
       }
       if (this._messageHandler) {
-        telegramAdapter.off('message', this._messageHandler);
+        if (telegramAdapter) {
+          telegramAdapter.off('message', this._messageHandler);
+        }
         this._messageHandler = null;
       }
       logger.info('   ✓ Telegram handlers removed');
+
+      const discordAdapter = this.container.get('discordAdapter');
+      if (discordAdapter) {
+        if (this._discordInteractionHandler) {
+          discordAdapter.off('interaction', this._discordInteractionHandler);
+          this._discordInteractionHandler = null;
+        }
+        await discordAdapter.stop();
+        logger.info('   ✓ Discord bot stopped');
+      }
 
       // Clear pending approval confirmations
       const confirmationManager = this.container.get('confirmationManager');
@@ -215,8 +243,10 @@ class Bootstrap {
       logger.info('   ✓ Confirmation manager cleared');
 
       // Stop Telegram bot
-      await telegramAdapter.stop();
-      logger.info('   ✓ Telegram bot stopped');
+      if (telegramAdapter) {
+        await telegramAdapter.stop();
+        logger.info('   ✓ Telegram bot stopped');
+      }
 
       // Stop Flagsmith sync
       const flagsmithSyncService = this.container.get('flagsmithSyncService');
@@ -260,6 +290,10 @@ class Bootstrap {
    */
   _setupTelegramCallbacks(logger, config) {
     const telegramAdapter = this.container.get('telegramAdapter');
+    if (!telegramAdapter) {
+      logger.info('[Bootstrap] Telegram adapter unavailable; callbacks skipped');
+      return;
+    }
     const callbackHandler = this.container.get('callbackHandler');
     const commandHandler = this.container.get('commandHandler');
     const skipManager = this.container.get('skipManager');
@@ -316,6 +350,38 @@ class Bootstrap {
     // Register handlers
     telegramAdapter.on('callback_query', this._callbackQueryHandler);
     telegramAdapter.on('message', this._messageHandler);
+  }
+
+  /**
+   * Set up Discord interaction handlers
+   * @private
+   */
+  _setupDiscordInteractions(logger, config) {
+    const discordAdapter = this.container.get('discordAdapter');
+    const prActionHandler = this.container.get('prActionHandler');
+    const DiscordInteractionResponder = require('../infrastructure/discord/DiscordInteractionResponder');
+
+    if (!discordAdapter) {
+      return;
+    }
+
+    this._discordInteractionHandler = async (interaction) => {
+      try {
+        logger.info(`[Bootstrap] Processing Discord interaction: ${interaction.customId}`);
+        const responder = new DiscordInteractionResponder(interaction, { logger });
+        await prActionHandler.handleDiscordInteraction(interaction, responder, config);
+      } catch (error) {
+        logger.error(`Error handling Discord interaction: ${error.message}`);
+        try {
+          const responder = new DiscordInteractionResponder(interaction, { logger });
+          await responder.error('An error occurred');
+        } catch (_answerError) {
+          // Ignore response errors.
+        }
+      }
+    };
+
+    discordAdapter.on('interaction', this._discordInteractionHandler);
   }
 
   /**

@@ -256,6 +256,69 @@ describe('ReviewPRUseCase', () => {
     });
   });
 
+  describe('submitExternalResult', () => {
+    test('should normalize external JSON comments and submit through shared review path', async () => {
+      const result = await useCase.submitExternalResult(
+        instance,
+        repo,
+        pr,
+        'high',
+        {
+          summary: 'Found blocking issue',
+          comments: [
+            {
+              file: 'src/index.js',
+              start_line: 10,
+              end_line: 12,
+              severity: 'HIGH',
+              message: 'Bug found',
+              suggestedCode: 'const fixed = true;'
+            }
+          ]
+        },
+        mockGithubAdapter
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockGithubAdapter.createReviewWithComments).toHaveBeenCalledWith(
+        'test-repo',
+        pr,
+        expect.objectContaining({
+          requiresChanges: true,
+          comments: [
+            expect.objectContaining({
+              file: 'src/index.js',
+              line: 10,
+              severity: 'HIGH'
+            })
+          ]
+        })
+      );
+      expect(mockStateMachine.transition).toHaveBeenCalledWith(
+        'github/testorg',
+        'test-repo',
+        42,
+        PRState.REJECTED,
+        expect.objectContaining({ level: 'high' })
+      );
+    });
+
+    test('should reject non-object external review payloads', async () => {
+      const result = await useCase.submitExternalResult(
+        instance,
+        repo,
+        pr,
+        'medium',
+        null,
+        mockGithubAdapter
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('External review result must be a JSON object');
+      expect(mockGithubAdapter.createReviewWithComments).not.toHaveBeenCalled();
+    });
+  });
+
   describe('_determineNewState', () => {
     test('should return REJECTED when requiresChanges is true', () => {
       const result = useCase._determineNewState({ requiresChanges: true });

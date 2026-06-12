@@ -36,4 +36,6 @@ Thumbs.db
 /examples/
 /coverage/*
 /config.yml.backup
+/.codex/config.toml
 /.ai/mcp/mcp.json
+/AGENTS.md

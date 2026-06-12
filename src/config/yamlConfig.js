@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const logger = require('../utils/logger');
+const { extractDiscordUserIdFromMention } = require('../utils/discordMention');
 
 /**
  * Normalize a value to boolean.
@@ -28,6 +29,19 @@ function toBool(value) {
 function resolveEnabled(repoConf) {
   const raw = repoConf.enabled !== undefined ? repoConf.enabled : repoConf.enable;
   return toBool(raw);
+}
+
+/**
+ * Resolve platform enabled status, with a configurable default for legacy configs.
+ * @param {Object|undefined} platformConfig - Platform config object
+ * @param {boolean} defaultValue - Value when `enabled` is omitted
+ * @returns {boolean}
+ */
+function resolvePlatformEnabled(platformConfig, defaultValue) {
+  if (!platformConfig || platformConfig.enabled === undefined) {
+    return defaultValue;
+  }
+  return toBool(platformConfig.enabled);
 }
 
 /**
@@ -58,8 +72,19 @@ function loadYamlConfig() {
  * Transform YAML structure to internal config format
  */
 function buildInternalConfig(config) {
+  const telegramEnabled = resolvePlatformEnabled(config.app.telegram, true);
+  const discordEnabled = resolvePlatformEnabled(config.app.discord, false);
+  const discordReviewMode = config.app.discord?.review_mode || 'mention_hermes';
+
+  if (!telegramEnabled && !discordEnabled) {
+    throw new Error('At least one notification platform must be enabled: app.telegram.enabled or app.discord.enabled');
+  }
+
   const internalConfig = {
     app: {
+      providerAgent: config.app.provider_agent || 'openclaw',
+      mcpClient: config.app.mcp_client || 'mcporter',
+      mcpOutputFlag: config.app.mcp_output_flag !== undefined ? config.app.mcp_output_flag : '--output json',
       checkIntervalMs: config.app.check_interval_minutes * 60 * 1000,
       outdatedReviewCheckIntervalMs: (config.app.outdated_review_check_minutes || 10) * 60 * 1000,
       snoozeTime: {
@@ -70,8 +95,15 @@ function buildInternalConfig(config) {
         dayNames: config.app.snooze_time?.day_names || ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat']
       },
       telegram: {
-        botToken: config.app.telegram.bot_token,
-        chatId: parseInt(config.app.telegram.chat_id, 10)
+        enabled: telegramEnabled,
+        botToken: config.app.telegram?.bot_token,
+        chatId: parseInt(config.app.telegram?.chat_id, 10)
+      },
+      discord: {
+        enabled: discordEnabled,
+        botToken: config.app.discord?.bot_token || process.env.DISCORD_BOT_TOKEN || null,
+        guildId: config.app.discord?.guild_id || null,
+        reviewMode: discordReviewMode
       },
       flagsmith: {
         enabled: config.app.flagsmith?.enabled || false,
@@ -80,7 +112,7 @@ function buildInternalConfig(config) {
         syncIntervalMs: (config.app.flagsmith?.sync_interval_minutes || 5) * 60 * 1000
       }
     },
-    instances: buildInstances(config),
+    instances: buildInstances(config, { discordEnabled, discordReviewMode }),
     log: { level: config.log.level || 'info' },
     retries: {
       mcpRetries: 3,
@@ -116,7 +148,8 @@ function buildInternalConfig(config) {
  * Extract instance configurations from YAML
  * Format: github/{org-name}
  */
-function buildInstances(config) {
+function buildInstances(config, options = {}) {
+  const { discordEnabled = false, discordReviewMode = 'mention_hermes' } = options;
   const instances = {};
 
   for (const key of Object.keys(config)) {
@@ -127,10 +160,19 @@ function buildInstances(config) {
       const skipCacheHours = config[key].skip_cache_duration_hours || 3;
       const queueMaxSize = config[key].queue?.max_size || 2;
 
+      const mentionBotName = config[key].mention_bot_name || config.app.discord?.mention_bot_name || '@Hermes';
+      const mentionBotUserId = extractDiscordUserIdFromMention(mentionBotName);
+
+      if (discordEnabled && discordReviewMode === 'handoff_reply_submit' && !mentionBotUserId) {
+        throw new Error(`Invalid mention_bot_name for ${key}: handoff_reply_submit requires a Discord user mention like <@123456789012345678>`);
+      }
+
       instances[key] = {
         key: key,
         owner: owner,
         mcpName: config[key].mcp_name,
+        mentionBotName,
+        mentionBotUserId,
         maxAgeMs: maxAgeHours * 60 * 60 * 1000,
         skipDurationMs: skipCacheHours * 60 * 60 * 1000,
         queue: {
@@ -141,12 +183,20 @@ function buildInstances(config) {
           summaryAgent: config[key].agent.summary,
           levels: config[key].agent.level,
           reviewTimeoutSeconds: config[key].agent.review_timeout_seconds,
-          reviewTimeoutMessage: config[key].agent.review_timeot_string || '10 menit'
+          reviewTimeoutMessage: config[key].agent.review_timeot_string || '10 menit',
+          hermesProfile: config[key].agent.hermes_profile,
+          hermesMaxTurns: parseInt(config[key].agent.hermes_max_turns, 10) || 90
         },
         repos: Object.fromEntries(
           Object.entries(config[key].repos || {}).map(([repoName, repoConf]) => [
             repoName,
-            { ...repoConf, enabled: resolveEnabled(repoConf) }
+            {
+              ...repoConf,
+              enabled: resolveEnabled(repoConf),
+              threadId: repoConf.thread_id !== undefined ? parseInt(repoConf.thread_id, 10) : undefined,
+              discordChannelId: repoConf.discord_channel_id || repoConf.discordChannelId,
+              discordThreadId: repoConf.discord_thread_id || repoConf.discordThreadId
+            }
           ])
         )
       };

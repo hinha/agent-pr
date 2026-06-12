@@ -132,7 +132,9 @@ class Container {
             {
               key: instanceKey,
               owner: instance.owner,
-              mcpName: instance.mcpName
+              mcpName: instance.mcpName || instance.mcp_name,
+              mcpClient: config.app.mcpClient,
+              mcpOutputFlag: config.app.mcpOutputFlag
             },
             cradle.logger,
             cradle.retryHelper
@@ -148,7 +150,9 @@ class Container {
             {
               key: instanceKey,
               owner: instance.owner,
-              mcpName: instance.mcpName
+              mcpName: instance.mcpName || instance.mcp_name,
+              mcpClient: config.app.mcpClient,
+              mcpOutputFlag: config.app.mcpOutputFlag
             },
             cradle.logger,
             cradle.retryHelper
@@ -159,9 +163,13 @@ class Container {
 
     // Telegram Adapter (implements ITelegramService) - MUST be registered as singleton
     this.registerFunction('telegramAdapter', (cradle) => {
+      if (cradle.config.app?.telegram?.enabled !== true) {
+        return null;
+      }
+
       const TelegramBotAdapter = require('../infrastructure/telegram/TelegramBotAdapter');
       return new TelegramBotAdapter(
-        cradle.config.app.telegram.botToken,
+        cradle.config.app.telegram.botToken || cradle.config.app.telegram.bot_token,
         {
           logger: cradle.logger,
           retryHelper: cradle.retryHelper,
@@ -171,11 +179,48 @@ class Container {
       );
     }).singleton();
 
-    // Agent Adapter (implements IAgentService)
-    this.registerFunction('agentAdapter', (cradle) => {
-      const OpenClawAgentAdapter = require('../infrastructure/agents/OpenClawAgentAdapter');
+    this.registerFunction('discordAdapter', (cradle) => {
+      if (cradle.config.app?.discord?.enabled !== true) {
+        return null;
+      }
 
-      return new OpenClawAgentAdapter(cradle.config, cradle.logger, cradle.retryHelper);
+      const DiscordBotAdapter = require('../infrastructure/discord/DiscordBotAdapter');
+      return new DiscordBotAdapter(
+        cradle.config.app.discord.botToken,
+        {
+          logger: cradle.logger,
+          retryHelper: cradle.retryHelper,
+          config: cradle.config,
+          eventBus: cradle.eventBus,
+          externalReviewSessionService: cradle.externalReviewSessionService
+        }
+      );
+    }).singleton();
+
+    this.registerFunction('notificationRouter', (cradle) => {
+      const NotificationRouter = require('../application/services/NotificationRouter');
+      return new NotificationRouter({
+        telegramAdapter: cradle.telegramAdapter,
+        discordAdapter: cradle.discordAdapter,
+        config: cradle.config,
+        logger: cradle.logger
+      });
+    }).singleton();
+
+    this.registerFunction('reviewPromptBuilder', (cradle) => {
+      const ReviewPromptBuilder = require('../application/services/ReviewPromptBuilder');
+      return new ReviewPromptBuilder({ logger: cradle.logger });
+    }).singleton();
+
+    this.registerFunction('externalReviewSessionService', (cradle) => {
+      const ExternalReviewSessionService = require('../application/services/ExternalReviewSessionService');
+      return new ExternalReviewSessionService({ logger: cradle.logger });
+    }).singleton();
+
+    // Agent Adapter (implements IAgentService) - factory selects provider
+    this.registerFunction('agentAdapter', (cradle) => {
+      const AgentAdapterFactory = require('../infrastructure/agents/AgentAdapterFactory');
+      return AgentAdapterFactory.create(cradle.config, cradle.logger, cradle.retryHelper);
     }).singleton();
 
     // ===== Application Layer =====
@@ -187,7 +232,7 @@ class Container {
       return new ProcessPRUseCase(
         cradle.stateMachine,
         cradle.prAnalyzerService,
-        cradle.telegramAdapter,
+        cradle.notificationRouter,
         cradle.eventBus,
         { logger: cradle.logger }
       );
@@ -197,7 +242,7 @@ class Container {
       const SendNotificationUseCase = require('../application/use-cases/SendNotificationUseCase');
 
       return new SendNotificationUseCase(
-        cradle.telegramAdapter,
+        cradle.notificationRouter,
         cradle.stateMachine,
         cradle.eventBus,
         { logger: cradle.logger }
@@ -240,7 +285,10 @@ class Container {
         {
           logger: cradle.logger,
           pollInterval: 5000,
-          githubAdapterFactory: cradle.githubAdapter
+          githubAdapterFactory: cradle.githubAdapter,
+          discordAdapter: cradle.discordAdapter,
+          reviewPromptBuilder: cradle.reviewPromptBuilder,
+          externalReviewSessionService: cradle.externalReviewSessionService
         }
       );
     }).singleton();
@@ -248,7 +296,7 @@ class Container {
     this.registerFunction('queueNotificationSubscriber', (cradle) => {
       const QueueNotificationSubscriber = require('../infrastructure/telegram/QueueNotificationSubscriber');
       return new QueueNotificationSubscriber(
-        cradle.telegramAdapter,
+        cradle.notificationRouter,
         cradle.eventBus,
         { logger: cradle.logger }
       );
@@ -339,10 +387,30 @@ class Container {
           checkOutdatedReviewsUseCase: cradle.checkOutdatedReviewsUseCase,
           confirmationManager: cradle.confirmationManager,
           reviewQueueUseCase: cradle.reviewQueueUseCase,
-          bot: cradle.telegramAdapter.getBot(),
-          chatId: cradle.telegramAdapter.chatId
+          bot: cradle.telegramAdapter?.getBot(),
+          chatId: cradle.telegramAdapter?.chatId
         }
       );
+    }).singleton();
+
+    this.registerFunction('prActionHandler', (cradle) => {
+      const PRActionHandler = require('../application/services/PRActionHandler');
+      const DiscordMessageFormatter = require('../infrastructure/discord/DiscordMessageFormatter');
+
+      return new PRActionHandler({
+        reviewPRUseCase: cradle.reviewPRUseCase,
+        stateMachine: cradle.stateMachine,
+        eventBus: cradle.eventBus,
+        githubAdapter: cradle.githubAdapter,
+        reviewQueueUseCase: cradle.reviewQueueUseCase,
+        checkOutdatedReviewsUseCase: cradle.checkOutdatedReviewsUseCase,
+        stateRepositoryFactory: cradle.stateRepositoryFactory,
+        discordAdapter: cradle.discordAdapter,
+        reviewPromptBuilder: cradle.reviewPromptBuilder,
+        formatter: new DiscordMessageFormatter(),
+        config: cradle.config,
+        logger: cradle.logger
+      });
     }).singleton();
 
     // Command Handler (Telegram text commands)
@@ -355,8 +423,8 @@ class Container {
         {
           logger: cradle.logger,
           config: cradle.config,
-          bot: cradle.telegramAdapter.getBot(),
-          chatId: cradle.telegramAdapter.chatId
+          bot: cradle.telegramAdapter?.getBot(),
+          chatId: cradle.telegramAdapter?.chatId
         }
       );
     }).singleton();

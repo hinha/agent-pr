@@ -1,11 +1,11 @@
 module.exports = {
   apps: [{
-    name: 'pr-monitor-daemon',
+    name: 'agent-pr',
     script: 'index.js',
     instances: 1,  // Single instance - daemon with shared state management
     autorestart: true,
     watch: false,
-    max_memory_restart: '512M',
+    max_memory_restart: '256M',
     env: {
       NODE_ENV: 'production'
     },

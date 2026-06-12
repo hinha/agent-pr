@@ -38,9 +38,17 @@ describe('CheckOutdatedReviewsUseCase', () => {
   });
 
   describe('execute', () => {
-    const instance = { key: 'github/myorg', owner: 'myorg' };
+    const instance = { key: 'github/myorg', owner: 'myorg', maxAgeMs: 48 * 60 * 60 * 1000 };
     const repo = { name: 'my-repo', threadId: 12345 };
     const githubAdapter = { getPRReviews: jest.fn() };
+
+    // Helper: create a fresh PR (within maxAgeHours)
+    const freshPR = (overrides = {}) => ({
+      number: 42, id: 'pr42', headSha: 'newsha123',
+      createdAt: new Date().toISOString(),
+      getAgeInMs: () => 1 * 60 * 60 * 1000, // 1 hour old
+      ...overrides
+    });
 
     it('should return empty result when no PRs', async () => {
       const result = await useCase.execute(instance, repo, [], githubAdapter);
@@ -50,7 +58,7 @@ describe('CheckOutdatedReviewsUseCase', () => {
     });
 
     it('should detect and notify for outdated reviews', async () => {
-      const pr = { number: 42, id: 'pr42', headSha: 'newsha123' };
+      const pr = freshPR();
       const review = {
         id: 'r1',
         state: 'CHANGES_REQUESTED',
@@ -85,8 +93,38 @@ describe('CheckOutdatedReviewsUseCase', () => {
       );
     });
 
+    it('should skip PRs older than maxAgeMs', async () => {
+      const oldPR = freshPR({ getAgeInMs: () => 72 * 60 * 60 * 1000 }); // 72 hours old (> 48h max)
+
+      const result = await useCase.execute(instance, repo, [oldPR], githubAdapter);
+
+      expect(result.outdatedReviews).toHaveLength(0);
+      expect(result.notificationResults).toHaveLength(0);
+      expect(githubAdapter.getPRReviews).not.toHaveBeenCalled();
+    });
+
+    it('should skip PRs older than maxAgeMs using createdAt fallback', async () => {
+      const threeDaysAgo = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+      const oldPR = { number: 99, id: 'pr99', headSha: 'sha', createdAt: threeDaysAgo };
+
+      const result = await useCase.execute(instance, repo, [oldPR], githubAdapter);
+
+      expect(result.outdatedReviews).toHaveLength(0);
+      expect(githubAdapter.getPRReviews).not.toHaveBeenCalled();
+    });
+
+    it('should use default 48h max age when instance has no maxAgeMs', async () => {
+      const instanceNoMax = { key: 'github/myorg', owner: 'myorg' };
+      const oldPR = freshPR({ getAgeInMs: () => 72 * 60 * 60 * 1000 });
+
+      const result = await useCase.execute(instanceNoMax, repo, [oldPR], githubAdapter);
+
+      expect(result.outdatedReviews).toHaveLength(0);
+      expect(githubAdapter.getPRReviews).not.toHaveBeenCalled();
+    });
+
     it('should skip dismissed reviews', async () => {
-      const pr = { number: 42, id: 'pr42', headSha: 'newsha123' };
+      const pr = freshPR();
       const review = {
         id: 'r1', state: 'CHANGES_REQUESTED', headSha: 'oldsha456',
         user: 'reviewer1', body: 'Fix'
@@ -105,7 +143,7 @@ describe('CheckOutdatedReviewsUseCase', () => {
     });
 
     it('should skip outdated review notification for silenced PR', async () => {
-      const pr = { number: 42, id: 'pr42', headSha: 'newsha123' };
+      const pr = freshPR();
       const review = {
         id: 'r1', state: 'CHANGES_REQUESTED', headSha: 'oldsha456',
         user: 'reviewer1', body: 'Fix'
@@ -124,7 +162,7 @@ describe('CheckOutdatedReviewsUseCase', () => {
     });
 
     it('should skip outdated review notification for PR in APPROVED state with skip metadata', async () => {
-      const pr = { number: 42, id: 'pr42', headSha: 'newsha123' };
+      const pr = freshPR();
       const review = {
         id: 'r1', state: 'APPROVED', headSha: 'oldsha456',
         user: 'reviewer1', body: 'LGTM'
@@ -143,7 +181,7 @@ describe('CheckOutdatedReviewsUseCase', () => {
     });
 
     it('should skip dismissed reviews (state=DISMISSED)', async () => {
-      const pr = { number: 42, id: 'pr42', headSha: 'newsha123' };
+      const pr = freshPR();
       const review = {
         id: 'r1', state: 'DISMISSED', headSha: 'oldsha456',
         user: 'reviewer1', body: ''
@@ -160,7 +198,7 @@ describe('CheckOutdatedReviewsUseCase', () => {
       githubAdapter.getPRReviews = jest.fn().mockRejectedValue(new Error('API error'));
 
       await expect(
-        useCase.execute(instance, repo, [{ number: 1, id: '1', headSha: 'sha' }], githubAdapter)
+        useCase.execute(instance, repo, [freshPR({ number: 1, id: '1' })], githubAdapter)
       ).rejects.toThrow('API error');
 
       expect(eventBus.emitAsync).toHaveBeenCalledWith(

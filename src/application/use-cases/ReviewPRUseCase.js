@@ -120,58 +120,14 @@ class ReviewPRUseCase {
         `${reviewResult.comments.length} comments`
       );
 
-      // Step 3: Submit review via GitHub
-      const review = await this._submitReview(
-        repoName,
-        pr,
-        reviewResult,
+      return await this._finalizeReviewSubmission(
         instance,
+        repo,
+        pr,
+        level,
+        reviewResult,
         githubAdapter
       );
-
-      // Step 4: Update state machine based on review result
-      const newState = this._determineNewState(reviewResult);
-      const currentState = await this.stateMachine.getState(instanceKey, repoName, prNumber);
-
-      if (this.stateMachine.isTerminalState(currentState)) {
-        this.logger.info(
-          `[ReviewPRUseCase] PR #${prNumber} already in terminal state (${currentState}), skipping state transition`
-        );
-      } else if (currentState === newState) {
-        this.logger.debug(
-          `[ReviewPRUseCase] PR #${prNumber} already in state (${currentState}), skipping redundant transition`
-        );
-      } else {
-        await this.stateMachine.transition(
-          instanceKey,
-          repoName,
-          prNumber,
-          newState,
-          { reviewId: review.id, level }
-        );
-      }
-
-      // Step 5: Emit domain event
-      await this.eventBus.emitAsync('review.created', {
-        instanceKey,
-        repoName,
-        prNumber,
-        reviewId: review.id,
-        state: review.state,
-        commentCount: reviewResult.comments.length
-      });
-
-      this.logger.info(
-        `[ReviewPRUseCase] Review submitted for PR #${prNumber} ` +
-        `(state: ${review.state}, comments: ${reviewResult.comments.length})`
-      );
-
-      return {
-        success: true,
-        review,
-        reviewResult,
-        state: newState
-      };
 
     } catch (error) {
       this.logger.error(
@@ -184,6 +140,42 @@ class ReviewPRUseCase {
         useCase: 'ReviewPRUseCase',
         instanceKey,
         repoName,
+        prNumber,
+        error: error.message
+      });
+
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  async submitExternalResult(instance, repo, pr, level = 'medium', externalReviewResult, githubAdapter) {
+    const prNumber = pr.number;
+
+    try {
+      this.logger.info(`[ReviewPRUseCase] Submitting external review result for PR #${prNumber}`);
+      const normalizedReviewResult = this._normalizeExternalReviewResult(externalReviewResult);
+
+      return await this._finalizeReviewSubmission(
+        instance,
+        repo,
+        pr,
+        level,
+        normalizedReviewResult,
+        githubAdapter
+      );
+    } catch (error) {
+      this.logger.error(
+        `[ReviewPRUseCase] Error submitting external review result for PR #${prNumber}:`,
+        error
+      );
+
+      await this.eventBus.emitAsync('error.occurred', {
+        useCase: 'ReviewPRUseCase.submitExternalResult',
+        instanceKey: instance.key,
+        repoName: repo.name,
         prNumber,
         error: error.message
       });
@@ -214,6 +206,91 @@ class ReviewPRUseCase {
     );
 
     return review;
+  }
+
+  async _finalizeReviewSubmission(instance, repo, pr, level, reviewResult, githubAdapter) {
+    const instanceKey = instance.key;
+    const repoName = repo.name;
+    const prNumber = pr.number;
+
+    const review = await this._submitReview(
+      repoName,
+      pr,
+      reviewResult,
+      instance,
+      githubAdapter
+    );
+
+    const newState = this._determineNewState(reviewResult);
+    const currentState = await this.stateMachine.getState(instanceKey, repoName, prNumber);
+
+    if (this.stateMachine.isTerminalState(currentState)) {
+      this.logger.info(
+        `[ReviewPRUseCase] PR #${prNumber} already in terminal state (${currentState}), skipping state transition`
+      );
+    } else if (currentState === newState) {
+      this.logger.debug(
+        `[ReviewPRUseCase] PR #${prNumber} already in state (${currentState}), skipping redundant transition`
+      );
+    } else {
+      await this.stateMachine.transition(
+        instanceKey,
+        repoName,
+        prNumber,
+        newState,
+        { reviewId: review.id, level }
+      );
+    }
+
+    await this.eventBus.emitAsync('review.created', {
+      instanceKey,
+      repoName,
+      prNumber,
+      reviewId: review.id,
+      state: review.state,
+      commentCount: reviewResult.comments.length
+    });
+
+    this.logger.info(
+      `[ReviewPRUseCase] Review submitted for PR #${prNumber} ` +
+      `(state: ${review.state}, comments: ${reviewResult.comments.length})`
+    );
+
+    return {
+      success: true,
+      review,
+      reviewResult,
+      state: newState
+    };
+  }
+
+  _normalizeExternalReviewResult(externalReviewResult) {
+    if (!externalReviewResult || typeof externalReviewResult !== 'object' || Array.isArray(externalReviewResult)) {
+      throw new Error('External review result must be a JSON object');
+    }
+
+    const comments = Array.isArray(externalReviewResult.comments)
+      ? externalReviewResult.comments.map(comment => ({
+        file: comment.file || comment.path || comment.filename,
+        line: comment.line || comment.start_line || comment.startLine,
+        severity: comment.severity,
+        message: comment.message,
+        suggestedCode: comment.suggestedCode || comment.suggested_code
+      }))
+      : [];
+
+    const requiresChanges = comments.some(comment => String(comment.severity || '').trim().toUpperCase() === 'HIGH');
+
+    return {
+      success: true,
+      summary: typeof externalReviewResult.summary === 'string'
+        ? externalReviewResult.summary
+        : 'External review completed',
+      comments,
+      requiresChanges,
+      agentCalledToolDirectly: false,
+      agentRawOutput: JSON.stringify(externalReviewResult)
+    };
   }
 
   /**

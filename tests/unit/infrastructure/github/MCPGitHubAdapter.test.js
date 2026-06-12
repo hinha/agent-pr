@@ -71,6 +71,32 @@ describe('MCPGitHubAdapter', () => {
       expect(adapter.owner).toBe('testorg');
       expect(adapter.serverName).toBe('github-work');
       expect(adapter.mcpBaseCmd).toBe('mcporter');
+      expect(adapter.mcpOutputFlag).toBe('--output json');
+    });
+
+    test('should default to mcporter when mcpClient is not provided', () => {
+      const adapterNoClient = new MCPGitHubAdapter(
+        { key: 'github/test', owner: 'test', mcpName: 'test-mcp' },
+        mockLogger,
+        mockRetryHelper
+      );
+      expect(adapterNoClient.mcpBaseCmd).toBe('mcporter');
+    });
+
+    test('should use custom mcpClient and output flag when provided', () => {
+      const adapterCustom = new MCPGitHubAdapter(
+        {
+          key: 'github/test',
+          owner: 'test',
+          mcpName: 'test-mcp',
+          mcpClient: 'openclaw mcp',
+          mcpOutputFlag: ''
+        },
+        mockLogger,
+        mockRetryHelper
+      );
+      expect(adapterCustom.mcpBaseCmd).toBe('openclaw mcp');
+      expect(adapterCustom.mcpOutputFlag).toBe('');
     });
 
     test('should log initialization', () => {
@@ -100,7 +126,6 @@ describe('MCPGitHubAdapter', () => {
 
       // Set up spawn to return mock data
       let onDataCallback;
-      let onErrorDataCallback;
       let onCloseCallback;
 
       mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
@@ -166,19 +191,85 @@ describe('MCPGitHubAdapter', () => {
       mockSpawnProcess.stdout.on.mockImplementation(() => {});
       mockSpawnProcess.stderr.on.mockImplementation(() => {});
 
-      let callCount = 0;
       mockRetryHelper.retryIf.mockImplementation(async (fn, _shouldRetry) => {
-        callCount++;
         return await fn();
       });
 
       try {
         await adapter.getOpenPRs('test-repo');
-      } catch (e) {
+      } catch (_e) {
         // Expected to fail due to empty output
       }
 
       expect(mockRetryHelper.retryIf).toHaveBeenCalled();
+    });
+
+    test('should accept object-wrapped pull request arrays', async () => {
+      const wrappedPRs = {
+        result: {
+          pull_requests: [
+            {
+              id: 123456,
+              number: 456,
+              title: 'Wrapped PR',
+              state: 'open',
+              user: { login: 'testuser' },
+              base: { ref: 'main' },
+              head: { ref: 'feature', sha: 'abc123' },
+              html_url: 'https://github.com/testorg/test-repo/pull/456',
+              created_at: '2024-01-01T00:00:00Z',
+              body: 'Wrapped body'
+            }
+          ]
+        }
+      };
+
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') onCloseCallback = cb;
+      });
+
+      const promise = adapter.getOpenPRs('test-repo');
+
+      setTimeout(() => {
+        onDataCallback(JSON.stringify(wrappedPRs));
+        onCloseCallback(0);
+      }, 10);
+
+      const result = await promise;
+      expect(result).toHaveLength(1);
+      expect(result[0].title).toBe('Wrapped PR');
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('Found 1 open PRs')
+      );
+    });
+
+    test('should throw MCPError when pull request payload is not an array shape', async () => {
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') onCloseCallback = cb;
+      });
+
+      const promise = adapter.getOpenPRs('test-repo');
+
+      setTimeout(() => {
+        onDataCallback(JSON.stringify({ status: 'ok', count: 0 }));
+        onCloseCallback(0);
+      }, 10);
+
+      await expect(promise).rejects.toThrow('MCP list_pull_requests response is not an array');
     });
 
     test('should throw MCPError on spawn failure', (done) => {
@@ -205,6 +296,7 @@ describe('MCPGitHubAdapter', () => {
         }
       }, 10);
     });
+
   });
 
   describe('getPRDetails', () => {
@@ -392,7 +484,7 @@ describe('MCPGitHubAdapter', () => {
         }
       });
 
-      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
+      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((_result) => {
         expect(spawn).toHaveBeenCalled();
         done();
       });
@@ -734,7 +826,6 @@ describe('MCPGitHubAdapter', () => {
 
         const lastSpawnArgs = spawn.mock.calls[1][1];
         const bodyArg = lastSpawnArgs.find(arg => arg.startsWith('body='));
-        // Python language detection (backticks are escaped by _shellEscape)
         expect(bodyArg).toContain('\\`\\`\\`python');
         expect(bodyArg).toContain('result = [x for x in items if x > 0]');
 
@@ -945,12 +1036,9 @@ describe('MCPGitHubAdapter', () => {
     });
 
     test('should handle injection attempt with single quotes', () => {
-      // This was the original bug: single quote in value breaks out of single-quote wrapping
-      const malicious = "'; rm -rf /; echo '";
+      const malicious = '\'; rm -rf /; echo \'';
       const escaped = adapter._shellEscape(malicious);
-      // Single quotes are safe inside double quotes — shell treats it as literal string
-      expect(escaped).toBe(`"'; rm -rf /; echo '"`);
-      // Verify no unescaped $ or ` that could cause substitution
+      expect(escaped).toBe(`"${malicious}"`);
       expect(escaped).not.toMatch(/(?<!\\)\$/);
       expect(escaped).not.toMatch(/(?<!\\)`/);
     });

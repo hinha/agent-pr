@@ -101,7 +101,6 @@ graph TD
 - **Node.js** >= 18.0.0
 - **npm** package manager
 - **OpenClaw MCP** installed and configured
-- **mcporter** CLI tool for MCP server management
 - **Telegram Bot** created via [@BotFather](https://t.me/botfather)
 - **PM2** (recommended for production)
 - **Flagsmith** account (optional, for remote configuration)
@@ -119,30 +118,61 @@ npm install
 # Create configuration file
 cp config.yml.example config.yml
 
+# Or start from a provider-specific preset
+# cp config.hermes.yml.example config.yml
+# cp config.openclaw.yml.example config.yml
+
 # Edit config.yml with your settings
 nano config.yml
 ```
 
 ### Configuration
 
-The daemon uses `config.yml` for configuration. See `config.yml.example` for the full template.
+The daemon uses `config.yml` for configuration.
+
+Available examples:
+- `config.yml.example`: generic full template
+- `config.hermes.yml.example`: preset for internal Hermes adapter
+- `config.openclaw.yml.example`: preset for internal OpenClaw adapter
+
+Important:
+- `app.provider_agent` selects the internal review adapter: `hermes` or `openclaw`
+- GitHub MCP access is configured independently from `app.provider_agent`
+- Recommended transport for the daemon is `app.mcp_client: "mcporter"` with `app.mcp_output_flag: "--output json"`
+- If Discord is enabled and you want review actions to use the internal adapter, set `app.discord.review_mode: internal_queue`
+- If `app.discord.review_mode: mention_hermes`, Discord review actions hand off to a mentioned Hermes bot instead of using the internal adapter
 
 **Core Configuration:**
 
 | Setting | Description | Default |
 |---------|-------------|---------|
+| `app.provider_agent` | Internal review provider: `openclaw` or `hermes` | `openclaw` |
+| `app.mcp_client` | CLI transport for GitHub MCP calls | `mcporter` |
+| `app.mcp_output_flag` | Output flag passed to the MCP client | `--output json` |
 | `app.check_interval_minutes` | PR polling frequency in minutes | 7 |
 | `app.outdated_review_check_minutes` | Outdated review check interval (0 = every poll) | 10 |
-| `app.telegram.bot_token` | Telegram bot token from @BotFather | Required |
-| `app.telegram.chat_id` | Main Telegram chat ID | Required |
+| `app.telegram.enabled` | Enable Telegram notifications/actions | `true` |
+| `app.telegram.bot_token` | Telegram bot token from @BotFather | Required when Telegram enabled |
+| `app.telegram.chat_id` | Main Telegram chat ID | Required when Telegram enabled |
+| `app.discord.enabled` | Enable Discord notifications/actions | `false` |
+| `app.discord.bot_token` | Discord bot token for agent-pr | Required when Discord enabled |
+| `app.discord.guild_id` | Discord guild/server ID | Required when Discord enabled |
+| `app.discord.review_mode` | `internal_queue` or `mention_hermes` | `mention_hermes` |
 | `app.approve_confirmation_timeout_minutes` | Approval confirmation timeout in minutes | 10 |
 | `{instance}.mcp_name` | MCP server name for this instance | Required |
 | `{instance}.max_age_hours` | Maximum PR age to process | 48 |
 | `{instance}.skip_cache_duration_hours` | Skip cache duration when user clicks Skip | 3 |
-| `{instance}.agent.review` | OpenClaw agent name for reviews | Required |
+| `{instance}.agent.review` | OpenClaw review agent name | Required for `provider_agent=openclaw` |
+| `{instance}.agent.summary` | OpenClaw summary agent name | Required for `provider_agent=openclaw` |
+| `{instance}.agent.hermes_profile` | Hermes profile name used by the internal Hermes review adapter | Required for `provider_agent=hermes` |
+| `{instance}.agent.hermes_max_turns` | Hermes max turns | `90` |
 | `{instance}.agent.level` | Available review levels | `[low, medium, high]` |
 | `{instance}.agent.review_timeout_seconds` | Review timeout in seconds | 1200 |
-| `{repo}.thread_id` | Telegram thread ID for this repo's notifications | Required |
+| `{repo}.thread_id` | Telegram thread ID for repo notifications | Required when using Telegram topics |
+| `{repo}.discord_channel_id` | Discord channel ID for repo notifications | Required when using Discord |
+| `{repo}.discord_thread_id` | Discord thread ID under the channel | Optional |
+
+At least one notification platform must be enabled: `app.telegram.enabled` or `app.discord.enabled`.
 
 **Snooze / Quiet Hours:**
 
@@ -226,15 +256,15 @@ sequenceDiagram
 
 ### AI Review Flow
 
-Triggered when a user clicks the "Review Now" inline button and selects a review level.
+Triggered when a user clicks the "Review Now" action and selects a review level.
 
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant CB as CallbackHandler
+    participant CB as CallbackHandler / PRActionHandler
     participant RUC as ReviewPRUseCase
     participant G as MCPGitHubAdapter
-    participant AGT as OpenClawAgentAdapter
+    participant AGT as HermesAgentAdapter / OpenClawAgentAdapter
     participant SM as PRStateMachine
 
     U->>CB: Clicks "Review Now"
@@ -250,7 +280,7 @@ sequenceDiagram
     G-->>RUC: recentCommits[]
 
     RUC->>AGT: review(pr, files, level, context)
-    AGT->>AGT: Run OpenClaw agent analysis
+    AGT->>AGT: Run configured internal agent analysis
     AGT-->>RUC: reviewResult (body, comments)
 
     RUC->>G: createPullRequestReview(repo, prNumber, body, comments, event)
@@ -260,6 +290,8 @@ sequenceDiagram
     RUC-->>CB: review result
     CB-->>U: Review submitted notification
 ```
+
+When Discord uses `app.discord.review_mode: mention_hermes`, the flow is different: the action builds the review prompt and posts it to Discord prefixed with `{instance}.mention_bot_name`, instead of calling the internal adapter above.
 
 ### PR State Machine
 
@@ -524,4 +556,3 @@ MemoryMonitor three-tier thresholds:
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
-

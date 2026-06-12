@@ -17,8 +17,12 @@ jest.mock('../../../src/config/yamlConfig', () => {
     app: {
       checkIntervalMs: 420000,
       telegram: {
+        enabled: true,
         bot_token: 'test-token',
         chatId: 456
+      },
+      discord: {
+        enabled: false
       }
     },
     log: {
@@ -145,6 +149,15 @@ jest.mock('../../../src/infrastructure/agents/OpenClawAgentAdapter', () => {
       this.config = config;
       this.logger = logger;
       this.retryHelper = retryHelper;
+    }
+  };
+});
+
+jest.mock('../../../src/infrastructure/discord/DiscordBotAdapter', () => {
+  return class MockDiscordBotAdapter {
+    constructor(botToken, options = {}) {
+      this.botToken = botToken;
+      this.options = options;
     }
   };
 });
@@ -596,6 +609,54 @@ describe('DI Container', () => {
       expect(adapter.config).toBeDefined();
       expect(adapter.logger).toBeDefined();
       expect(adapter.retryHelper).toBeDefined();
+    });
+  });
+
+  describe('notification platform bindings', () => {
+    test('should resolve telegramAdapter when telegram is enabled', () => {
+      const adapter = container.get('telegramAdapter');
+
+      expect(adapter).toBeDefined();
+      expect(adapter.chatId).toBeDefined();
+    });
+
+    test('should resolve discordAdapter as null when discord is disabled', () => {
+      expect(container.get('discordAdapter')).toBeNull();
+    });
+
+    test('should resolve discordAdapter when discord is enabled', () => {
+      const cfg = container.get('config');
+      cfg.app.discord.enabled = true;
+      cfg.app.discord.botToken = 'discord-token';
+      container.reset();
+
+      const enabledContainer = require('../../../src/container');
+      enabledContainer.get('config').app.discord.enabled = true;
+      enabledContainer.get('config').app.discord.botToken = 'discord-token';
+      const adapter = enabledContainer.get('discordAdapter');
+
+      expect(adapter).toBeDefined();
+      expect(adapter.botToken).toBe('discord-token');
+
+      cfg.app.discord.enabled = false;
+      cfg.app.discord.botToken = undefined;
+    });
+
+    test('should resolve notificationRouter, reviewPromptBuilder, and prActionHandler', () => {
+      const notificationRouter = container.get('notificationRouter');
+      const reviewPromptBuilder = container.get('reviewPromptBuilder');
+      const prActionHandler = container.get('prActionHandler');
+
+      expect(notificationRouter).toBeDefined();
+      expect(reviewPromptBuilder).toBeDefined();
+      expect(prActionHandler).toBeDefined();
+      expect(prActionHandler.discordAdapter).toBeNull();
+    });
+
+    test('should resolve queueNotificationSubscriber', () => {
+      const subscriber = container.get('queueNotificationSubscriber');
+      expect(subscriber).toBeDefined();
+      expect(subscriber.notificationRouter).toBeDefined();
     });
   });
 

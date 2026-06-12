@@ -6,9 +6,9 @@ const { MCPError } = require('../../shared/errors');
 /**
  * MCPGitHubAdapter - GitHub operations via MCP (Model Context Protocol)
  *
- * This adapter implements the IGitHubService interface using the MCP tools
- * through the mcporter CLI. It provides a clean abstraction layer for GitHub
- * operations, making it easy to test and swap implementations.
+ * This adapter implements the IGitHubService interface using the MCP client CLI
+ * configured for the daemon. The review agent remains independent from this
+ * transport layer.
  *
  * @example
  * const adapter = new MCPGitHubAdapter(instanceConfig, logger, retryHelper);
@@ -25,14 +25,14 @@ class MCPGitHubAdapter extends IGitHubService {
    */
   constructor(instanceConfig, logger, retryHelper) {
     super();
-    this.mcpBaseCmd = 'mcporter';
+    this.mcpBaseCmd = instanceConfig.mcpClient || 'mcporter';
+    this.mcpOutputFlag = instanceConfig.mcpOutputFlag !== undefined ? instanceConfig.mcpOutputFlag : '--output json';
     this.serverName = instanceConfig.mcpName;
     this.owner = instanceConfig.owner;
     this.instanceKey = instanceConfig.key;
     this.logger = logger;
     this.retryHelper = retryHelper;
     this.tempFiles = [];
-
     this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Initialized with server=${this.serverName}, owner=${this.owner}`);
   }
 
@@ -49,15 +49,17 @@ class MCPGitHubAdapter extends IGitHubService {
       const startTime = Date.now();
       this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Calling ${this.serverName}.${method}`);
 
-      const spawnArgs = ['call', `${this.serverName}.${method}`, '--output', 'json'];
+      const spawnArgs = ['call', `${this.serverName}.${method}`];
 
-      // Build command arguments (shell: true requires proper escaping for dynamic values)
+      if (this.mcpOutputFlag) {
+        spawnArgs.push(...this.mcpOutputFlag.split(' '));
+      }
+
       for (const [key, value] of Object.entries(args)) {
         if (value === null || value === undefined) {
           spawnArgs.push(`${key}=null`);
         } else if (typeof value === 'object') {
           if (key === 'comments' && Array.isArray(value)) {
-            // Use temporary file for comments to avoid shell parsing issues
             const substitution = this._writeCommentsToTempFile(value);
             spawnArgs.push(`${key}=${substitution}`);
           } else {
@@ -70,56 +72,15 @@ class MCPGitHubAdapter extends IGitHubService {
         }
       }
 
-      this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}] mcporter command: ${this.mcpBaseCmd} ${spawnArgs.slice(0, 5).join(' ')}... (${spawnArgs.length} args total)`);
-
+      this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}] MCP command: ${this.mcpBaseCmd} ${spawnArgs.slice(0, 5).join(' ')}... (${spawnArgs.length} args total)`);
       const result = await this._spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
 
-      // Log stderr for debugging
       if (result.stderr && result.stderr.length > 0) {
         this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] stderr: ${result.stderr.substring(0, 500)}`);
       }
 
-      try {
-        const parsed = JSON.parse(result.stdout);
-
-        // Clean up temp comments file if exists
-        const tempFileMatch = spawnArgs.find(arg => arg.includes('$(cat /tmp/comments-'));
-        if (tempFileMatch) {
-          const tempFile = tempFileMatch.match(/\$\(cat\s+(\/tmp\/comments-[^\)]+)\)/)?.[1];
-          if (tempFile && fs.existsSync(tempFile)) {
-            fs.unlinkSync(tempFile);
-            this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}] Cleaned up temp file: ${tempFile}`);
-          }
-        }
-
-        if (parsed.error) {
-          const errorMsg = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
-          this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}] Error for ${method}: ${errorMsg}`);
-          throw new MCPError(
-            `MCP error: ${errorMsg}`,
-            this.serverName,
-            method,
-            true,
-            { originalError: parsed.error }
-          );
-        }
-
-        return parsed;
-      } catch (parseErr) {
-        if (parseErr instanceof MCPError) {
-          throw parseErr;
-        }
-        this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}] Failed to parse output for ${method}: ${result.stdout}`);
-        throw new MCPError(
-          `MCP response parse failed: ${parseErr.message}`,
-          this.serverName,
-          method,
-          false,
-          { stdout: result.stdout }
-        );
-      }
+      return this._parseMCPJsonResponse(method, result.stdout, spawnArgs);
     }, (err) => {
-      // Don't retry non-retryable errors like "Unknown tool"
       if (err.message && err.message.includes('Unknown tool')) {
         return false;
       }
@@ -149,7 +110,6 @@ class MCPGitHubAdapter extends IGitHubService {
         spawnProcess.off('close', onClose);
         spawnProcess.off('error', onError);
         spawnProcess.kill('SIGTERM');
-        const elapsed = Date.now() - startTime;
         this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}] Timeout after ${timeoutMs}ms`);
         reject(new MCPError(
           `MCP command timeout after ${timeoutMs}ms`,
@@ -225,7 +185,6 @@ class MCPGitHubAdapter extends IGitHubService {
    * @private
    */
   _shellEscape(str) {
-    // Escape characters special inside double quotes: $ ` " \ and newline
     const escaped = str
       .replace(/\\/g, '\\\\')
       .replace(/"/g, '\\"')
@@ -233,6 +192,202 @@ class MCPGitHubAdapter extends IGitHubService {
       .replace(/`/g, '\\`')
       .replace(/\n/g, '\\n');
     return `"${escaped}"`;
+  }
+
+  _parseMCPJsonResponse(method, stdout, spawnArgs = []) {
+    const cleanStdout = (stdout || '')
+      .replace(/```json\s*/g, '')
+      .replace(/```\s*/g, '')
+      .trim();
+
+    let parsed;
+    try {
+      parsed = JSON.parse(cleanStdout);
+    } catch {
+      const jsonStr = this._extractJSON(cleanStdout);
+      if (!jsonStr) {
+        this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}] Failed to parse output for ${method}: ${stdout}`);
+        throw new MCPError(
+          'MCP response parse failed: no valid JSON found',
+          this.serverName,
+          method,
+          false,
+          { stdout }
+        );
+      }
+      parsed = JSON.parse(jsonStr);
+    }
+
+    const tempFileMatch = spawnArgs.find(arg => arg.includes('$(cat /tmp/comments-'));
+    if (tempFileMatch) {
+      const tempFile = tempFileMatch.match(/\$\(cat\s+(\/tmp\/comments-[^)]+)\)/)?.[1];
+      if (tempFile && fs.existsSync(tempFile)) {
+        fs.unlinkSync(tempFile);
+        this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}] Cleaned up temp file: ${tempFile}`);
+      }
+    }
+
+    if (parsed && parsed.error) {
+      const errorMsg = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
+      this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}] Error for ${method}: ${errorMsg}`);
+      throw new MCPError(
+        `MCP error: ${errorMsg}`,
+        this.serverName,
+        method,
+        true,
+        { originalError: parsed.error }
+      );
+    }
+
+    return parsed;
+  }
+
+  _extractJSON(text) {
+    if (!text) return null;
+
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] !== '{' && text[i] !== '[') {
+        continue;
+      }
+
+      const openChar = text[i];
+      const closeChar = openChar === '{' ? '}' : ']';
+      let depth = 1;
+      let inString = false;
+      let escapeNext = false;
+
+      for (let j = i + 1; j < text.length; j++) {
+        const char = text[j];
+
+        if (escapeNext) {
+          escapeNext = false;
+          continue;
+        }
+
+        if (char === '\\') {
+          escapeNext = true;
+          continue;
+        }
+
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+
+        if (!inString) {
+          if (char === openChar) depth++;
+          if (char === closeChar) {
+            depth--;
+            if (depth === 0) {
+              const candidate = text.substring(i, j + 1);
+              try {
+                JSON.parse(candidate);
+                return candidate;
+              } catch {
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  _normalizeArrayResponse(method, payload, expectedKeys = []) {
+    const normalized = this._extractArrayPayload(payload, expectedKeys);
+    if (normalized) {
+      return normalized;
+    }
+
+    let payloadPreview;
+    if (typeof payload === 'string') {
+      payloadPreview = payload.substring(0, 1000);
+    } else {
+      try {
+        payloadPreview = JSON.stringify(payload).substring(0, 1000);
+      } catch {
+        payloadPreview = String(payload);
+      }
+    }
+
+    this.logger.error(
+      `[MCPGitHubAdapter:${this.instanceKey}] ${method} returned non-array payload: ${payloadPreview}`
+    );
+
+    throw new MCPError(
+      `MCP ${method} response is not an array`,
+      this.serverName,
+      method,
+      false,
+      { payloadPreview }
+    );
+  }
+
+  _extractArrayPayload(payload, expectedKeys = []) {
+    if (Array.isArray(payload)) {
+      return payload;
+    }
+
+    if (typeof payload === 'string') {
+      const parsed = this._tryParseJsonString(payload);
+      if (parsed !== null && parsed !== undefined) {
+        return this._extractArrayPayload(parsed, expectedKeys);
+      }
+      return null;
+    }
+
+    if (!payload || typeof payload !== 'object') {
+      return null;
+    }
+
+    const candidateKeys = [
+      ...expectedKeys,
+      'result',
+      'results',
+      'response',
+      'responses',
+      'data',
+      'items',
+      'content',
+      'output'
+    ];
+
+    for (const key of candidateKeys) {
+      if (!(key in payload)) {
+        continue;
+      }
+
+      const extracted = this._extractArrayPayload(payload[key], expectedKeys);
+      if (extracted) {
+        return extracted;
+      }
+    }
+
+    return null;
+  }
+
+  _tryParseJsonString(value) {
+    const trimmed = typeof value === 'string' ? value.trim() : value;
+    if (!trimmed) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      const extracted = this._extractJSON(trimmed);
+      if (!extracted) {
+        return null;
+      }
+
+      try {
+        return JSON.parse(extracted);
+      } catch {
+        return null;
+      }
+    }
   }
 
   /**
@@ -259,13 +414,14 @@ class MCPGitHubAdapter extends IGitHubService {
   async getOpenPRs(repo) {
     this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Fetching open PRs`);
 
-    const rawPRs = await this._callMCP('list_pull_requests', {
+    const payload = await this._callMCP('list_pull_requests', {
       owner: this.owner,
       repo: repo,
       state: 'open',
       per_page: 100,
       page: 1
     });
+    const rawPRs = this._normalizeArrayResponse('list_pull_requests', payload, ['pull_requests']);
 
     this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Found ${rawPRs.length} open PRs`);
 
@@ -296,11 +452,12 @@ class MCPGitHubAdapter extends IGitHubService {
 
     let rawFiles;
     try {
-      rawFiles = await this._callMCP('get_pull_request_files', {
+      const payload = await this._callMCP('get_pull_request_files', {
         owner: this.owner,
         repo: repo,
         pull_number: prNumber
       });
+      rawFiles = this._normalizeArrayResponse('get_pull_request_files', payload, ['files']);
     } catch (error) {
       if (this._isNullUrlValidationError(error)) {
         this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] PR #${prNumber} contains files with null URLs`);
@@ -391,11 +548,12 @@ class MCPGitHubAdapter extends IGitHubService {
     let positionMaps = new Map();
     try {
       this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Fetching PR files with patches for position calculation`);
-      const rawFiles = await this._callMCP('get_pull_request_files', {
+      const payload = await this._callMCP('get_pull_request_files', {
         owner: this.owner,
         repo: repo,
         pull_number: pr.number
       });
+      const rawFiles = this._normalizeArrayResponse('get_pull_request_files', payload, ['files']);
 
       // Build position maps for each file
       for (const file of rawFiles || []) {
@@ -581,11 +739,12 @@ class MCPGitHubAdapter extends IGitHubService {
     this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Fetching reviews for PR #${prNumber}`);
 
     try {
-      const rawReviews = await this._callMCP('get_pull_request_reviews', {
+      const payload = await this._callMCP('get_pull_request_reviews', {
         owner: this.owner,
         repo: repo,
         pull_number: prNumber
       });
+      const rawReviews = this._normalizeArrayResponse('get_pull_request_reviews', payload, ['reviews']);
 
       this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Found ${rawReviews.length} reviews for PR #${prNumber}`);
 
@@ -618,11 +777,12 @@ class MCPGitHubAdapter extends IGitHubService {
     this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Fetching comments for PR #${prNumber}`);
 
     try {
-      const rawComments = await this._callMCP('get_pull_request_comments', {
+      const payload = await this._callMCP('get_pull_request_comments', {
         owner: this.owner,
         repo: repo,
         pull_number: prNumber
       });
+      const rawComments = this._normalizeArrayResponse('get_pull_request_comments', payload, ['comments']);
 
       this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Found ${rawComments.length} comments for PR #${prNumber}`);
 
@@ -656,12 +816,13 @@ class MCPGitHubAdapter extends IGitHubService {
     this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Fetching commits for PR #${prNumber}`);
 
     try {
-      const rawCommits = await this._callMCP('list_commits', {
+      const payload = await this._callMCP('list_commits', {
         owner: this.owner,
         repo: repo,
         sha: `refs/pull/${prNumber}/head`,
         per_page: limit
       });
+      const rawCommits = this._normalizeArrayResponse('list_commits', payload, ['commits']);
 
       const commits = (rawCommits || [])
         .slice(0, limit)
@@ -685,7 +846,6 @@ class MCPGitHubAdapter extends IGitHubService {
    * @returns {void}
    */
   cleanup() {
-    // Clean up any remaining temp files
     for (const tempFile of this.tempFiles) {
       try {
         if (fs.existsSync(tempFile)) {
@@ -777,9 +937,9 @@ class MCPGitHubAdapter extends IGitHubService {
     let currentPosition = 1;
 
     while ((match = hunkRegex.exec(patch)) !== null) {
-      const oldStart = parseInt(match[1], 10);
+      const _oldStart = parseInt(match[1], 10);
       const newStart = parseInt(match[3], 10);
-      const newCount = match[4] ? parseInt(match[4], 10) : 1;
+      const _newCount = match[4] ? parseInt(match[4], 10) : 1;
 
       const hunkEnd = match.index + match[0].length;
       const nextHunkStart = patch.indexOf('@@', hunkEnd);
@@ -891,7 +1051,7 @@ class MCPGitHubAdapter extends IGitHubService {
    * @returns {Object} Validation result
    * @private
    */
-  _validateAndSanitizeComments(comments, repo, prNumber) {
+  _validateAndSanitizeComments(comments, repo, _prNumber) {
     const stats = {
       total: 0,
       valid: 0,
@@ -962,7 +1122,7 @@ class MCPGitHubAdapter extends IGitHubService {
    */
   _extractReviewUrlFromOutput(output) {
     if (!output) return null;
-    const urlMatch = output.match(/https:\/\/github\.com\/[^\/]+\/[^\/]+\/pull\/\d+#pullrequestreview-\d+/);
+    const urlMatch = output.match(/https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+#pullrequestreview-\d+/);
     return urlMatch ? urlMatch[0] : null;
   }
 }

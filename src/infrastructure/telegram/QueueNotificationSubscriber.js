@@ -9,12 +9,12 @@
 
 class QueueNotificationSubscriber {
   /**
-   * @param {Object} telegramAdapter - TelegramBotAdapter instance
+   * @param {Object} notificationRouter - NotificationRouter or TelegramBotAdapter instance
    * @param {Object} eventBus - EventBus instance
    * @param {Object} options - Configuration options
    */
-  constructor(telegramAdapter, eventBus, options = {}) {
-    this.telegramAdapter = telegramAdapter;
+  constructor(notificationRouter, eventBus, options = {}) {
+    this.notificationRouter = notificationRouter;
     this.eventBus = eventBus;
     this.logger = options.logger || console;
   }
@@ -35,18 +35,13 @@ class QueueNotificationSubscriber {
    */
   async _onCompleted(data) {
     try {
-      const { repoName, prNumber, prTitle, level, threadId, duration, reviewUrl } = data;
-      const minutes = Math.round(duration / 60000);
-      const urlPart = reviewUrl ? `\n🔗 ${reviewUrl}` : '';
+      if (this.notificationRouter.sendQueueCompletedNotification) {
+        await this.notificationRouter.sendQueueCompletedNotification(data);
+        return;
+      }
 
-      await this.telegramAdapter.sendToThread(
-        threadId,
-        `✅ <b>Review Completed</b>\n\n` +
-        `📂 ${this._escapeHtml(`${data.instanceKey}/${repoName}`)} PR #${prNumber}\n` +
-        `📝 ${this._escapeHtml(prTitle)}\n` +
-        `🔍 Level: ${level.toUpperCase()}\n` +
-        `⏱️ Duration: ~${minutes}m${urlPart}`
-      );
+      const { threadId } = data;
+      await this.notificationRouter.sendToThread(threadId, this._buildCompletedMessage(data));
     } catch (error) {
       this.logger.error(`[QueueNotificationSubscriber] Failed to send completion notification: ${error.message}`);
     }
@@ -59,19 +54,42 @@ class QueueNotificationSubscriber {
    */
   async _onFailed(data) {
     try {
-      const { repoName, prNumber, prTitle, level, threadId, error } = data;
+      if (this.notificationRouter.sendQueueFailedNotification) {
+        await this.notificationRouter.sendQueueFailedNotification(data);
+        return;
+      }
 
-      await this.telegramAdapter.sendToThread(
-        threadId,
-        `❌ <b>Review Failed</b>\n\n` +
-        `📂 ${this._escapeHtml(`${data.instanceKey}/${repoName}`)} PR #${prNumber}\n` +
-        `📝 ${this._escapeHtml(prTitle)}\n` +
-        `🔍 Level: ${level.toUpperCase()}\n` +
-        `⚠️ ${this._escapeHtml(error)}`
-      );
+      const { threadId } = data;
+      await this.notificationRouter.sendToThread(threadId, this._buildFailedMessage(data));
     } catch (err) {
       this.logger.error(`[QueueNotificationSubscriber] Failed to send failure notification: ${err.message}`);
     }
+  }
+
+  _buildCompletedMessage(data) {
+    const { repoName, prNumber, prTitle, level, duration, reviewUrl } = data;
+    const minutes = Math.round(duration / 60000);
+    const urlPart = reviewUrl ? `\n🔗 ${reviewUrl}` : '';
+
+    return (
+      `✅ <b>Review Completed</b>\n\n` +
+      `📂 ${this._escapeHtml(`${data.instanceKey}/${repoName}`)} PR #${prNumber}\n` +
+      `📝 ${this._escapeHtml(prTitle)}\n` +
+      `🔍 Level: ${level.toUpperCase()}\n` +
+      `⏱️ Duration: ~${minutes}m${urlPart}`
+    );
+  }
+
+  _buildFailedMessage(data) {
+    const { repoName, prNumber, prTitle, level, error } = data;
+
+    return (
+      `❌ <b>Review Failed</b>\n\n` +
+      `📂 ${this._escapeHtml(`${data.instanceKey}/${repoName}`)} PR #${prNumber}\n` +
+      `📝 ${this._escapeHtml(prTitle)}\n` +
+      `🔍 Level: ${level.toUpperCase()}\n` +
+      `⚠️ ${this._escapeHtml(error)}`
+    );
   }
 
   /**

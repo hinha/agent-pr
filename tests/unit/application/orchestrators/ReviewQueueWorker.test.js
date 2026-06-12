@@ -33,10 +33,15 @@ describe('ReviewQueueWorker', () => {
   let mockQueueUseCase;
   let mockReviewPRUseCase;
   let mockEventBus;
+  let mockDiscordAdapter;
+  let mockReviewPromptBuilder;
+  let mockExternalReviewSessionService;
 
   beforeEach(() => {
     // Clear mock config instances between tests
     Object.keys(mockConfig.instances).forEach(key => delete mockConfig.instances[key]);
+    mockConfig.app = {};
+    delete mockConfig.reviewLevels;
 
     mockRepository = {
       getAllQueues: jest.fn(),
@@ -66,10 +71,32 @@ describe('ReviewQueueWorker', () => {
       handleProcessingFailure: jest.fn().mockResolvedValue({ success: true, requeued: false })
     };
     mockReviewPRUseCase = {
-      execute: jest.fn()
+      execute: jest.fn(),
+      submitExternalResult: jest.fn()
     };
     mockEventBus = {
       emitAsync: jest.fn()
+    };
+    mockDiscordAdapter = {
+      sendHermesMention: jest.fn().mockResolvedValue({
+        success: true,
+        id: 'discord-trigger-1',
+        message: { id: 'discord-trigger-1' }
+      }),
+      sendReplyChunks: jest.fn().mockResolvedValue([{ id: 'prompt-chunk-1' }, { id: 'prompt-chunk-2' }])
+    };
+    mockReviewPromptBuilder = {
+      build: jest.fn().mockReturnValue('BASE PROMPT'),
+      buildDiscordHandoff: jest.fn().mockReturnValue({
+        triggerContent: '<@123>\nHANDOFF TRIGGER',
+        detailContent: 'HANDOFF DETAIL'
+      })
+    };
+    mockExternalReviewSessionService = {
+      startSession: jest.fn(),
+      awaitPromptRequest: jest.fn(),
+      awaitResult: jest.fn(),
+      registerReplyTargets: jest.fn()
     };
 
     worker = new ReviewQueueWorker(
@@ -80,7 +107,10 @@ describe('ReviewQueueWorker', () => {
       {
         logger: console,
         pollInterval: 100,
-        githubAdapterFactory: { create: jest.fn() }
+        githubAdapterFactory: { create: jest.fn() },
+        discordAdapter: mockDiscordAdapter,
+        reviewPromptBuilder: mockReviewPromptBuilder,
+        externalReviewSessionService: mockExternalReviewSessionService
       }
     );
   });
@@ -794,6 +824,99 @@ describe('ReviewQueueWorker', () => {
 
       const duration = mockQueueUseCase.completeProcessing.mock.calls[0][3];
       expect(duration).toBeGreaterThanOrEqual(0);
+    });
+
+    test('should hand off to Discord and submit external result in handoff_reply_submit mode', async () => {
+      const queue = new ReviewQueue('github/test', 2);
+      const item = new QueueItem({
+        id: 'qi_test_handoff',
+        instanceKey: 'github/test',
+        repoName: 'repo',
+        prId: '123',
+        prNumber: 123,
+        prTitle: 'Test PR',
+        level: 'high'
+      });
+
+      const githubAdapter = {
+        getOpenPRs: jest.fn().mockResolvedValue([{
+          id: 123,
+          number: 123,
+          title: 'Test PR',
+          headBranch: 'feature',
+          baseBranch: 'main',
+          url: 'https://github.com/test/repo/pull/123',
+          headSha: 'abc123'
+        }]),
+        getPRComments: jest.fn().mockResolvedValue([]),
+        getPRCommits: jest.fn().mockResolvedValue([])
+      };
+
+      mockConfig.app.discord = { reviewMode: 'handoff_reply_submit' };
+      mockConfig.reviewLevels = {
+        high: { focusAreas: ['security'], maxCommentsPerFile: 10 }
+      };
+      mockConfig.instances['github/test'] = {
+        key: 'github/test',
+        owner: 'test',
+        mcpName: 'github-test',
+        mentionBotName: '<@123456789012345678>',
+        mentionBotUserId: '123456789012345678',
+        agent: { reviewTimeoutSeconds: 600 },
+        repos: { repo: { thread_id: 123 } }
+      };
+
+      worker.githubAdapterFactory.create.mockReturnValue(githubAdapter);
+      mockExternalReviewSessionService.awaitResult.mockResolvedValue({
+        reviewResult: {
+          summary: 'Blocking issue',
+          comments: [
+            { file: 'src/app.js', start_line: 10, severity: 'HIGH', message: 'Bug' }
+          ]
+        }
+      });
+      mockExternalReviewSessionService.awaitPromptRequest.mockResolvedValue({ id: 'hermes-handshake-1' });
+      mockReviewPRUseCase.submitExternalResult.mockResolvedValue({
+        success: true,
+        review: { html_url: 'https://review' },
+        reviewResult: { comments: [{ severity: 'HIGH' }] }
+      });
+
+      await worker._processItem(queue, item);
+
+      expect(mockReviewPromptBuilder.build).toHaveBeenCalled();
+      expect(mockReviewPromptBuilder.buildDiscordHandoff).toHaveBeenCalledWith(expect.objectContaining({
+        mentionBotName: '<@123456789012345678>',
+        sessionId: 'qi_test_handoff'
+      }));
+      expect(mockDiscordAdapter.sendHermesMention).toHaveBeenCalledWith(expect.objectContaining({
+        mentionBotName: '<@123456789012345678>',
+        content: '<@123>\nHANDOFF TRIGGER'
+      }));
+      expect(mockDiscordAdapter.sendReplyChunks).toHaveBeenCalledWith(
+        { id: 'hermes-handshake-1' },
+        'HANDOFF DETAIL',
+        { prefix: 'Prompt review' }
+      );
+      expect(mockExternalReviewSessionService.startSession).toHaveBeenCalledWith(expect.objectContaining({
+        queueItemId: 'qi_test_handoff',
+        sessionId: 'qi_test_handoff',
+        triggerMessageId: 'discord-trigger-1',
+        trustedBotUserId: '123456789012345678'
+      }));
+      expect(mockExternalReviewSessionService.awaitPromptRequest).toHaveBeenCalledWith('qi_test_handoff');
+      expect(mockExternalReviewSessionService.registerReplyTargets).toHaveBeenCalledWith(
+        'qi_test_handoff',
+        [{ id: 'hermes-handshake-1' }, { id: 'prompt-chunk-1' }, { id: 'prompt-chunk-2' }]
+      );
+      expect(mockReviewPRUseCase.submitExternalResult).toHaveBeenCalledWith(
+        expect.objectContaining({ owner: 'test' }),
+        expect.objectContaining({ name: 'repo' }),
+        expect.objectContaining({ number: 123 }),
+        'high',
+        expect.any(Object),
+        githubAdapter
+      );
     });
 
     test('should handle failure in completeProcessing', async () => {

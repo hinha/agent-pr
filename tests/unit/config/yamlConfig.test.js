@@ -16,6 +16,164 @@ jest.mock('../../../src/services/flagsmithSyncService', () => ({
 }));
 
 describe('yamlConfig', () => {
+  describe('notification platform loading', () => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const originalCwd = process.cwd();
+
+    afterEach(() => {
+      process.chdir(originalCwd);
+      jest.resetModules();
+    });
+
+    function writeConfig(dir, platformBlock) {
+      fs.writeFileSync(path.join(dir, 'config.yml'), `
+app:
+  provider_agent: openclaw
+  check_interval_minutes: 7
+  outdated_review_check_minutes: 10
+  ${platformBlock}
+  flagsmith:
+    enabled: false
+log:
+  level: info
+github/acme:
+  mcp_name: github-work
+  mention_bot_name: "<@123456789012345678>"
+  agent:
+    review: reviewer
+    summary: summarizer
+    level: [low, medium, high]
+  repos:
+    api:
+      enable: true
+      thread_id: "123"
+`);
+    }
+
+    test('defaults Telegram to enabled for legacy configs', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-pr-config-'));
+      writeConfig(dir, `
+  telegram:
+    bot_token: "token"
+    chat_id: "123"
+  discord:
+    enabled: false`);
+      process.chdir(dir);
+      jest.resetModules();
+
+      const yamlConfig = require('../../../src/config/yamlConfig');
+      const config = yamlConfig.loadYamlConfig();
+
+      expect(config.app.telegram.enabled).toBe(true);
+      expect(config.app.discord.enabled).toBe(false);
+      expect(config.app.mcpClient).toBe('mcporter');
+      expect(config.app.mcpOutputFlag).toBe('--output json');
+      expect(config.instances['github/acme'].mentionBotName).toBe('<@123456789012345678>');
+    });
+
+    test('loads custom MCP transport settings when provided', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-pr-config-'));
+      fs.writeFileSync(path.join(dir, 'config.yml'), `
+app:
+  provider_agent: hermes
+  discord:
+    enabled: false
+    mention_bot_name: "<@legacy>"
+  mcp_client: "openclaw mcp"
+  mcp_output_flag: ""
+  check_interval_minutes: 7
+  outdated_review_check_minutes: 10
+  telegram:
+    bot_token: "token"
+    chat_id: "123"
+  flagsmith:
+    enabled: false
+log:
+  level: info
+github/acme:
+  mcp_name: github-work
+  agent:
+    review: reviewer
+    summary: summarizer
+    level: [low, medium, high]
+  repos:
+    api:
+      enable: true
+      thread_id: "123"
+`);
+      process.chdir(dir);
+      jest.resetModules();
+
+      const yamlConfig = require('../../../src/config/yamlConfig');
+      const config = yamlConfig.loadYamlConfig();
+
+      expect(config.app.providerAgent).toBe('hermes');
+      expect(config.app.mcpClient).toBe('openclaw mcp');
+      expect(config.app.mcpOutputFlag).toBe('');
+      expect(config.instances['github/acme'].mentionBotName).toBe('<@legacy>');
+    });
+
+    test('fails fast when handoff_reply_submit uses non-mention mention_bot_name', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-pr-config-'));
+      fs.writeFileSync(path.join(dir, 'config.yml'), `
+app:
+  provider_agent: hermes
+  check_interval_minutes: 7
+  outdated_review_check_minutes: 10
+  telegram:
+    enabled: false
+  discord:
+    enabled: true
+    bot_token: "discord-token"
+    review_mode: handoff_reply_submit
+    mention_bot_name: "@Hermes"
+  flagsmith:
+    enabled: false
+log:
+  level: info
+github/acme:
+  mcp_name: github-work
+  agent:
+    review: reviewer
+    summary: summarizer
+    level: [low, medium, high]
+  repos:
+    api:
+      enable: true
+      thread_id: "123"
+`);
+      process.chdir(dir);
+      jest.resetModules();
+
+      const yamlConfig = require('../../../src/config/yamlConfig');
+
+      expect(() => yamlConfig.loadYamlConfig()).toThrow(
+        'handoff_reply_submit requires a Discord user mention'
+      );
+    });
+
+    test('throws when Telegram and Discord are both disabled', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-pr-config-'));
+      writeConfig(dir, `
+  telegram:
+    enabled: false
+    bot_token: "token"
+    chat_id: "123"
+  discord:
+    enabled: false`);
+      process.chdir(dir);
+      jest.resetModules();
+
+      const yamlConfig = require('../../../src/config/yamlConfig');
+
+      expect(() => yamlConfig.loadYamlConfig()).toThrow(
+        'At least one notification platform must be enabled'
+      );
+    });
+  });
+
   describe('getRepoKey logic', () => {
     test('should return correct repo key format', () => {
       const key1 = `${'owner'}/${'repo'}`;
@@ -51,7 +209,6 @@ describe('yamlConfig', () => {
       const flagsmithSyncService = require('../../../src/services/flagsmithSyncService');
       flagsmithSyncService.isActive.mockReturnValue(false);
 
-      const path = 'app.checkIntervalMs';
       const localValue = 420000;
 
       if (!flagsmithSyncService.isActive()) {
@@ -64,11 +221,8 @@ describe('yamlConfig', () => {
       flagsmithSyncService.isActive.mockReturnValue(true);
       flagsmithSyncService.getValue.mockReturnValue(300000);
 
-      const path = 'app.checkIntervalMs';
-      const localValue = 420000;
-
       if (flagsmithSyncService.isActive()) {
-        const remoteValue = flagsmithSyncService.getValue(path);
+        const remoteValue = flagsmithSyncService.getValue('app.checkIntervalMs');
         expect(remoteValue).toBe(300000);
       }
     });
@@ -98,9 +252,7 @@ describe('yamlConfig', () => {
 
   describe('reloadConfig logic', () => {
     test('should clear cache and reload config', () => {
-      let cachedConfig = { app: { checkIntervalMs: 420000 } };
-
-      cachedConfig = null;
+      const cachedConfig = null;
       const newConfig = { app: { checkIntervalMs: 360000 } };
 
       expect(cachedConfig).toBeNull();
