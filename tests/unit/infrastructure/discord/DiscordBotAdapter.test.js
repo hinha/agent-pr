@@ -90,13 +90,19 @@ describe('DiscordBotAdapter', () => {
     trigger.message.reply = reply;
 
     const result = await adapter.sendReplyChunks(trigger.message, 'a'.repeat(8000), {
-      prefix: 'Prompt review'
+      prefix: 'Prompt review',
+      mentionBotName: '<@123456789012345678>'
     });
 
     expect(trigger.message).toBeDefined();
     expect(reply).toHaveBeenCalledTimes(5);
     for (const call of reply.mock.calls) {
       expect(call[0].content.length).toBeLessThanOrEqual(2000);
+      expect(call[0].content.startsWith('<@123456789012345678>\nPrompt review (')).toBe(true);
+      expect(call[0].allowedMentions).toEqual({
+        parse: [],
+        users: ['123456789012345678']
+      });
     }
     expect(result).toHaveLength(5);
   });

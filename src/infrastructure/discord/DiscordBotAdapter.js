@@ -102,15 +102,17 @@ class DiscordBotAdapter extends EventEmitter {
     return { success: true, id: message.id, message };
   }
 
-  async sendReply(targetMessage, content) {
+  async sendReply(targetMessage, content, extraPayload = {}) {
+    const payload = { content, ...extraPayload };
+
     if (targetMessage && typeof targetMessage.reply === 'function') {
-      return targetMessage.reply({ content });
+      return targetMessage.reply(payload);
     }
 
     const channel = targetMessage?.channel;
     if (channel && typeof channel.send === 'function') {
       return channel.send({
-        content,
+        ...payload,
         reply: { messageReference: targetMessage.id }
       });
     }
@@ -121,14 +123,18 @@ class DiscordBotAdapter extends EventEmitter {
   async sendReplyChunks(targetMessage, content, options = {}) {
     const prefix = options.prefix || 'Prompt review';
     const maxContentLength = options.maxContentLength || 2000;
-    const headerTemplateLength = `${prefix} (${999}/${999}):\n`.length;
+    const mentionBotName = options.mentionBotName || '';
+    const mentionPrefix = mentionBotName ? `${mentionBotName}\n` : '';
+    const allowedMentions = mentionBotName ? this._buildAllowedMentions(mentionBotName) : undefined;
+    const headerTemplateLength = `${mentionPrefix}${prefix} (${999}/${999}):\n`.length;
     const chunkSize = options.chunkSize || Math.max(200, maxContentLength - headerTemplateLength);
     const chunks = this._chunkContent(content, chunkSize);
     const sent = [];
 
     for (let index = 0; index < chunks.length; index++) {
-      const header = `${prefix} (${index + 1}/${chunks.length}):\n`;
-      sent.push(await this.sendReply(targetMessage, `${header}${chunks[index]}`));
+      const header = `${mentionPrefix}${prefix} (${index + 1}/${chunks.length}):\n`;
+      const payload = allowedMentions ? { allowedMentions } : {};
+      sent.push(await this.sendReply(targetMessage, `${header}${chunks[index]}`, payload));
     }
 
     return sent;

@@ -896,7 +896,10 @@ describe('ReviewQueueWorker', () => {
       expect(mockDiscordAdapter.sendReplyChunks).toHaveBeenCalledWith(
         { id: 'hermes-handshake-1' },
         'HANDOFF DETAIL',
-        { prefix: 'Prompt review' }
+        {
+          prefix: 'Prompt review',
+          mentionBotName: '<@123456789012345678>'
+        }
       );
       expect(mockExternalReviewSessionService.startSession).toHaveBeenCalledWith(expect.objectContaining({
         queueItemId: 'qi_test_handoff',

@@ -365,7 +365,10 @@ class ReviewQueueWorker {
       const promptMessages = await this.discordAdapter.sendReplyChunks(
         promptRequestMessage,
         handoffPrompt.detailContent,
-        { prefix: 'Prompt review' }
+        {
+          prefix: 'Prompt review',
+          mentionBotName: instance.mentionBotName
+        }
       );
       this.externalReviewSessionService.registerReplyTargets(item.id, [promptRequestMessage, ...promptMessages]);
     }
