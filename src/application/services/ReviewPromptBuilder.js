@@ -84,6 +84,7 @@ class ReviewPromptBuilder {
         'Anda boleh mengirim progress atau diskusi biasa selama review berjalan.',
         `BALASAN MESIN WAJIB memakai protocol ${DISCORD_HANDOFF_PROTOCOL}.`,
         `Jika butuh prompt lengkap, reply JSON dengan message_type "${DiscordHandoffMessageType.PROMPT_REQUEST}".`,
+        `Contoh prompt request: {"protocol":"${DISCORD_HANDOFF_PROTOCOL}","session_id":"${sessionId}","message_type":"${DiscordHandoffMessageType.PROMPT_REQUEST}","payload":{"message":"Send complete review prompt"}}`,
         `HASIL FINAL WAJIB reply JSON dengan message_type "${DiscordHandoffMessageType.FINAL_REVIEW}".`,
         'JANGAN submit review GitHub langsung. Bot ini yang akan submit hasil final ke GitHub.',
         'Prompt review lengkap akan dikirim pada reply setelah pesan ini.'

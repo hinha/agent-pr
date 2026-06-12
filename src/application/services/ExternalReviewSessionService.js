@@ -116,6 +116,16 @@ class ExternalReviewSessionService {
 
     if (!envelope) {
       if (!session.promptRequestMessage) {
+        if (parsed === null && this._looksLikePromptRequestText(content)) {
+          this._resolvePromptRequest(session, message);
+          return {
+            matched: true,
+            accepted: false,
+            reason: 'prompt_request_text_fallback',
+            session: this._publicSession(session)
+          };
+        }
+
         return { matched: true, accepted: false, reason: 'non_protocol_handshake', session: this._publicSession(session) };
       }
 
@@ -308,6 +318,23 @@ class ExternalReviewSessionService {
       summary: envelope.payload.summary,
       comments: envelope.payload.comments
     };
+  }
+
+  _looksLikePromptRequestText(content) {
+    if (!content) {
+      return false;
+    }
+
+    const normalized = String(content).trim().toLowerCase();
+    const mentionsPrompt = normalized.includes('prompt');
+    const asksForPrompt = normalized.includes('kirim') ||
+      normalized.includes('silakan') ||
+      normalized.includes('send') ||
+      normalized.includes('reply') ||
+      normalized.includes('tunggu') ||
+      normalized.includes('wait');
+
+    return mentionsPrompt && asksForPrompt;
   }
 
   _extractJson(text) {

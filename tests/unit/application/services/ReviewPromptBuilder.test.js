@@ -109,6 +109,7 @@ describe('ReviewPromptBuilder', () => {
 
     expect(handoff.triggerContent).toContain('SESSION_ID: qi_123');
     expect(handoff.triggerContent).toContain(`protocol ${DISCORD_HANDOFF_PROTOCOL}`);
+    expect(handoff.triggerContent).toContain(`"message_type":"${DiscordHandoffMessageType.PROMPT_REQUEST}"`);
     expect(handoff.detailContent).toContain(`"session_id":"qi_123"`);
     expect(handoff.detailContent).toContain(`"message_type":"${DiscordHandoffMessageType.PROMPT_REQUEST}"`);
     expect(handoff.detailContent).toContain(`"message_type":"${DiscordHandoffMessageType.FINAL_REVIEW}"`);

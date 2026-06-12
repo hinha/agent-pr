@@ -148,6 +148,34 @@ describe('ExternalReviewSessionService', () => {
     }));
   });
 
+  test('accepts plain-text prompt request as fallback before prompt detail is sent', async () => {
+    service.startSession({
+      queueItemId: 'qi_2c',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 10,
+      level: 'high',
+      triggerMessageId: 'trigger-2c',
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    const promptRequest = service.awaitPromptRequest('qi_2c');
+    const handle = service.handleAgentReply({
+      id: 'msg-2c',
+      content: 'Silakan kirim prompt review lengkap di reply ini. Saya tunggu.',
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'trigger-2c' }
+    });
+
+    await expect(promptRequest).resolves.toEqual(expect.objectContaining({ id: 'msg-2c' }));
+    expect(handle).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: false,
+      reason: 'prompt_request_text_fallback'
+    }));
+  });
+
   test('rejects on timeout', async () => {
     jest.useFakeTimers();
     service.startSession({
