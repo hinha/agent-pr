@@ -218,6 +218,25 @@ describe('PRActionHandler', () => {
     expect(discordAdapter.sendHermesMention).not.toHaveBeenCalled();
   });
 
+  test('review level queues and waits for external reviewer in handoff_reply_submit mode', async () => {
+    handler.config.app.discord.reviewMode = 'handoff_reply_submit';
+
+    const result = await handler.handleDiscordInteraction(interactionFor({
+      action: 'review_level',
+      instanceIdx: 0,
+      repoIdx: 0,
+      prId: 123,
+      level: 'medium'
+    }), responder);
+
+    expect(result).toEqual({ success: true, action: 'queued', position: 2, prNumber: 9 });
+    expect(reviewQueueUseCase.enqueueReview).toHaveBeenCalled();
+    expect(discordAdapter.sendHermesMention).not.toHaveBeenCalled();
+    expect(responder.update).toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('Waiting for <@123456789012345678> handoff reply')
+    }));
+  });
+
   test('review level returns queue full message when enqueue fails', async () => {
     handler.config.app.discord.reviewMode = 'internal_queue';
     reviewQueueUseCase.enqueueReview.mockResolvedValueOnce({ success: false, error: 'full' });

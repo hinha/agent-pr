@@ -191,7 +191,8 @@ class Container {
           logger: cradle.logger,
           retryHelper: cradle.retryHelper,
           config: cradle.config,
-          eventBus: cradle.eventBus
+          eventBus: cradle.eventBus,
+          externalReviewSessionService: cradle.externalReviewSessionService
         }
       );
     }).singleton();
@@ -209,6 +210,11 @@ class Container {
     this.registerFunction('reviewPromptBuilder', (cradle) => {
       const ReviewPromptBuilder = require('../application/services/ReviewPromptBuilder');
       return new ReviewPromptBuilder({ logger: cradle.logger });
+    }).singleton();
+
+    this.registerFunction('externalReviewSessionService', (cradle) => {
+      const ExternalReviewSessionService = require('../application/services/ExternalReviewSessionService');
+      return new ExternalReviewSessionService({ logger: cradle.logger });
     }).singleton();
 
     // Agent Adapter (implements IAgentService) - factory selects provider
@@ -279,7 +285,10 @@ class Container {
         {
           logger: cradle.logger,
           pollInterval: 5000,
-          githubAdapterFactory: cradle.githubAdapter
+          githubAdapterFactory: cradle.githubAdapter,
+          discordAdapter: cradle.discordAdapter,
+          reviewPromptBuilder: cradle.reviewPromptBuilder,
+          externalReviewSessionService: cradle.externalReviewSessionService
         }
       );
     }).singleton();

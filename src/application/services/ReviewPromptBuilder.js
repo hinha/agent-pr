@@ -57,6 +57,20 @@ class ReviewPromptBuilder {
     });
   }
 
+  buildDiscordHandoff(input) {
+    const { mentionBotName, basePrompt } = input;
+
+    return [
+      `${mentionBotName}`,
+      'KERJAKAN review ini di channel ini.',
+      'Anda boleh mengirim progress atau diskusi biasa selama review berjalan.',
+      'HASIL FINAL WAJIB berupa reply ke pesan ini dan isi reply tersebut HARUS valid JSON saja.',
+      'JANGAN submit review GitHub langsung. Bot ini yang akan submit hasil final ke GitHub.',
+      '',
+      basePrompt
+    ].join('\n');
+  }
+
   _loadTemplate(owner, repo) {
     const possiblePaths = this.templatePath
       ? [this.templatePath]

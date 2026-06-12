@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const logger = require('../utils/logger');
+const { extractDiscordUserIdFromMention } = require('../utils/discordMention');
 
 /**
  * Normalize a value to boolean.
@@ -73,6 +74,7 @@ function loadYamlConfig() {
 function buildInternalConfig(config) {
   const telegramEnabled = resolvePlatformEnabled(config.app.telegram, true);
   const discordEnabled = resolvePlatformEnabled(config.app.discord, false);
+  const discordReviewMode = config.app.discord?.review_mode || 'mention_hermes';
 
   if (!telegramEnabled && !discordEnabled) {
     throw new Error('At least one notification platform must be enabled: app.telegram.enabled or app.discord.enabled');
@@ -101,7 +103,7 @@ function buildInternalConfig(config) {
         enabled: discordEnabled,
         botToken: config.app.discord?.bot_token || process.env.DISCORD_BOT_TOKEN || null,
         guildId: config.app.discord?.guild_id || null,
-        reviewMode: config.app.discord?.review_mode || 'mention_hermes'
+        reviewMode: discordReviewMode
       },
       flagsmith: {
         enabled: config.app.flagsmith?.enabled || false,
@@ -110,7 +112,7 @@ function buildInternalConfig(config) {
         syncIntervalMs: (config.app.flagsmith?.sync_interval_minutes || 5) * 60 * 1000
       }
     },
-    instances: buildInstances(config),
+    instances: buildInstances(config, { discordEnabled, discordReviewMode }),
     log: { level: config.log.level || 'info' },
     retries: {
       mcpRetries: 3,
@@ -146,7 +148,8 @@ function buildInternalConfig(config) {
  * Extract instance configurations from YAML
  * Format: github/{org-name}
  */
-function buildInstances(config) {
+function buildInstances(config, options = {}) {
+  const { discordEnabled = false, discordReviewMode = 'mention_hermes' } = options;
   const instances = {};
 
   for (const key of Object.keys(config)) {
@@ -157,11 +160,19 @@ function buildInstances(config) {
       const skipCacheHours = config[key].skip_cache_duration_hours || 3;
       const queueMaxSize = config[key].queue?.max_size || 2;
 
+      const mentionBotName = config[key].mention_bot_name || config.app.discord?.mention_bot_name || '@Hermes';
+      const mentionBotUserId = extractDiscordUserIdFromMention(mentionBotName);
+
+      if (discordEnabled && discordReviewMode === 'handoff_reply_submit' && !mentionBotUserId) {
+        throw new Error(`Invalid mention_bot_name for ${key}: handoff_reply_submit requires a Discord user mention like <@123456789012345678>`);
+      }
+
       instances[key] = {
         key: key,
         owner: owner,
         mcpName: config[key].mcp_name,
-        mentionBotName: config[key].mention_bot_name || config.app.discord?.mention_bot_name || '@Hermes',
+        mentionBotName,
+        mentionBotUserId,
         maxAgeMs: maxAgeHours * 60 * 60 * 1000,
         skipDurationMs: skipCacheHours * 60 * 60 * 1000,
         queue: {

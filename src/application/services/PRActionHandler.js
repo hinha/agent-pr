@@ -131,8 +131,8 @@ class PRActionHandler {
     const freshPR = await this._resolveFreshPR(pr, repo, githubAdapter);
     const reviewMode = this.config.app?.discord?.reviewMode || 'mention_hermes';
 
-    if (reviewMode === 'internal_queue') {
-      return this._enqueueReview(responder, instance, repo, freshPR, level);
+    if (reviewMode === 'internal_queue' || reviewMode === 'handoff_reply_submit') {
+      return this._enqueueReview(responder, instance, repo, freshPR, level, reviewMode);
     }
 
     const { previousComments, lastCommits } = await this._loadPromptContext(githubAdapter, repo.name, freshPR.number);
@@ -171,7 +171,7 @@ class PRActionHandler {
     };
   }
 
-  async _enqueueReview(responder, instance, repo, pr, level) {
+  async _enqueueReview(responder, instance, repo, pr, level, reviewMode = 'internal_queue') {
     if (!this.reviewQueueUseCase) {
       throw new Error('Review queue is not available');
     }
@@ -186,8 +186,12 @@ class PRActionHandler {
       return result;
     }
 
+    const queueMessage = reviewMode === 'handoff_reply_submit'
+      ? `Review queued for ${instance.owner}/${repo.name} PR #${pr.number}. Position #${result.position}. Waiting for ${instance.mentionBotName || 'external reviewer'} handoff reply.`
+      : `Review queued for ${instance.owner}/${repo.name} PR #${pr.number}. Position #${result.position}.`;
+
     await responder.update({
-      content: `Review queued for ${instance.owner}/${repo.name} PR #${pr.number}. Position #${result.position}.`,
+      content: queueMessage,
       embeds: [],
       components: []
     });

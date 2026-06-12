@@ -73,6 +73,15 @@ describe('DiscordBotAdapter', () => {
     }));
   });
 
+  test('requests message intents for handoff reply flow', () => {
+    const adapter = new DiscordBotAdapter('token', {
+      config,
+      logger: { info: jest.fn(), error: jest.fn() }
+    });
+
+    expect(adapter.client.options.intents).toEqual([1, 2, 4]);
+  });
+
   test('skips start when Discord is disabled', async () => {
     const adapter = new DiscordBotAdapter(null, {
       config: { app: { discord: { enabled: false } }, instances: {} },
@@ -217,5 +226,33 @@ describe('DiscordBotAdapter', () => {
     expect(interactionListener).toHaveBeenCalledWith(expect.objectContaining({ customId: 'x' }));
     expect(logger.error).toHaveBeenCalledWith('[DiscordBotAdapter] Client error: client-fail');
     expect(adapter._getRepoIndices('acme', 'api')).toEqual({ instanceIdx: 0, repoIdx: 0 });
+  });
+
+  test('forwards messageCreate events to external review session service and corrects invalid JSON replies', async () => {
+    const externalReviewSessionService = {
+      handleAgentReply: jest.fn().mockReturnValue({ matched: true, accepted: false, reason: 'invalid_json' })
+    };
+    const adapter = new DiscordBotAdapter('token', {
+      config,
+      externalReviewSessionService,
+      logger: { info: jest.fn(), error: jest.fn(), warn: jest.fn() }
+    });
+    const messageListener = jest.fn();
+    const reply = jest.fn().mockResolvedValue({ id: 'reply-1' });
+    adapter.on('message', messageListener);
+
+    await adapter.client.handlers.messageCreate({
+      id: 'm-1',
+      content: 'not json',
+      author: { id: '123', bot: true },
+      reference: { messageId: 'trigger-1' },
+      reply
+    });
+
+    expect(messageListener).toHaveBeenCalled();
+    expect(externalReviewSessionService.handleAgentReply).toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('valid JSON only')
+    }));
   });
 });

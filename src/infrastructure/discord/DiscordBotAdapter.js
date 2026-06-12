@@ -1,6 +1,7 @@
 const EventEmitter = require('events');
 const { Client, GatewayIntentBits } = require('discord.js');
 const DiscordMessageFormatter = require('./DiscordMessageFormatter');
+const { extractDiscordUserIdFromMention } = require('../../utils/discordMention');
 
 class DiscordBotAdapter extends EventEmitter {
   constructor(botToken, options = {}) {
@@ -10,8 +11,15 @@ class DiscordBotAdapter extends EventEmitter {
     this.retryHelper = options.retryHelper;
     this.config = options.config || {};
     this.eventBus = options.eventBus || null;
+    this.externalReviewSessionService = options.externalReviewSessionService || null;
     this.formatter = options.formatter || new DiscordMessageFormatter();
-    this.client = options.client || new Client({ intents: [GatewayIntentBits.Guilds] });
+    this.client = options.client || new Client({
+      intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+      ]
+    });
     this.instanceMap = new Map();
     this.repoMap = new Map();
     this.started = false;
@@ -94,6 +102,22 @@ class DiscordBotAdapter extends EventEmitter {
     return { success: true, id: message.id };
   }
 
+  async sendReply(targetMessage, content) {
+    if (targetMessage && typeof targetMessage.reply === 'function') {
+      return targetMessage.reply({ content });
+    }
+
+    const channel = targetMessage?.channel;
+    if (channel && typeof channel.send === 'function') {
+      return channel.send({
+        content,
+        reply: { messageReference: targetMessage.id }
+      });
+    }
+
+    throw new Error('Discord reply target is not sendable');
+  }
+
   async sendQueueCompletedNotification(data) {
     const instance = this.config.instances?.[data.instanceKey];
     if (!instance) {
@@ -159,6 +183,26 @@ class DiscordBotAdapter extends EventEmitter {
       this.emit('interaction', interaction);
     });
 
+    this.client.on('messageCreate', async (message) => {
+      this.emit('message', message);
+
+      if (!this.externalReviewSessionService) {
+        return;
+      }
+
+      const result = this.externalReviewSessionService.handleAgentReply(message);
+      if (result.reason === 'invalid_json') {
+        try {
+          await this.sendReply(
+            message,
+            'Final reply must be valid JSON only, as a reply to the trigger message.'
+          );
+        } catch (error) {
+          this.logger.warn(`[DiscordBotAdapter] Failed to send JSON correction reply: ${error.message}`);
+        }
+      }
+    });
+
     this.client.on('error', (error) => {
       this.logger.error(`[DiscordBotAdapter] Client error: ${error.message}`);
     });
@@ -206,10 +250,10 @@ class DiscordBotAdapter extends EventEmitter {
   }
 
   _buildAllowedMentions(mentionBotName) {
-    const match = String(mentionBotName || '').match(/^<@!?(\d+)>$/);
+    const userId = extractDiscordUserIdFromMention(mentionBotName);
     return {
       parse: [],
-      users: match ? [match[1]] : []
+      users: userId ? [userId] : []
     };
   }
 }

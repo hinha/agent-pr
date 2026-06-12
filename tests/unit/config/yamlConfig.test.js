@@ -115,6 +115,45 @@ github/acme:
       expect(config.instances['github/acme'].mentionBotName).toBe('<@legacy>');
     });
 
+    test('fails fast when handoff_reply_submit uses non-mention mention_bot_name', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-pr-config-'));
+      fs.writeFileSync(path.join(dir, 'config.yml'), `
+app:
+  provider_agent: hermes
+  check_interval_minutes: 7
+  outdated_review_check_minutes: 10
+  telegram:
+    enabled: false
+  discord:
+    enabled: true
+    bot_token: "discord-token"
+    review_mode: handoff_reply_submit
+    mention_bot_name: "@Hermes"
+  flagsmith:
+    enabled: false
+log:
+  level: info
+github/acme:
+  mcp_name: github-work
+  agent:
+    review: reviewer
+    summary: summarizer
+    level: [low, medium, high]
+  repos:
+    api:
+      enable: true
+      thread_id: "123"
+`);
+      process.chdir(dir);
+      jest.resetModules();
+
+      const yamlConfig = require('../../../src/config/yamlConfig');
+
+      expect(() => yamlConfig.loadYamlConfig()).toThrow(
+        'handoff_reply_submit requires a Discord user mention'
+      );
+    });
+
     test('throws when Telegram and Discord are both disabled', () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-pr-config-'));
       writeConfig(dir, `

@@ -1,5 +1,6 @@
 class MockClient {
-  constructor() {
+  constructor(options = {}) {
+    this.options = options;
     this.handlers = {};
     this.user = { tag: 'agent-pr-test#0001' };
     this.__send = jest.fn().mockResolvedValue({ id: 'discord-message-1' });
@@ -54,7 +55,7 @@ class MockButtonBuilder {
 
 module.exports = {
   Client: MockClient,
-  GatewayIntentBits: { Guilds: 1 },
+  GatewayIntentBits: { Guilds: 1, GuildMessages: 2, MessageContent: 4 },
   EmbedBuilder: MockEmbedBuilder,
   ActionRowBuilder: MockActionRowBuilder,
   ButtonBuilder: MockButtonBuilder,
