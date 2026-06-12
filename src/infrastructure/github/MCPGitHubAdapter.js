@@ -341,17 +341,40 @@ class MCPGitHubAdapter extends IGitHubService {
   }
 
   _buildHermesMcpPrompt(method, args) {
+    const callableToolName = this._getHermesCallableToolName(method);
+    const expectedShape = this._getExpectedHermesResultShape(method);
+
     return [
       'You are a machine bridge for a background Node.js daemon.',
       `Use the GitHub MCP tools available in the active Hermes profile. The configured MCP server alias is "${this.serverName}".`,
-      `Perform the GitHub operation whose canonical method name is "${method}" using these exact arguments:`,
+      `The exact callable Hermes tool function name for this operation is "${callableToolName}".`,
+      `Perform the GitHub operation whose canonical method name is "${method}" by calling exactly that tool with these exact arguments:`,
       JSON.stringify(args, null, 2),
+      `Expected result shape: ${expectedShape}.`,
       'Rules:',
-      '- Actually call the MCP tool. Do not simulate the result.',
-      '- Return ONLY the raw JSON result from the tool call.',
+      `- Actually call the exact tool "${callableToolName}". Do not simulate the result.`,
+      '- Do not call any other GitHub tool, do not use curl, do not use terminal, and do not use web/browser search.',
+      '- Return ONLY the raw JSON result from that exact tool call.',
       '- No markdown fences, no prose, no explanation.',
       '- If the tool is unavailable or the call fails, return exactly {"error":"<exact error message>"}'
     ].join('\n');
+  }
+
+  _getHermesCallableToolName(method) {
+    const sanitize = (value) => String(value || '').replace(/[-.]/g, '_');
+    return `mcp_${sanitize(this.serverName)}_${sanitize(method)}`;
+  }
+
+  _getExpectedHermesResultShape(method) {
+    const arrayMethods = new Map([
+      ['list_pull_requests', 'a JSON array of pull request objects'],
+      ['get_pull_request_files', 'a JSON array of file objects'],
+      ['get_pull_request_reviews', 'a JSON array of review objects'],
+      ['get_pull_request_comments', 'a JSON array of review comment objects'],
+      ['list_commits', 'a JSON array of commit objects']
+    ]);
+
+    return arrayMethods.get(method) || 'a single JSON object';
   }
 
   _parseMCPJsonResponse(method, stdout, spawnArgs = []) {

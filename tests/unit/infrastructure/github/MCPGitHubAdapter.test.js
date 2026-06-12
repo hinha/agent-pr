@@ -1261,6 +1261,38 @@ describe('MCPGitHubAdapter', () => {
     });
   });
 
+  describe('Hermes prompt helpers', () => {
+    test('builds exact Hermes callable MCP tool name', () => {
+      expect(adapter._getHermesCallableToolName('list_pull_requests')).toBe('mcp_github_work_list_pull_requests');
+
+      const hermesAdapter = new MCPGitHubAdapter(
+        {
+          key: 'github/testorg',
+          owner: 'testorg',
+          mcpName: 'github',
+          providerAgent: 'hermes',
+          githubRuntime: 'hermes'
+        },
+        mockLogger,
+        mockRetryHelper
+      );
+
+      expect(hermesAdapter._getHermesCallableToolName('get_pull_request_reviews')).toBe('mcp_github_get_pull_request_reviews');
+    });
+
+    test('builds Hermes prompt with exact callable tool name and expected shape', () => {
+      const prompt = adapter._buildHermesMcpPrompt('list_pull_requests', {
+        owner: 'testorg',
+        repo: 'test-repo',
+        state: 'open'
+      });
+
+      expect(prompt).toContain('The exact callable Hermes tool function name for this operation is "mcp_github_work_list_pull_requests"');
+      expect(prompt).toContain('Expected result shape: a JSON array of pull request objects.');
+      expect(prompt).toContain('Do not call any other GitHub tool, do not use curl, do not use terminal, and do not use web/browser search.');
+    });
+  });
+
   describe('createReviewWithComments - explicit event from caller', () => {
     test('should use REQUEST_CHANGES from caller when no comments', (done) => {
       const mockPR = { id: 'pr_1', number: 456, headSha: 'abc123' };
