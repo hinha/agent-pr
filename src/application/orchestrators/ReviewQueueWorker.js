@@ -337,7 +337,8 @@ class ReviewQueueWorker {
     });
     const handoffPrompt = this.reviewPromptBuilder.buildDiscordHandoff({
       mentionBotName: instance.mentionBotName,
-      basePrompt: prompt
+      basePrompt: prompt,
+      sessionId: item.id
     });
 
     const trigger = await this.discordAdapter.sendHermesMention({
@@ -349,6 +350,7 @@ class ReviewQueueWorker {
 
     this.externalReviewSessionService.startSession({
       queueItemId: item.id,
+      sessionId: item.id,
       instanceKey: item.instanceKey,
       repoName: item.repoName,
       prNumber: item.prNumber,

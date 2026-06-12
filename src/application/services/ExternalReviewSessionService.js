@@ -1,3 +1,8 @@
+const {
+  DISCORD_HANDOFF_PROTOCOL,
+  DiscordHandoffMessageType
+} = require('../../shared/discordHandoffProtocol');
+
 class ExternalReviewSessionService {
   constructor(options = {}) {
     this.logger = options.logger || console;
@@ -11,6 +16,7 @@ class ExternalReviewSessionService {
     const deadlineAt = sessionInput.deadlineAt || new Date(now + timeoutMs).toISOString();
     const session = {
       ...sessionInput,
+      sessionId: sessionInput.sessionId || sessionInput.queueItemId,
       deadlineAt,
       status: 'pending'
     };
@@ -105,15 +111,52 @@ class ExternalReviewSessionService {
     }
 
     const content = String(message.content || '').trim();
-    const parsed = this._tryParseJson(content);
+    const parsed = this._parsePotentialJson(content);
+    const envelope = this._normalizeEnvelope(parsed, session);
 
-    if (this._isFinalReviewPayload(parsed)) {
+    if (!envelope) {
+      if (!session.promptRequestMessage) {
+        return { matched: true, accepted: false, reason: 'non_protocol_handshake', session: this._publicSession(session) };
+      }
+
+      return { matched: true, accepted: false, reason: 'non_protocol_reply', session: this._publicSession(session) };
+    }
+
+    if (envelope.messageType === DiscordHandoffMessageType.PROMPT_REQUEST) {
+      if (!session.promptRequestMessage) {
+        this._resolvePromptRequest(session, message);
+      }
+
+      return {
+        matched: true,
+        accepted: false,
+        reason: 'prompt_request',
+        session: this._publicSession(session),
+        envelope
+      };
+    }
+
+    if (envelope.messageType === DiscordHandoffMessageType.PROGRESS ||
+      envelope.messageType === DiscordHandoffMessageType.ERROR ||
+      envelope.messageType === DiscordHandoffMessageType.FINAL_STATUS) {
+      return {
+        matched: true,
+        accepted: false,
+        reason: 'non_terminal_protocol_message',
+        session: this._publicSession(session),
+        envelope
+      };
+    }
+
+    const normalizedFinalPayload = this._normalizeFinalReviewPayload(envelope);
+
+    if (normalizedFinalPayload) {
       session.status = 'completed';
       this._resolvePromptRequest(session, null);
       this._clearSession(session.queueItemId);
       session.resolve({
         session: this._publicSession(session),
-        reviewResult: parsed,
+        reviewResult: normalizedFinalPayload,
         rawContent: content,
         messageId: message.id
       });
@@ -122,24 +165,21 @@ class ExternalReviewSessionService {
         `[ExternalReviewSessionService] Accepted external review reply for ${session.instanceKey}/${session.repoName} PR #${session.prNumber}`
       );
 
-      return { matched: true, accepted: true, session: this._publicSession(session), reviewResult: parsed };
-    }
-
-    if (!session.promptRequestMessage) {
-      this._resolvePromptRequest(session, message);
       return {
         matched: true,
-        accepted: false,
-        reason: this._isPromptRequestPayload(parsed) ? 'prompt_request' : 'handshake_received',
-        session: this._publicSession(session)
+        accepted: true,
+        session: this._publicSession(session),
+        reviewResult: normalizedFinalPayload
       };
     }
 
-    if (content.startsWith('{') || content.startsWith('[')) {
-      return { matched: true, accepted: false, reason: 'invalid_final_payload', session: this._publicSession(session) };
-    }
-
-    return { matched: true, accepted: false, reason: 'non_final_reply', session: this._publicSession(session) };
+    return {
+      matched: true,
+      accepted: false,
+      reason: 'invalid_final_payload',
+      session: this._publicSession(session),
+      envelope
+    };
   }
 
   failSession(queueItemId, error) {
@@ -199,19 +239,126 @@ class ExternalReviewSessionService {
     }
   }
 
-  _tryParseJson(content) {
-    try {
-      return JSON.parse(content);
-    } catch (_error) {
+  _parsePotentialJson(content) {
+    if (!content) {
       return null;
+    }
+
+    const cleanContent = content
+      .replace(/```json\s*/gi, '')
+      .replace(/```\s*/g, '')
+      .trim();
+
+    try {
+      return JSON.parse(cleanContent);
+    } catch (_error) {
+      const extractedJson = this._extractJson(cleanContent);
+      if (!extractedJson) {
+        return null;
+      }
+
+      try {
+        return JSON.parse(extractedJson);
+      } catch (_extractError) {
+        return null;
+      }
     }
   }
 
-  _isPromptRequestPayload(parsed) {
-    return parsed &&
-      typeof parsed === 'object' &&
-      !Array.isArray(parsed) &&
-      String(parsed.status || '').trim() === 'awaiting_review_prompt';
+  _normalizeEnvelope(parsed, session) {
+    if (!parsed ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed)) {
+      return null;
+    }
+
+    if (String(parsed.protocol || '').trim() !== DISCORD_HANDOFF_PROTOCOL) {
+      return null;
+    }
+
+    if (String(parsed.session_id || '').trim() !== String(session.sessionId)) {
+      return null;
+    }
+
+    const messageType = String(parsed.message_type || '').trim();
+    if (!Object.values(DiscordHandoffMessageType).includes(messageType)) {
+      return null;
+    }
+
+    return {
+      protocol: parsed.protocol,
+      sessionId: parsed.session_id,
+      messageType,
+      payload: parsed.payload && typeof parsed.payload === 'object' && !Array.isArray(parsed.payload)
+        ? parsed.payload
+        : {}
+    };
+  }
+
+  _normalizeFinalReviewPayload(envelope) {
+    if (!envelope || envelope.messageType !== DiscordHandoffMessageType.FINAL_REVIEW) {
+      return null;
+    }
+
+    if (typeof envelope.payload.summary !== 'string' || !Array.isArray(envelope.payload.comments)) {
+      return null;
+    }
+
+    return {
+      summary: envelope.payload.summary,
+      comments: envelope.payload.comments
+    };
+  }
+
+  _extractJson(text) {
+    if (!text) {
+      return null;
+    }
+
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] !== '{') {
+        continue;
+      }
+
+      let braceCount = 1;
+      let inString = false;
+      let escapeNext = false;
+
+      for (let j = i + 1; j < text.length; j++) {
+        const char = text[j];
+
+        if (escapeNext) {
+          escapeNext = false;
+          continue;
+        }
+
+        if (char === '\\') {
+          escapeNext = true;
+          continue;
+        }
+
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+
+        if (inString) {
+          continue;
+        }
+
+        if (char === '{') {
+          braceCount++;
+        } else if (char === '}') {
+          braceCount--;
+
+          if (braceCount === 0) {
+            return text.substring(i, j + 1);
+          }
+        }
+      }
+    }
+
+    return null;
   }
 
   _isFinalReviewPayload(parsed) {
@@ -229,6 +376,7 @@ class ExternalReviewSessionService {
       repoName: session.repoName,
       prNumber: session.prNumber,
       level: session.level,
+      sessionId: session.sessionId,
       triggerMessageId: session.triggerMessageId,
       trustedBotUserId: session.trustedBotUserId,
       deadlineAt: session.deadlineAt

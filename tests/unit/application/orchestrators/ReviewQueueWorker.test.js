@@ -885,6 +885,10 @@ describe('ReviewQueueWorker', () => {
       await worker._processItem(queue, item);
 
       expect(mockReviewPromptBuilder.build).toHaveBeenCalled();
+      expect(mockReviewPromptBuilder.buildDiscordHandoff).toHaveBeenCalledWith(expect.objectContaining({
+        mentionBotName: '<@123456789012345678>',
+        sessionId: 'qi_test_handoff'
+      }));
       expect(mockDiscordAdapter.sendHermesMention).toHaveBeenCalledWith(expect.objectContaining({
         mentionBotName: '<@123456789012345678>',
         content: '<@123>\nHANDOFF TRIGGER'
@@ -896,6 +900,7 @@ describe('ReviewQueueWorker', () => {
       );
       expect(mockExternalReviewSessionService.startSession).toHaveBeenCalledWith(expect.objectContaining({
         queueItemId: 'qi_test_handoff',
+        sessionId: 'qi_test_handoff',
         triggerMessageId: 'discord-trigger-1',
         trustedBotUserId: '123456789012345678'
       }));

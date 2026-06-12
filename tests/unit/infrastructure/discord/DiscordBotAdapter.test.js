@@ -256,7 +256,7 @@ describe('DiscordBotAdapter', () => {
     expect(adapter._getRepoIndices('acme', 'api')).toEqual({ instanceIdx: 0, repoIdx: 0 });
   });
 
-  test('forwards messageCreate events to external review session service and corrects invalid final payload replies', async () => {
+  test('forwards messageCreate events to external review session service without interrupt reply', async () => {
     const externalReviewSessionService = {
       handleAgentReply: jest.fn().mockReturnValue({ matched: true, accepted: false, reason: 'invalid_final_payload' })
     };
@@ -279,9 +279,7 @@ describe('DiscordBotAdapter', () => {
 
     expect(messageListener).toHaveBeenCalled();
     expect(externalReviewSessionService.handleAgentReply).toHaveBeenCalled();
-    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('valid JSON only')
-    }));
+    expect(reply).not.toHaveBeenCalled();
   });
 
   test('does not interrupt handshake chatter from external review bot', async () => {

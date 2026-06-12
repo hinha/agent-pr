@@ -206,17 +206,7 @@ class DiscordBotAdapter extends EventEmitter {
         return;
       }
 
-      const result = this.externalReviewSessionService.handleAgentReply(message);
-      if (result.reason === 'invalid_final_payload') {
-        try {
-          await this.sendReply(
-            message,
-            'Final reply must be valid JSON only, as a reply to the trigger message.'
-          );
-        } catch (error) {
-          this.logger.warn(`[DiscordBotAdapter] Failed to send JSON correction reply: ${error.message}`);
-        }
-      }
+      this.externalReviewSessionService.handleAgentReply(message);
     });
 
     this.client.on('error', (error) => {

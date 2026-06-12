@@ -2,6 +2,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const ReviewPromptBuilder = require('../../../../src/application/services/ReviewPromptBuilder');
+const {
+  DISCORD_HANDOFF_PROTOCOL,
+  DiscordHandoffMessageType
+} = require('../../../../src/shared/discordHandoffProtocol');
 
 describe('ReviewPromptBuilder', () => {
   test('renders review prompt placeholders and context blocks', () => {
@@ -92,5 +96,22 @@ describe('ReviewPromptBuilder', () => {
     const builder = new ReviewPromptBuilder();
 
     expect(builder._replaceAll('{{A}} {{B}}', { A: 'x', B: null })).toBe('x ');
+  });
+
+  test('builds Discord handoff prompt with explicit protocol contract', () => {
+    const builder = new ReviewPromptBuilder();
+
+    const handoff = builder.buildDiscordHandoff({
+      mentionBotName: '<@123>',
+      sessionId: 'qi_123',
+      basePrompt: 'BASE PROMPT'
+    });
+
+    expect(handoff.triggerContent).toContain('SESSION_ID: qi_123');
+    expect(handoff.triggerContent).toContain(`protocol ${DISCORD_HANDOFF_PROTOCOL}`);
+    expect(handoff.detailContent).toContain(`"session_id":"qi_123"`);
+    expect(handoff.detailContent).toContain(`"message_type":"${DiscordHandoffMessageType.PROMPT_REQUEST}"`);
+    expect(handoff.detailContent).toContain(`"message_type":"${DiscordHandoffMessageType.FINAL_REVIEW}"`);
+    expect(handoff.detailContent).toContain('BASE PROMPT');
   });
 });

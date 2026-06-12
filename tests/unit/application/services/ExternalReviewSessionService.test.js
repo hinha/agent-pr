@@ -1,4 +1,8 @@
 const ExternalReviewSessionService = require('../../../../src/application/services/ExternalReviewSessionService');
+const {
+  DISCORD_HANDOFF_PROTOCOL,
+  DiscordHandoffMessageType
+} = require('../../../../src/shared/discordHandoffProtocol');
 
 describe('ExternalReviewSessionService', () => {
   let service;
@@ -36,7 +40,12 @@ describe('ExternalReviewSessionService', () => {
     const promptRequest = service.awaitPromptRequest('qi_1');
     const handle = service.handleAgentReply({
       id: 'msg-1',
-      content: '{"summary":"done","comments":[]}',
+      content: JSON.stringify({
+        protocol: DISCORD_HANDOFF_PROTOCOL,
+        session_id: 'qi_1',
+        message_type: DiscordHandoffMessageType.FINAL_REVIEW,
+        payload: { summary: 'done', comments: [] }
+      }),
       author: { id: 'bot-1', bot: true },
       reference: { messageId: 'trigger-1' }
     });
@@ -48,7 +57,38 @@ describe('ExternalReviewSessionService', () => {
     expect(handle).toEqual(expect.objectContaining({ matched: true, accepted: true }));
   });
 
-  test('captures handshake reply and keeps waiting for final review', async () => {
+  test('accepts final review JSON extracted from wrapped plain text', async () => {
+    service.startSession({
+      queueItemId: 'qi_1b',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 10,
+      level: 'high',
+      triggerMessageId: 'trigger-1b',
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    const pending = service.awaitResult('qi_1b');
+    const handle = service.handleAgentReply({
+      id: 'msg-1b',
+      content: `\`\`\`json\n${JSON.stringify({
+        protocol: DISCORD_HANDOFF_PROTOCOL,
+        session_id: 'qi_1b',
+        message_type: DiscordHandoffMessageType.FINAL_REVIEW,
+        payload: { summary: 'done', comments: [] }
+      })}\n\`\`\``,
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'trigger-1b' }
+    });
+
+    await expect(pending).resolves.toEqual(expect.objectContaining({
+      reviewResult: { summary: 'done', comments: [] }
+    }));
+    expect(handle).toEqual(expect.objectContaining({ matched: true, accepted: true }));
+  });
+
+  test('captures prompt_request envelope and keeps waiting for final review', async () => {
     service.startSession({
       queueItemId: 'qi_2',
       instanceKey: 'github/acme',
@@ -63,7 +103,12 @@ describe('ExternalReviewSessionService', () => {
     const promptRequest = service.awaitPromptRequest('qi_2');
     const handle = service.handleAgentReply({
       id: 'msg-2',
-      content: 'Kirim prompt review lengkap via reply ke pesan ini.',
+      content: JSON.stringify({
+        protocol: DISCORD_HANDOFF_PROTOCOL,
+        session_id: 'qi_2',
+        message_type: DiscordHandoffMessageType.PROMPT_REQUEST,
+        payload: { message: 'Send complete review prompt' }
+      }),
       author: { id: 'bot-1', bot: true },
       reference: { messageId: 'trigger-2' }
     });
@@ -72,12 +117,12 @@ describe('ExternalReviewSessionService', () => {
     expect(handle).toEqual(expect.objectContaining({
       matched: true,
       accepted: false,
-      reason: 'handshake_received'
+      reason: 'prompt_request'
     }));
     expect(service.sessionsByQueueItemId.has('qi_2')).toBe(true);
   });
 
-  test('treats awaiting_review_prompt status JSON as handshake, not final result', async () => {
+  test('ignores non-protocol JSON before prompt request', async () => {
     service.startSession({
       queueItemId: 'qi_2b',
       instanceKey: 'github/acme',
@@ -89,7 +134,6 @@ describe('ExternalReviewSessionService', () => {
       timeoutMs: 1000
     });
 
-    const promptRequest = service.awaitPromptRequest('qi_2b');
     const handle = service.handleAgentReply({
       id: 'msg-2b',
       content: '{"status":"awaiting_review_prompt","message":"Send complete review prompt"}',
@@ -97,11 +141,10 @@ describe('ExternalReviewSessionService', () => {
       reference: { messageId: 'trigger-2b' }
     });
 
-    await expect(promptRequest).resolves.toEqual(expect.objectContaining({ id: 'msg-2b' }));
     expect(handle).toEqual(expect.objectContaining({
       matched: true,
       accepted: false,
-      reason: 'prompt_request'
+      reason: 'non_protocol_handshake'
     }));
   });
 
@@ -138,14 +181,24 @@ describe('ExternalReviewSessionService', () => {
 
     service.handleAgentReply({
       id: 'msg-4',
-      content: '{"summary":"done","comments":[]}',
+      content: JSON.stringify({
+        protocol: DISCORD_HANDOFF_PROTOCOL,
+        session_id: 'qi_4',
+        message_type: DiscordHandoffMessageType.FINAL_REVIEW,
+        payload: { summary: 'done', comments: [] }
+      }),
       author: { id: 'bot-1', bot: true },
       reference: { messageId: 'trigger-4' }
     });
 
     const duplicate = service.handleAgentReply({
       id: 'msg-5',
-      content: '{"summary":"again","comments":[]}',
+      content: JSON.stringify({
+        protocol: DISCORD_HANDOFF_PROTOCOL,
+        session_id: 'qi_4',
+        message_type: DiscordHandoffMessageType.FINAL_REVIEW,
+        payload: { summary: 'again', comments: [] }
+      }),
       author: { id: 'bot-1', bot: true },
       reference: { messageId: 'trigger-4' }
     });
@@ -167,14 +220,24 @@ describe('ExternalReviewSessionService', () => {
 
     service.handleAgentReply({
       id: 'msg-5a',
-      content: 'Send prompt',
+      content: JSON.stringify({
+        protocol: DISCORD_HANDOFF_PROTOCOL,
+        session_id: 'qi_5',
+        message_type: DiscordHandoffMessageType.PROMPT_REQUEST,
+        payload: { message: 'Send prompt' }
+      }),
       author: { id: 'bot-1', bot: true },
       reference: { messageId: 'trigger-5' }
     });
 
     const nonFinal = service.handleAgentReply({
       id: 'msg-5b',
-      content: '{"status":"working"}',
+      content: JSON.stringify({
+        protocol: DISCORD_HANDOFF_PROTOCOL,
+        session_id: 'qi_5',
+        message_type: DiscordHandoffMessageType.PROGRESS,
+        payload: { percent: 50 }
+      }),
       author: { id: 'bot-1', bot: true },
       reference: { messageId: 'trigger-5' }
     });
@@ -182,7 +245,7 @@ describe('ExternalReviewSessionService', () => {
     expect(nonFinal).toEqual(expect.objectContaining({
       matched: true,
       accepted: false,
-      reason: 'invalid_final_payload'
+      reason: 'non_terminal_protocol_message'
     }));
     expect(service.sessionsByQueueItemId.has('qi_5')).toBe(true);
   });
@@ -201,7 +264,12 @@ describe('ExternalReviewSessionService', () => {
 
     service.handleAgentReply({
       id: 'msg-6a',
-      content: 'Kirim prompt lengkap',
+      content: JSON.stringify({
+        protocol: DISCORD_HANDOFF_PROTOCOL,
+        session_id: 'qi_6',
+        message_type: DiscordHandoffMessageType.PROMPT_REQUEST,
+        payload: { message: 'Send complete review prompt' }
+      }),
       author: { id: 'bot-1', bot: true },
       reference: { messageId: 'trigger-6' }
     });
@@ -211,7 +279,12 @@ describe('ExternalReviewSessionService', () => {
     const pending = service.awaitResult('qi_6');
     const finalHandle = service.handleAgentReply({
       id: 'msg-6b',
-      content: '{"summary":"done","comments":[]}',
+      content: JSON.stringify({
+        protocol: DISCORD_HANDOFF_PROTOCOL,
+        session_id: 'qi_6',
+        message_type: DiscordHandoffMessageType.FINAL_REVIEW,
+        payload: { summary: 'done', comments: [] }
+      }),
       author: { id: 'bot-1', bot: true },
       reference: { messageId: 'prompt-6-2' }
     });
@@ -222,6 +295,81 @@ describe('ExternalReviewSessionService', () => {
     expect(finalHandle).toEqual(expect.objectContaining({
       matched: true,
       accepted: true
+    }));
+  });
+
+  test('does not treat final_status as review result', async () => {
+    service.startSession({
+      queueItemId: 'qi_7',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 10,
+      level: 'high',
+      triggerMessageId: 'trigger-7',
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    service.handleAgentReply({
+      id: 'msg-7a',
+      content: JSON.stringify({
+        protocol: DISCORD_HANDOFF_PROTOCOL,
+        session_id: 'qi_7',
+        message_type: DiscordHandoffMessageType.PROMPT_REQUEST,
+        payload: { message: 'Send complete review prompt' }
+      }),
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'trigger-7' }
+    });
+
+    const finalHandle = service.handleAgentReply({
+      id: 'msg-7b',
+      content: JSON.stringify({
+        protocol: DISCORD_HANDOFF_PROTOCOL,
+        session_id: 'qi_7',
+        message_type: DiscordHandoffMessageType.FINAL_STATUS,
+        payload: { state: 'approved', message: 'Tidak ada issue kritis. Review selesai.' }
+      }),
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'msg-7a' }
+    });
+
+    expect(finalHandle).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: false,
+      reason: 'non_terminal_protocol_message'
+    }));
+    expect(service.sessionsByQueueItemId.has('qi_7')).toBe(true);
+  });
+
+  test('ignores envelope with wrong session id', async () => {
+    service.startSession({
+      queueItemId: 'qi_8',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 10,
+      level: 'high',
+      triggerMessageId: 'trigger-8',
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    const handle = service.handleAgentReply({
+      id: 'msg-8',
+      content: JSON.stringify({
+        protocol: DISCORD_HANDOFF_PROTOCOL,
+        session_id: 'wrong-session',
+        message_type: DiscordHandoffMessageType.PROMPT_REQUEST,
+        payload: { message: 'Send prompt' }
+      }),
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'trigger-8' }
+    });
+
+    expect(handle).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: false,
+      reason: 'non_protocol_handshake'
     }));
   });
 });
