@@ -44,9 +44,9 @@ class GitHubAdapterFactory {
       const adapter = new MCPGitHubAdapter(
         {
           ...instance,
-          providerAgent: this.config.app.providerAgent,
-          githubRuntime: this.config.app.githubRuntime,
-          agent: instance.agent
+          mcpName: instance.mcpName || instance.mcp_name,
+          mcpClient: this.config.app.mcpClient,
+          mcpOutputFlag: this.config.app.mcpOutputFlag
         },
         logger,
         this.retryHelper

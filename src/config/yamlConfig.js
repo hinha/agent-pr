@@ -81,7 +81,8 @@ function buildInternalConfig(config) {
   const internalConfig = {
     app: {
       providerAgent: config.app.provider_agent || 'openclaw',
-      githubRuntime: (config.app.provider_agent || 'openclaw') === 'hermes' ? 'hermes' : 'openclaw',
+      mcpClient: config.app.mcp_client || 'mcporter',
+      mcpOutputFlag: config.app.mcp_output_flag !== undefined ? config.app.mcp_output_flag : '--output json',
       checkIntervalMs: config.app.check_interval_minutes * 60 * 1000,
       outdatedReviewCheckIntervalMs: (config.app.outdated_review_check_minutes || 10) * 60 * 1000,
       snoozeTime: {

@@ -132,10 +132,9 @@ class Container {
             {
               key: instanceKey,
               owner: instance.owner,
-              mcpName: instance.mcpName,
-              providerAgent: config.app.providerAgent,
-              githubRuntime: config.app.githubRuntime,
-              agent: instance.agent
+              mcpName: instance.mcpName || instance.mcp_name,
+              mcpClient: config.app.mcpClient,
+              mcpOutputFlag: config.app.mcpOutputFlag
             },
             cradle.logger,
             cradle.retryHelper
@@ -151,10 +150,9 @@ class Container {
             {
               key: instanceKey,
               owner: instance.owner,
-              mcpName: instance.mcpName,
-              providerAgent: config.app.providerAgent,
-              githubRuntime: config.app.githubRuntime,
-              agent: instance.agent
+              mcpName: instance.mcpName || instance.mcp_name,
+              mcpClient: config.app.mcpClient,
+              mcpOutputFlag: config.app.mcpOutputFlag
             },
             cradle.logger,
             cradle.retryHelper

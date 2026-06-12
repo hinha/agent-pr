@@ -25,7 +25,7 @@ describe('GitHubAdapterFactory', () => {
 
   beforeEach(() => {
     config = {
-      app: { providerAgent: 'openclaw', githubRuntime: 'openclaw' },
+      app: { mcpClient: 'mcporter', mcpOutputFlag: '--output json' },
       instances: {
         'github/myorg': { mcp_name: 'github-work', owner: 'myorg' },
         'github/otherorg': { mcp_name: 'github-other', owner: 'otherorg' }
@@ -42,8 +42,8 @@ describe('GitHubAdapterFactory', () => {
 
       expect(adapter).toBeDefined();
       expect(adapter.instance).toEqual(expect.objectContaining(config.instances['github/myorg']));
-      expect(adapter.instance.providerAgent).toBe('openclaw');
-      expect(adapter.instance.githubRuntime).toBe('openclaw');
+      expect(adapter.instance.mcpClient).toBe('mcporter');
+      expect(adapter.instance.mcpOutputFlag).toBe('--output json');
       expect(loggerFactory).toHaveBeenCalledWith('MCPGitHub:github/myorg');
     });
 
@@ -74,7 +74,7 @@ describe('GitHubAdapterFactory', () => {
 
       expect(adapter).toBeDefined();
       expect(adapter.instance).toEqual(expect.objectContaining(config.instances['github/myorg']));
-      expect(adapter.instance.providerAgent).toBe('openclaw');
+      expect(adapter.instance.mcpClient).toBe('mcporter');
     });
 
     it('should throw for unknown owner', () => {

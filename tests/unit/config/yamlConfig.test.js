@@ -67,6 +67,48 @@ github/acme:
 
       expect(config.app.telegram.enabled).toBe(true);
       expect(config.app.discord.enabled).toBe(false);
+      expect(config.app.mcpClient).toBe('mcporter');
+      expect(config.app.mcpOutputFlag).toBe('--output json');
+    });
+
+    test('loads custom MCP transport settings when provided', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-pr-config-'));
+      fs.writeFileSync(path.join(dir, 'config.yml'), `
+app:
+  provider_agent: hermes
+  mcp_client: "openclaw mcp"
+  mcp_output_flag: ""
+  check_interval_minutes: 7
+  outdated_review_check_minutes: 10
+  telegram:
+    bot_token: "token"
+    chat_id: "123"
+  discord:
+    enabled: false
+  flagsmith:
+    enabled: false
+log:
+  level: info
+github/acme:
+  mcp_name: github-work
+  agent:
+    review: reviewer
+    summary: summarizer
+    level: [low, medium, high]
+  repos:
+    api:
+      enable: true
+      thread_id: "123"
+`);
+      process.chdir(dir);
+      jest.resetModules();
+
+      const yamlConfig = require('../../../src/config/yamlConfig');
+      const config = yamlConfig.loadYamlConfig();
+
+      expect(config.app.providerAgent).toBe('hermes');
+      expect(config.app.mcpClient).toBe('openclaw mcp');
+      expect(config.app.mcpOutputFlag).toBe('');
     });
 
     test('throws when Telegram and Discord are both disabled', () => {

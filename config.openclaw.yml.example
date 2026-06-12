@@ -9,6 +9,11 @@ app:
   # Options: "openclaw" (default) or "hermes"
   provider_agent: openclaw
 
+  # CLI transport for GitHub MCP calls.
+  # Recommended for daemon mode: keep this on mcporter.
+  mcp_client: mcporter
+  mcp_output_flag: --output json
+
   # How often to check for new PRs (in minutes)
   check_interval_minutes: 7
 
@@ -72,7 +77,7 @@ log:
 # GitHub Instance Configuration
 # Format: github/{organization-name}
 github/your-org-or-user:
-  # MCP server alias used by `openclaw mcp`
+  # MCP server alias used by the configured MCP client
   mcp_name: your-mcp-name
 
   # Maximum age of PRs to process (in hours)

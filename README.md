@@ -137,9 +137,8 @@ Available examples:
 
 Important:
 - `app.provider_agent` selects the internal review adapter: `hermes` or `openclaw`
-- GitHub MCP access follows `app.provider_agent`:
-  - `openclaw` -> `openclaw mcp`
-  - `hermes` -> Hermes native MCP in the selected profile
+- GitHub MCP access is configured independently from `app.provider_agent`
+- Recommended transport for the daemon is `app.mcp_client: "mcporter"` with `app.mcp_output_flag: "--output json"`
 - If Discord is enabled and you want review actions to use the internal adapter, set `app.discord.review_mode: internal_queue`
 - If `app.discord.review_mode: mention_hermes`, Discord review actions hand off to a mentioned Hermes bot instead of using the internal adapter
 
@@ -148,6 +147,8 @@ Important:
 | Setting | Description | Default |
 |---------|-------------|---------|
 | `app.provider_agent` | Internal review provider: `openclaw` or `hermes` | `openclaw` |
+| `app.mcp_client` | CLI transport for GitHub MCP calls | `mcporter` |
+| `app.mcp_output_flag` | Output flag passed to the MCP client | `--output json` |
 | `app.check_interval_minutes` | PR polling frequency in minutes | 7 |
 | `app.outdated_review_check_minutes` | Outdated review check interval (0 = every poll) | 10 |
 | `app.telegram.enabled` | Enable Telegram notifications/actions | `true` |
@@ -163,7 +164,7 @@ Important:
 | `{instance}.skip_cache_duration_hours` | Skip cache duration when user clicks Skip | 3 |
 | `{instance}.agent.review` | OpenClaw review agent name | Required for `provider_agent=openclaw` |
 | `{instance}.agent.summary` | OpenClaw summary agent name | Required for `provider_agent=openclaw` |
-| `{instance}.agent.hermes_profile` | Hermes profile name passed to `hermes chat` | Required for `provider_agent=hermes` |
+| `{instance}.agent.hermes_profile` | Hermes profile name used by the internal Hermes review adapter | Required for `provider_agent=hermes` |
 | `{instance}.agent.hermes_max_turns` | Hermes max turns | `90` |
 | `{instance}.agent.level` | Available review levels | `[low, medium, high]` |
 | `{instance}.agent.review_timeout_seconds` | Review timeout in seconds | 1200 |

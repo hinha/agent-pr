@@ -70,39 +70,33 @@ describe('MCPGitHubAdapter', () => {
       expect(adapter.instanceKey).toBe('github/testorg');
       expect(adapter.owner).toBe('testorg');
       expect(adapter.serverName).toBe('github-work');
-      expect(adapter.mcpBaseCmd).toBe('openclaw mcp');
-      expect(adapter.runtime).toBe('openclaw');
+      expect(adapter.mcpBaseCmd).toBe('mcporter');
+      expect(adapter.mcpOutputFlag).toBe('--output json');
     });
 
-    test('should default to openclaw runtime when providerAgent is not provided', () => {
+    test('should default to mcporter when mcpClient is not provided', () => {
       const adapterNoClient = new MCPGitHubAdapter(
         { key: 'github/test', owner: 'test', mcpName: 'test-mcp' },
         mockLogger,
         mockRetryHelper
       );
-      expect(adapterNoClient.mcpBaseCmd).toBe('openclaw mcp');
+      expect(adapterNoClient.mcpBaseCmd).toBe('mcporter');
     });
 
-    test('should use Hermes runtime when providerAgent is hermes', () => {
+    test('should use custom mcpClient and output flag when provided', () => {
       const adapterCustom = new MCPGitHubAdapter(
         {
           key: 'github/test',
           owner: 'test',
           mcpName: 'test-mcp',
-          providerAgent: 'hermes',
-          githubRuntime: 'hermes',
-          agent: {
-            hermesProfile: 'test-profile',
-            hermesMaxTurns: 45
-          }
+          mcpClient: 'openclaw mcp',
+          mcpOutputFlag: ''
         },
         mockLogger,
         mockRetryHelper
       );
-      expect(adapterCustom.mcpBaseCmd).toBe('hermes');
-      expect(adapterCustom.runtime).toBe('hermes');
-      expect(adapterCustom.hermesProfile).toBe('test-profile');
-      expect(adapterCustom.hermesMaxTurns).toBe(45);
+      expect(adapterCustom.mcpBaseCmd).toBe('openclaw mcp');
+      expect(adapterCustom.mcpOutputFlag).toBe('');
     });
 
     test('should log initialization', () => {
@@ -154,10 +148,12 @@ describe('MCPGitHubAdapter', () => {
 
       adapter.getOpenPRs('test-repo').then((result) => {
         expect(spawn).toHaveBeenCalledWith(
-          'openclaw mcp',
+          'mcporter',
           expect.arrayContaining([
             'call',
-            'github-work.list_pull_requests'
+            'github-work.list_pull_requests',
+            '--output',
+            'json'
           ]),
           expect.objectContaining({
             maxBuffer: 10 * 1024 * 1024,
@@ -301,194 +297,6 @@ describe('MCPGitHubAdapter', () => {
       }, 10);
     });
 
-    test('should call Hermes CLI in hermes runtime', async () => {
-      const hermesAdapter = new MCPGitHubAdapter(
-        {
-          key: 'github/testorg',
-          owner: 'testorg',
-          mcpName: 'github-work',
-          providerAgent: 'hermes',
-          githubRuntime: 'hermes',
-          agent: {
-            hermesProfile: 'anto',
-            hermesMaxTurns: 90
-          }
-        },
-        mockLogger,
-        mockRetryHelper
-      );
-
-      let onDataCallback;
-      let onCloseCallback;
-
-      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
-        if (event === 'data') onDataCallback = cb;
-      });
-      mockSpawnProcess.stderr.on.mockImplementation(() => {});
-      mockSpawnProcess.on.mockImplementation((event, cb) => {
-        if (event === 'close') onCloseCallback = cb;
-      });
-
-      const promise = hermesAdapter.getOpenPRs('test-repo');
-
-      setTimeout(() => {
-        onDataCallback(JSON.stringify([]));
-        onCloseCallback(0);
-      }, 10);
-
-      await promise;
-
-      expect(spawn).toHaveBeenCalledWith(
-        'hermes',
-        expect.arrayContaining([
-          '--profile',
-          'anto',
-          '-t',
-          'hermes-cli,mcp-github-work',
-          '--yolo',
-          '--ignore-rules',
-          '-z'
-        ]),
-        expect.objectContaining({
-          shell: false
-        })
-      );
-    });
-
-    test('should fallback to Hermes chat mode once for read-only methods when oneshot output is empty', async () => {
-      const hermesAdapter = new MCPGitHubAdapter(
-        {
-          key: 'github/testorg',
-          owner: 'testorg',
-          mcpName: 'github-work',
-          providerAgent: 'hermes',
-          githubRuntime: 'hermes',
-          agent: {
-            hermesProfile: 'anto',
-            hermesMaxTurns: 90
-          }
-        },
-        mockLogger,
-        mockRetryHelper
-      );
-
-      const spawnSpy = jest.spyOn(hermesAdapter, '_spawnWithTimeout')
-        .mockResolvedValueOnce({ stdout: '', stderr: 'session_id: 20260611_214045_2975d2\n' })
-        .mockResolvedValueOnce({ stdout: JSON.stringify([]), stderr: 'session_id: 20260611_214124_30b89f\n' });
-
-      await hermesAdapter.getOpenPRs('test-repo');
-
-      expect(spawnSpy).toHaveBeenCalledTimes(2);
-      expect(spawnSpy).toHaveBeenNthCalledWith(
-        1,
-        'hermes',
-        expect.arrayContaining([
-          '--profile',
-          'anto',
-          '-t',
-          'hermes-cli,mcp-github-work',
-          '--yolo',
-          '--ignore-rules',
-          '-z'
-        ]),
-        60000,
-        expect.any(Number),
-        { shell: false }
-      );
-      expect(spawnSpy).toHaveBeenNthCalledWith(
-        2,
-        'hermes',
-        expect.arrayContaining([
-          '--profile',
-          'anto',
-          '-t',
-          'hermes-cli,mcp-github-work',
-          'chat',
-          '-q',
-          '-Q',
-          '--yolo',
-          '--ignore-rules',
-          '--source',
-          'tool',
-          '--max-turns',
-          '90'
-        ]),
-        60000,
-        expect.any(Number),
-        { shell: false }
-      );
-      expect(mockLogger.warn).toHaveBeenCalledWith(
-        expect.stringContaining('retrying once with chat -q fallback')
-      );
-      expect(mockLogger.info).not.toHaveBeenCalledWith(
-        expect.stringContaining('stderr: session_id:')
-      );
-    });
-
-    test('should not fallback to Hermes chat mode for mutating methods', async () => {
-      const hermesAdapter = new MCPGitHubAdapter(
-        {
-          key: 'github/testorg',
-          owner: 'testorg',
-          mcpName: 'github-work',
-          providerAgent: 'hermes',
-          githubRuntime: 'hermes',
-          agent: {
-            hermesProfile: 'anto',
-            hermesMaxTurns: 90
-          }
-        },
-        mockLogger,
-        mockRetryHelper
-      );
-
-      const spawnSpy = jest.spyOn(hermesAdapter, '_spawnWithTimeout')
-        .mockResolvedValueOnce({ stdout: '', stderr: 'session_id: 20260611_214045_2975d2\n' });
-
-      await expect(
-        hermesAdapter.approvePR('test-repo', 123)
-      ).rejects.toThrow('MCP response parse failed: no valid JSON found');
-
-      expect(spawnSpy).toHaveBeenCalledTimes(1);
-    });
-
-    test('should not retry Hermes MCP unavailable session errors', async () => {
-      const hermesAdapter = new MCPGitHubAdapter(
-        {
-          key: 'github/testorg',
-          owner: 'testorg',
-          mcpName: 'github',
-          providerAgent: 'hermes',
-          githubRuntime: 'hermes',
-          agent: {
-            hermesProfile: 'anto',
-            hermesMaxTurns: 90
-          }
-        },
-        mockLogger,
-        mockRetryHelper
-      );
-
-      const shouldRetry = mockRetryHelper.retryIf.mock.calls.length;
-      expect(shouldRetry).toBe(0);
-
-      jest.spyOn(hermesAdapter, '_callMCPViaHermes').mockRejectedValue(
-        new Error('MCP error: no direct MCP protocol client available in this session')
-      );
-
-      mockRetryHelper.retryIf.mockImplementation(async (fn, shouldRetryFn) => {
-        try {
-          await fn();
-        } catch (error) {
-          expect(shouldRetryFn(error)).toBe(false);
-          throw error;
-        }
-      });
-
-      await expect(
-        hermesAdapter.getPRReviews('test-repo', 123)
-      ).resolves.toEqual([]);
-    });
   });
 
   describe('getPRDetails', () => {
@@ -1047,7 +855,7 @@ describe('MCPGitHubAdapter', () => {
 
       adapter.approvePR('test-repo', 456, 'Approved!').then(() => {
         expect(spawn).toHaveBeenCalledWith(
-          'openclaw mcp',
+          'mcporter',
           expect.arrayContaining([
             'call',
             'github-work.create_pull_request_review',
@@ -1090,7 +898,7 @@ describe('MCPGitHubAdapter', () => {
 
       adapter.requestChanges('test-repo', 456, 'Please fix').then(() => {
         expect(spawn).toHaveBeenCalledWith(
-          'openclaw mcp',
+          'mcporter',
           expect.arrayContaining([
             'call',
             'github-work.create_pull_request_review',
@@ -1133,7 +941,7 @@ describe('MCPGitHubAdapter', () => {
 
       adapter.closePR('test-repo', 456).then(() => {
         expect(spawn).toHaveBeenCalledWith(
-          'openclaw mcp',
+          'mcporter',
           expect.arrayContaining([
             'call',
             'github-work.update_pull_request',
@@ -1258,38 +1066,6 @@ describe('MCPGitHubAdapter', () => {
       expect(adapter._normalizeEvent('')).toBeNull();
       expect(adapter._normalizeEvent('INVALID')).toBeNull();
       expect(adapter._normalizeEvent(123)).toBeNull();
-    });
-  });
-
-  describe('Hermes prompt helpers', () => {
-    test('builds exact Hermes callable MCP tool name', () => {
-      expect(adapter._getHermesCallableToolName('list_pull_requests')).toBe('mcp_github_work_list_pull_requests');
-
-      const hermesAdapter = new MCPGitHubAdapter(
-        {
-          key: 'github/testorg',
-          owner: 'testorg',
-          mcpName: 'github',
-          providerAgent: 'hermes',
-          githubRuntime: 'hermes'
-        },
-        mockLogger,
-        mockRetryHelper
-      );
-
-      expect(hermesAdapter._getHermesCallableToolName('get_pull_request_reviews')).toBe('mcp_github_get_pull_request_reviews');
-    });
-
-    test('builds Hermes prompt with exact callable tool name and expected shape', () => {
-      const prompt = adapter._buildHermesMcpPrompt('list_pull_requests', {
-        owner: 'testorg',
-        repo: 'test-repo',
-        state: 'open'
-      });
-
-      expect(prompt).toContain('The exact callable Hermes tool function name for this operation is "mcp_github_work_list_pull_requests"');
-      expect(prompt).toContain('Expected result shape: a JSON array of pull request objects.');
-      expect(prompt).toContain('Do not call any other GitHub tool, do not use curl, do not use terminal, and do not use web/browser search.');
     });
   });
 

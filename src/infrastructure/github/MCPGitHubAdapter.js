@@ -6,9 +6,9 @@ const { MCPError } = require('../../shared/errors');
 /**
  * MCPGitHubAdapter - GitHub operations via MCP (Model Context Protocol)
  *
- * This adapter implements the IGitHubService interface using:
- * - `openclaw mcp` when the app runs in OpenClaw mode
- * - Hermes native MCP via `hermes -z` when the app runs in Hermes mode
+ * This adapter implements the IGitHubService interface using the MCP client CLI
+ * configured for the daemon. The review agent remains independent from this
+ * transport layer.
  *
  * @example
  * const adapter = new MCPGitHubAdapter(instanceConfig, logger, retryHelper);
@@ -25,18 +25,15 @@ class MCPGitHubAdapter extends IGitHubService {
    */
   constructor(instanceConfig, logger, retryHelper) {
     super();
+    this.mcpBaseCmd = instanceConfig.mcpClient || 'mcporter';
+    this.mcpOutputFlag = instanceConfig.mcpOutputFlag !== undefined ? instanceConfig.mcpOutputFlag : '--output json';
     this.serverName = instanceConfig.mcpName;
     this.owner = instanceConfig.owner;
     this.instanceKey = instanceConfig.key;
-    this.providerAgent = instanceConfig.providerAgent || 'openclaw';
-    this.runtime = instanceConfig.githubRuntime || (this.providerAgent === 'hermes' ? 'hermes' : 'openclaw');
-    this.mcpBaseCmd = this.runtime === 'hermes' ? 'hermes' : 'openclaw mcp';
-    this.hermesProfile = instanceConfig.agent?.hermesProfile || instanceConfig.hermesProfile || null;
-    this.hermesMaxTurns = instanceConfig.agent?.hermesMaxTurns || instanceConfig.hermesMaxTurns || 90;
     this.logger = logger;
     this.retryHelper = retryHelper;
     this.tempFiles = [];
-    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Initialized with server=${this.serverName}, owner=${this.owner}, runtime=${this.runtime}`);
+    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Initialized with server=${this.serverName}, owner=${this.owner}`);
   }
 
   /**
@@ -49,80 +46,51 @@ class MCPGitHubAdapter extends IGitHubService {
   async _callMCP(method, args = {}) {
     return this.retryHelper.retryIf(async () => {
       const timeoutMs = 60000;
-      if (this.runtime === 'hermes') {
-        return this._callMCPViaHermes(method, args, timeoutMs);
+      const startTime = Date.now();
+      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Calling ${this.serverName}.${method}`);
+
+      const spawnArgs = ['call', `${this.serverName}.${method}`];
+
+      if (this.mcpOutputFlag) {
+        spawnArgs.push(...this.mcpOutputFlag.split(' '));
       }
-      return this._callMCPViaOpenClaw(method, args, timeoutMs);
-    }, (err) => this._shouldRetryMcpError(err), {
+
+      for (const [key, value] of Object.entries(args)) {
+        if (value === null || value === undefined) {
+          spawnArgs.push(`${key}=null`);
+        } else if (typeof value === 'object') {
+          if (key === 'comments' && Array.isArray(value)) {
+            const substitution = this._writeCommentsToTempFile(value);
+            spawnArgs.push(`${key}=${substitution}`);
+          } else {
+            spawnArgs.push(`${key}=${this._shellEscape(JSON.stringify(value))}`);
+          }
+        } else if (typeof value === 'string') {
+          spawnArgs.push(`${key}=${this._shellEscape(value)}`);
+        } else {
+          spawnArgs.push(`${key}=${value}`);
+        }
+      }
+
+      this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}] MCP command: ${this.mcpBaseCmd} ${spawnArgs.slice(0, 5).join(' ')}... (${spawnArgs.length} args total)`);
+      const result = await this._spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
+
+      if (result.stderr && result.stderr.length > 0) {
+        this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] stderr: ${result.stderr.substring(0, 500)}`);
+      }
+
+      return this._parseMCPJsonResponse(method, result.stdout, spawnArgs);
+    }, (err) => {
+      if (err.message && err.message.includes('Unknown tool')) {
+        return false;
+      }
+      return true;
+    }, {
       retries: 3,
       minTimeout: 2000,
       factor: 2,
       context: `MCP:${this.instanceKey}.${method}`
     });
-  }
-
-  async _callMCPViaOpenClaw(method, args, timeoutMs) {
-    const startTime = Date.now();
-    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Calling ${this.serverName}.${method} via openclaw mcp`);
-
-    const spawnArgs = ['call', `${this.serverName}.${method}`];
-
-    for (const [key, value] of Object.entries(args)) {
-      if (value === null || value === undefined) {
-        spawnArgs.push(`${key}=null`);
-      } else if (typeof value === 'object') {
-        if (key === 'comments' && Array.isArray(value)) {
-          const substitution = this._writeCommentsToTempFile(value);
-          spawnArgs.push(`${key}=${substitution}`);
-        } else {
-          spawnArgs.push(`${key}=${this._shellEscape(JSON.stringify(value))}`);
-        }
-      } else if (typeof value === 'string') {
-        spawnArgs.push(`${key}=${this._shellEscape(value)}`);
-      } else {
-        spawnArgs.push(`${key}=${value}`);
-      }
-    }
-
-    this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}] OpenClaw MCP command: ${this.mcpBaseCmd} ${spawnArgs.slice(0, 5).join(' ')}... (${spawnArgs.length} args total)`);
-    const result = await this._spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime);
-
-    if (result.stderr && result.stderr.length > 0) {
-      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] stderr: ${result.stderr.substring(0, 500)}`);
-    }
-
-    return this._parseMCPJsonResponse(method, result.stdout, spawnArgs);
-  }
-
-  async _callMCPViaHermes(method, args, timeoutMs) {
-    const startTime = Date.now();
-    const prompt = this._buildHermesMcpPrompt(method, args);
-    const primaryArgs = this._buildHermesOneShotArgs(prompt);
-
-    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Calling ${this.serverName}.${method} via Hermes native MCP`);
-
-    try {
-      const result = await this._spawnWithTimeout(this.mcpBaseCmd, primaryArgs, timeoutMs, startTime, {
-        shell: false
-      });
-      this._logHermesStderr(result.stderr);
-      return this._parseMCPJsonResponse(method, result.stdout);
-    } catch (error) {
-      if (!this._shouldFallbackHermesReadOnly(method, error)) {
-        throw error;
-      }
-
-      this.logger.warn(
-        `[MCPGitHubAdapter:${this.instanceKey}] Hermes oneshot did not return parseable JSON for ${method}; retrying once with chat -q fallback`
-      );
-
-      const fallbackArgs = this._buildHermesChatArgs(prompt);
-      const result = await this._spawnWithTimeout(this.mcpBaseCmd, fallbackArgs, timeoutMs, Date.now(), {
-        shell: false
-      });
-      this._logHermesStderr(result.stderr);
-      return this._parseMCPJsonResponse(method, result.stdout);
-    }
   }
 
   /**
@@ -134,7 +102,7 @@ class MCPGitHubAdapter extends IGitHubService {
    * @returns {Promise<{stdout: string, stderr: string}>}
    * @private
    */
-  _spawnWithTimeout(command, args, timeoutMs, startTime, spawnOptions = {}) {
+  _spawnWithTimeout(command, args, timeoutMs, startTime) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         spawnProcess.stdout.off('data', onData);
@@ -153,7 +121,7 @@ class MCPGitHubAdapter extends IGitHubService {
 
       const spawnProcess = spawn(command, args, {
         maxBuffer: 10 * 1024 * 1024,
-        shell: spawnOptions.shell !== undefined ? spawnOptions.shell : true
+        shell: true
       });
 
       let stdout = '';
@@ -224,157 +192,6 @@ class MCPGitHubAdapter extends IGitHubService {
       .replace(/`/g, '\\`')
       .replace(/\n/g, '\\n');
     return `"${escaped}"`;
-  }
-
-  _buildHermesOneShotArgs(prompt) {
-    const spawnArgs = [];
-
-    if (this.hermesProfile) {
-      spawnArgs.push('--profile', this.hermesProfile);
-    }
-
-    spawnArgs.push('-t', this._getHermesToolsetsArg());
-
-    spawnArgs.push(
-      '--yolo',
-      '--ignore-rules',
-      '-z',
-      prompt
-    );
-
-    return spawnArgs;
-  }
-
-  _buildHermesChatArgs(prompt) {
-    const spawnArgs = [];
-
-    if (this.hermesProfile) {
-      spawnArgs.push('--profile', this.hermesProfile);
-    }
-
-    spawnArgs.push('-t', this._getHermesToolsetsArg());
-
-    spawnArgs.push(
-      'chat',
-      '-q',
-      prompt,
-      '-Q',
-      '--yolo',
-      '--ignore-rules',
-      '--source',
-      'tool',
-      '--max-turns',
-      String(this.hermesMaxTurns)
-    );
-
-    return spawnArgs;
-  }
-
-  _getHermesToolsetsArg() {
-    return `hermes-cli,mcp-${this.serverName}`;
-  }
-
-  _shouldRetryMcpError(err) {
-    if (!err || typeof err.message !== 'string') {
-      return true;
-    }
-
-    if (err.message.includes('Unknown tool')) {
-      return false;
-    }
-
-    if (this._isHermesToolUnavailableError(err)) {
-      return false;
-    }
-
-    return true;
-  }
-
-  _isReadOnlyMcpMethod(method) {
-    return new Set([
-      'list_pull_requests',
-      'get_pull_request_files',
-      'get_pull_request_reviews',
-      'get_pull_request_comments',
-      'list_commits'
-    ]).has(method);
-  }
-
-  _shouldFallbackHermesReadOnly(method, error) {
-    if (!this._isReadOnlyMcpMethod(method)) {
-      return false;
-    }
-
-    if (!(error instanceof MCPError)) {
-      return false;
-    }
-
-    return (
-      error.operation === 'spawn' ||
-      (typeof error.message === 'string' && error.message.includes('no valid JSON found'))
-    );
-  }
-
-  _logHermesStderr(stderr) {
-    const trimmed = (stderr || '').trim();
-    if (!trimmed) {
-      return;
-    }
-
-    if (/^session_id:\s+\S+$/m.test(trimmed) && trimmed.split('\n').every(line => /^session_id:\s+\S+$/.test(line.trim()))) {
-      this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}] Hermes session metadata: ${trimmed.substring(0, 500)}`);
-      return;
-    }
-
-    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] stderr: ${trimmed.substring(0, 500)}`);
-  }
-
-  _isHermesToolUnavailableError(error) {
-    const message = error?.message || '';
-    return (
-      message.includes('no direct MCP protocol client available in this session') ||
-      message.includes('not accessible as a callable tool') ||
-      message.includes('not available in the active tool registry') ||
-      message.includes('GitHub MCP tools are not exposed as callable functions in this Hermes session toolset') ||
-      message.includes('MCP servers are only available when loaded via the Hermes gateway')
-    );
-  }
-
-  _buildHermesMcpPrompt(method, args) {
-    const callableToolName = this._getHermesCallableToolName(method);
-    const expectedShape = this._getExpectedHermesResultShape(method);
-
-    return [
-      'You are a machine bridge for a background Node.js daemon.',
-      `Use the GitHub MCP tools available in the active Hermes profile. The configured MCP server alias is "${this.serverName}".`,
-      `The exact callable Hermes tool function name for this operation is "${callableToolName}".`,
-      `Perform the GitHub operation whose canonical method name is "${method}" by calling exactly that tool with these exact arguments:`,
-      JSON.stringify(args, null, 2),
-      `Expected result shape: ${expectedShape}.`,
-      'Rules:',
-      `- Actually call the exact tool "${callableToolName}". Do not simulate the result.`,
-      '- Do not call any other GitHub tool, do not use curl, do not use terminal, and do not use web/browser search.',
-      '- Return ONLY the raw JSON result from that exact tool call.',
-      '- No markdown fences, no prose, no explanation.',
-      '- If the tool is unavailable or the call fails, return exactly {"error":"<exact error message>"}'
-    ].join('\n');
-  }
-
-  _getHermesCallableToolName(method) {
-    const sanitize = (value) => String(value || '').replace(/[-.]/g, '_');
-    return `mcp_${sanitize(this.serverName)}_${sanitize(method)}`;
-  }
-
-  _getExpectedHermesResultShape(method) {
-    const arrayMethods = new Map([
-      ['list_pull_requests', 'a JSON array of pull request objects'],
-      ['get_pull_request_files', 'a JSON array of file objects'],
-      ['get_pull_request_reviews', 'a JSON array of review objects'],
-      ['get_pull_request_comments', 'a JSON array of review comment objects'],
-      ['list_commits', 'a JSON array of commit objects']
-    ]);
-
-    return arrayMethods.get(method) || 'a single JSON object';
   }
 
   _parseMCPJsonResponse(method, stdout, spawnArgs = []) {
@@ -941,7 +758,7 @@ class MCPGitHubAdapter extends IGitHubService {
         comments: r.comments || []
       }));
     } catch (err) {
-      if (this._isHermesToolUnavailableError(err) || (err.message && err.message.includes('Unknown tool'))) {
+      if (err.message && err.message.includes('Unknown tool')) {
         this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}] get_pull_request_reviews tool not available`);
       } else {
         this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Failed to fetch reviews for PR #${prNumber}: ${err.message}`);
@@ -979,7 +796,7 @@ class MCPGitHubAdapter extends IGitHubService {
         updated_at: c.updated_at
       }));
     } catch (err) {
-      if (this._isHermesToolUnavailableError(err) || (err.message && err.message.includes('Unknown tool'))) {
+      if (err.message && err.message.includes('Unknown tool')) {
         this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}] get_pull_request_comments tool not available`);
       } else {
         this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Failed to fetch comments for PR #${prNumber}: ${err.message}`);
