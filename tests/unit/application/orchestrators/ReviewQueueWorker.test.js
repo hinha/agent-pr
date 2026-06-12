@@ -78,11 +78,19 @@ describe('ReviewQueueWorker', () => {
       emitAsync: jest.fn()
     };
     mockDiscordAdapter = {
-      sendHermesMention: jest.fn().mockResolvedValue({ success: true, id: 'discord-trigger-1' })
+      sendHermesMention: jest.fn().mockResolvedValue({
+        success: true,
+        id: 'discord-trigger-1',
+        message: { id: 'discord-trigger-1' }
+      }),
+      sendReplyChunks: jest.fn().mockResolvedValue([])
     };
     mockReviewPromptBuilder = {
       build: jest.fn().mockReturnValue('BASE PROMPT'),
-      buildDiscordHandoff: jest.fn().mockReturnValue('<@123>\nHANDOFF PROMPT')
+      buildDiscordHandoff: jest.fn().mockReturnValue({
+        triggerContent: '<@123>\nHANDOFF TRIGGER',
+        detailContent: 'HANDOFF DETAIL'
+      })
     };
     mockExternalReviewSessionService = {
       startSession: jest.fn(),
@@ -876,8 +884,13 @@ describe('ReviewQueueWorker', () => {
       expect(mockReviewPromptBuilder.build).toHaveBeenCalled();
       expect(mockDiscordAdapter.sendHermesMention).toHaveBeenCalledWith(expect.objectContaining({
         mentionBotName: '<@123456789012345678>',
-        content: '<@123>\nHANDOFF PROMPT'
+        content: '<@123>\nHANDOFF TRIGGER'
       }));
+      expect(mockDiscordAdapter.sendReplyChunks).toHaveBeenCalledWith(
+        { id: 'discord-trigger-1' },
+        'HANDOFF DETAIL',
+        { prefix: 'Prompt review' }
+      );
       expect(mockExternalReviewSessionService.startSession).toHaveBeenCalledWith(expect.objectContaining({
         queueItemId: 'qi_test_handoff',
         triggerMessageId: 'discord-trigger-1',

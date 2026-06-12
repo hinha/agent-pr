@@ -73,6 +73,32 @@ describe('DiscordBotAdapter', () => {
     }));
   });
 
+  test('returns message object from sendHermesMention and can split long replies', async () => {
+    const adapter = new DiscordBotAdapter('token', {
+      config,
+      logger: { info: jest.fn(), error: jest.fn() }
+    });
+
+    const trigger = await adapter.sendHermesMention({
+      instance: { owner: 'acme' },
+      repo: { name: 'api' },
+      mentionBotName: '<@123456789012345678>',
+      content: 'short trigger'
+    });
+
+    const reply = jest.fn().mockResolvedValue({ id: 'reply-1' });
+    trigger.message.reply = reply;
+
+    const result = await adapter.sendReplyChunks(trigger.message, 'a'.repeat(8000), {
+      prefix: 'Prompt review',
+      chunkSize: 3500
+    });
+
+    expect(trigger.message).toBeDefined();
+    expect(reply).toHaveBeenCalledTimes(3);
+    expect(result).toHaveLength(3);
+  });
+
   test('requests message intents for handoff reply flow', () => {
     const adapter = new DiscordBotAdapter('token', {
       config,

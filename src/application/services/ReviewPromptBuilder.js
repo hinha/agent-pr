@@ -60,15 +60,17 @@ class ReviewPromptBuilder {
   buildDiscordHandoff(input) {
     const { mentionBotName, basePrompt } = input;
 
-    return [
-      `${mentionBotName}`,
-      'KERJAKAN review ini di channel ini.',
-      'Anda boleh mengirim progress atau diskusi biasa selama review berjalan.',
-      'HASIL FINAL WAJIB berupa reply ke pesan ini dan isi reply tersebut HARUS valid JSON saja.',
-      'JANGAN submit review GitHub langsung. Bot ini yang akan submit hasil final ke GitHub.',
-      '',
-      basePrompt
-    ].join('\n');
+    return {
+      triggerContent: [
+        `${mentionBotName}`,
+        'KERJAKAN review ini di channel ini.',
+        'Anda boleh mengirim progress atau diskusi biasa selama review berjalan.',
+        'HASIL FINAL WAJIB berupa reply ke pesan ini dan isi reply tersebut HARUS valid JSON saja.',
+        'JANGAN submit review GitHub langsung. Bot ini yang akan submit hasil final ke GitHub.',
+        'Prompt review lengkap akan dikirim pada reply setelah pesan ini.'
+      ].join('\n'),
+      detailContent: basePrompt
+    };
   }
 
   _loadTemplate(owner, repo) {

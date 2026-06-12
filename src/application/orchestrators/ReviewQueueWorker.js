@@ -344,8 +344,14 @@ class ReviewQueueWorker {
       instance,
       repo,
       mentionBotName: instance.mentionBotName,
-      content: handoffPrompt
+      content: handoffPrompt.triggerContent
     });
+
+    await this.discordAdapter.sendReplyChunks(
+      trigger.message,
+      handoffPrompt.detailContent,
+      { prefix: 'Prompt review' }
+    );
 
     this.externalReviewSessionService.startSession({
       queueItemId: item.id,

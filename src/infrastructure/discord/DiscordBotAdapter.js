@@ -99,7 +99,7 @@ class DiscordBotAdapter extends EventEmitter {
       allowedMentions
     });
 
-    return { success: true, id: message.id };
+    return { success: true, id: message.id, message };
   }
 
   async sendReply(targetMessage, content) {
@@ -116,6 +116,20 @@ class DiscordBotAdapter extends EventEmitter {
     }
 
     throw new Error('Discord reply target is not sendable');
+  }
+
+  async sendReplyChunks(targetMessage, content, options = {}) {
+    const prefix = options.prefix || 'Prompt review';
+    const chunkSize = options.chunkSize || 3600;
+    const chunks = this._chunkContent(content, chunkSize);
+    const sent = [];
+
+    for (let index = 0; index < chunks.length; index++) {
+      const header = `${prefix} (${index + 1}/${chunks.length}):\n`;
+      sent.push(await this.sendReply(targetMessage, `${header}${chunks[index]}`));
+    }
+
+    return sent;
   }
 
   async sendQueueCompletedNotification(data) {
@@ -255,6 +269,35 @@ class DiscordBotAdapter extends EventEmitter {
       parse: [],
       users: userId ? [userId] : []
     };
+  }
+
+  _chunkContent(content, maxLength = 3600) {
+    const text = String(content || '');
+    if (text.length <= maxLength) {
+      return [text];
+    }
+
+    const chunks = [];
+    let remaining = text;
+
+    while (remaining.length > maxLength) {
+      let splitAt = remaining.lastIndexOf('\n', maxLength);
+      if (splitAt < maxLength * 0.6) {
+        splitAt = remaining.lastIndexOf(' ', maxLength);
+      }
+      if (splitAt < maxLength * 0.6) {
+        splitAt = maxLength;
+      }
+
+      chunks.push(remaining.slice(0, splitAt).trim());
+      remaining = remaining.slice(splitAt).trim();
+    }
+
+    if (remaining.length > 0) {
+      chunks.push(remaining);
+    }
+
+    return chunks;
   }
 }
 
