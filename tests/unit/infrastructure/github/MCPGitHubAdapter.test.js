@@ -275,7 +275,60 @@ describe('MCPGitHubAdapter', () => {
         expect.arrayContaining([
           '--profile',
           'anto',
-          '--cli',
+          '--yolo',
+          '--ignore-rules',
+          '-z'
+        ]),
+        expect.objectContaining({
+          shell: false
+        })
+      );
+    });
+
+    test('should fallback to Hermes chat mode once for read-only methods when oneshot output is empty', async () => {
+      const hermesAdapter = new MCPGitHubAdapter(
+        {
+          key: 'github/testorg',
+          owner: 'testorg',
+          mcpName: 'github-work',
+          providerAgent: 'hermes',
+          githubRuntime: 'hermes',
+          agent: {
+            hermesProfile: 'anto',
+            hermesMaxTurns: 90
+          }
+        },
+        mockLogger,
+        mockRetryHelper
+      );
+
+      const spawnSpy = jest.spyOn(hermesAdapter, '_spawnWithTimeout')
+        .mockResolvedValueOnce({ stdout: '', stderr: 'session_id: 20260611_214045_2975d2\n' })
+        .mockResolvedValueOnce({ stdout: JSON.stringify([]), stderr: 'session_id: 20260611_214124_30b89f\n' });
+
+      await hermesAdapter.getOpenPRs('test-repo');
+
+      expect(spawnSpy).toHaveBeenCalledTimes(2);
+      expect(spawnSpy).toHaveBeenNthCalledWith(
+        1,
+        'hermes',
+        expect.arrayContaining([
+          '--profile',
+          'anto',
+          '--yolo',
+          '--ignore-rules',
+          '-z'
+        ]),
+        60000,
+        expect.any(Number),
+        { shell: false }
+      );
+      expect(spawnSpy).toHaveBeenNthCalledWith(
+        2,
+        'hermes',
+        expect.arrayContaining([
+          '--profile',
+          'anto',
           'chat',
           '-q',
           '-Q',
@@ -286,10 +339,43 @@ describe('MCPGitHubAdapter', () => {
           '--max-turns',
           '90'
         ]),
-        expect.objectContaining({
-          shell: false
-        })
+        60000,
+        expect.any(Number),
+        { shell: false }
       );
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('retrying once with chat -q fallback')
+      );
+      expect(mockLogger.info).not.toHaveBeenCalledWith(
+        expect.stringContaining('stderr: session_id:')
+      );
+    });
+
+    test('should not fallback to Hermes chat mode for mutating methods', async () => {
+      const hermesAdapter = new MCPGitHubAdapter(
+        {
+          key: 'github/testorg',
+          owner: 'testorg',
+          mcpName: 'github-work',
+          providerAgent: 'hermes',
+          githubRuntime: 'hermes',
+          agent: {
+            hermesProfile: 'anto',
+            hermesMaxTurns: 90
+          }
+        },
+        mockLogger,
+        mockRetryHelper
+      );
+
+      const spawnSpy = jest.spyOn(hermesAdapter, '_spawnWithTimeout')
+        .mockResolvedValueOnce({ stdout: '', stderr: 'session_id: 20260611_214045_2975d2\n' });
+
+      await expect(
+        hermesAdapter.approvePR('test-repo', 123)
+      ).rejects.toThrow('MCP response parse failed: no valid JSON found');
+
+      expect(spawnSpy).toHaveBeenCalledTimes(1);
     });
   });
 

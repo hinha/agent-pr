@@ -8,7 +8,7 @@ const { MCPError } = require('../../shared/errors');
  *
  * This adapter implements the IGitHubService interface using:
  * - `openclaw mcp` when the app runs in OpenClaw mode
- * - Hermes native MCP via `hermes chat -q` when the app runs in Hermes mode
+ * - Hermes native MCP via `hermes -z` when the app runs in Hermes mode
  *
  * @example
  * const adapter = new MCPGitHubAdapter(instanceConfig, logger, retryHelper);
@@ -103,36 +103,32 @@ class MCPGitHubAdapter extends IGitHubService {
   async _callMCPViaHermes(method, args, timeoutMs) {
     const startTime = Date.now();
     const prompt = this._buildHermesMcpPrompt(method, args);
-    const spawnArgs = [];
-
-    if (this.hermesProfile) {
-      spawnArgs.push('--profile', this.hermesProfile);
-    }
-
-    spawnArgs.push(
-      '--cli',
-      'chat',
-      '-q',
-      prompt,
-      '-Q',
-      '--yolo',
-      '--ignore-rules',
-      '--source',
-      'tool',
-      '--max-turns',
-      String(this.hermesMaxTurns)
-    );
+    const primaryArgs = this._buildHermesOneShotArgs(prompt);
 
     this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] Calling ${this.serverName}.${method} via Hermes native MCP`);
-    const result = await this._spawnWithTimeout(this.mcpBaseCmd, spawnArgs, timeoutMs, startTime, {
-      shell: false
-    });
 
-    if (result.stderr && result.stderr.length > 0) {
-      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] stderr: ${result.stderr.substring(0, 500)}`);
+    try {
+      const result = await this._spawnWithTimeout(this.mcpBaseCmd, primaryArgs, timeoutMs, startTime, {
+        shell: false
+      });
+      this._logHermesStderr(result.stderr);
+      return this._parseMCPJsonResponse(method, result.stdout);
+    } catch (error) {
+      if (!this._shouldFallbackHermesReadOnly(method, error)) {
+        throw error;
+      }
+
+      this.logger.warn(
+        `[MCPGitHubAdapter:${this.instanceKey}] Hermes oneshot did not return parseable JSON for ${method}; retrying once with chat -q fallback`
+      );
+
+      const fallbackArgs = this._buildHermesChatArgs(prompt);
+      const result = await this._spawnWithTimeout(this.mcpBaseCmd, fallbackArgs, timeoutMs, Date.now(), {
+        shell: false
+      });
+      this._logHermesStderr(result.stderr);
+      return this._parseMCPJsonResponse(method, result.stdout);
     }
-
-    return this._parseMCPJsonResponse(method, result.stdout);
   }
 
   /**
@@ -234,6 +230,85 @@ class MCPGitHubAdapter extends IGitHubService {
       .replace(/`/g, '\\`')
       .replace(/\n/g, '\\n');
     return `"${escaped}"`;
+  }
+
+  _buildHermesOneShotArgs(prompt) {
+    const spawnArgs = [];
+
+    if (this.hermesProfile) {
+      spawnArgs.push('--profile', this.hermesProfile);
+    }
+
+    spawnArgs.push(
+      '--yolo',
+      '--ignore-rules',
+      '-z',
+      prompt
+    );
+
+    return spawnArgs;
+  }
+
+  _buildHermesChatArgs(prompt) {
+    const spawnArgs = [];
+
+    if (this.hermesProfile) {
+      spawnArgs.push('--profile', this.hermesProfile);
+    }
+
+    spawnArgs.push(
+      'chat',
+      '-q',
+      prompt,
+      '-Q',
+      '--yolo',
+      '--ignore-rules',
+      '--source',
+      'tool',
+      '--max-turns',
+      String(this.hermesMaxTurns)
+    );
+
+    return spawnArgs;
+  }
+
+  _isReadOnlyMcpMethod(method) {
+    return new Set([
+      'list_pull_requests',
+      'get_pull_request_files',
+      'get_pull_request_reviews',
+      'get_pull_request_comments',
+      'list_commits'
+    ]).has(method);
+  }
+
+  _shouldFallbackHermesReadOnly(method, error) {
+    if (!this._isReadOnlyMcpMethod(method)) {
+      return false;
+    }
+
+    if (!(error instanceof MCPError)) {
+      return false;
+    }
+
+    return (
+      error.operation === 'spawn' ||
+      (typeof error.message === 'string' && error.message.includes('no valid JSON found'))
+    );
+  }
+
+  _logHermesStderr(stderr) {
+    const trimmed = (stderr || '').trim();
+    if (!trimmed) {
+      return;
+    }
+
+    if (/^session_id:\s+\S+$/m.test(trimmed) && trimmed.split('\n').every(line => /^session_id:\s+\S+$/.test(line.trim()))) {
+      this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}] Hermes session metadata: ${trimmed.substring(0, 500)}`);
+      return;
+    }
+
+    this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] stderr: ${trimmed.substring(0, 500)}`);
   }
 
   _buildHermesMcpPrompt(method, args) {
