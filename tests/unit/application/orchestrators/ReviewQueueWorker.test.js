@@ -83,7 +83,7 @@ describe('ReviewQueueWorker', () => {
         id: 'discord-trigger-1',
         message: { id: 'discord-trigger-1' }
       }),
-      sendReplyChunks: jest.fn().mockResolvedValue([])
+      sendReplyChunks: jest.fn().mockResolvedValue([{ id: 'prompt-chunk-1' }, { id: 'prompt-chunk-2' }])
     };
     mockReviewPromptBuilder = {
       build: jest.fn().mockReturnValue('BASE PROMPT'),
@@ -95,7 +95,8 @@ describe('ReviewQueueWorker', () => {
     mockExternalReviewSessionService = {
       startSession: jest.fn(),
       awaitPromptRequest: jest.fn(),
-      awaitResult: jest.fn()
+      awaitResult: jest.fn(),
+      registerReplyTargets: jest.fn()
     };
 
     worker = new ReviewQueueWorker(
@@ -899,6 +900,10 @@ describe('ReviewQueueWorker', () => {
         trustedBotUserId: '123456789012345678'
       }));
       expect(mockExternalReviewSessionService.awaitPromptRequest).toHaveBeenCalledWith('qi_test_handoff');
+      expect(mockExternalReviewSessionService.registerReplyTargets).toHaveBeenCalledWith(
+        'qi_test_handoff',
+        [{ id: 'hermes-handshake-1' }, { id: 'prompt-chunk-1' }, { id: 'prompt-chunk-2' }]
+      );
       expect(mockReviewPRUseCase.submitExternalResult).toHaveBeenCalledWith(
         expect.objectContaining({ owner: 'test' }),
         expect.objectContaining({ name: 'repo' }),

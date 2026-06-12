@@ -360,11 +360,12 @@ class ReviewQueueWorker {
 
     const promptRequestMessage = await this.externalReviewSessionService.awaitPromptRequest(item.id);
     if (promptRequestMessage) {
-      await this.discordAdapter.sendReplyChunks(
+      const promptMessages = await this.discordAdapter.sendReplyChunks(
         promptRequestMessage,
         handoffPrompt.detailContent,
         { prefix: 'Prompt review' }
       );
+      this.externalReviewSessionService.registerReplyTargets(item.id, [promptRequestMessage, ...promptMessages]);
     }
 
     const externalResult = await this.externalReviewSessionService.awaitResult(item.id);

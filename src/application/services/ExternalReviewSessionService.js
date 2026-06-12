@@ -2,7 +2,7 @@ class ExternalReviewSessionService {
   constructor(options = {}) {
     this.logger = options.logger || console;
     this.sessionsByQueueItemId = new Map();
-    this.sessionsByTriggerMessageId = new Map();
+    this.sessionsByReplyTargetMessageId = new Map();
   }
 
   startSession(sessionInput = {}) {
@@ -30,8 +30,9 @@ class ExternalReviewSessionService {
       this.failSession(session.queueItemId, new Error('Timed out waiting for external review reply'));
     }, Math.max(timeoutMs, 1));
 
+    session.replyTargetMessageIds = new Set([String(session.triggerMessageId)]);
     this.sessionsByQueueItemId.set(session.queueItemId, session);
-    this.sessionsByTriggerMessageId.set(String(session.triggerMessageId), session);
+    this.sessionsByReplyTargetMessageId.set(String(session.triggerMessageId), session);
 
     this.logger.info(
       `[ExternalReviewSessionService] Started session for ${session.instanceKey}/${session.repoName} PR #${session.prNumber}`
@@ -56,13 +57,37 @@ class ExternalReviewSessionService {
     return session.promptRequestPromise;
   }
 
+  registerReplyTargets(queueItemId, messages = []) {
+    const session = this.sessionsByQueueItemId.get(queueItemId);
+    if (!session) {
+      throw new Error(`External review session not found: ${queueItemId}`);
+    }
+
+    for (const message of messages) {
+      const messageId = message?.id;
+      if (!messageId) {
+        continue;
+      }
+
+      const normalizedId = String(messageId);
+      if (session.replyTargetMessageIds.has(normalizedId)) {
+        continue;
+      }
+
+      session.replyTargetMessageIds.add(normalizedId);
+      this.sessionsByReplyTargetMessageId.set(normalizedId, session);
+    }
+
+    return Array.from(session.replyTargetMessageIds);
+  }
+
   handleAgentReply(message) {
-    const triggerMessageId = this._extractReplyTargetMessageId(message);
-    if (!triggerMessageId) {
+    const replyTargetMessageId = this._extractReplyTargetMessageId(message);
+    if (!replyTargetMessageId) {
       return { matched: false, accepted: false, reason: 'not_a_reply' };
     }
 
-    const session = this.sessionsByTriggerMessageId.get(String(triggerMessageId));
+    const session = this.sessionsByReplyTargetMessageId.get(String(replyTargetMessageId));
     if (!session) {
       return { matched: false, accepted: false, reason: 'unknown_trigger' };
     }
@@ -154,7 +179,9 @@ class ExternalReviewSessionService {
     }
 
     this.sessionsByQueueItemId.delete(queueItemId);
-    this.sessionsByTriggerMessageId.delete(String(session.triggerMessageId));
+    for (const messageId of session.replyTargetMessageIds || []) {
+      this.sessionsByReplyTargetMessageId.delete(String(messageId));
+    }
   }
 
   _resolvePromptRequest(session, message) {
@@ -163,6 +190,9 @@ class ExternalReviewSessionService {
     }
 
     session.promptRequestMessage = message;
+    if (message?.id) {
+      this.registerReplyTargets(session.queueItemId, [message]);
+    }
     if (session.resolvePromptRequest) {
       session.resolvePromptRequest(message);
       session.resolvePromptRequest = null;

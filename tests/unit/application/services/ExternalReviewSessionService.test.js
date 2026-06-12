@@ -16,7 +16,7 @@ describe('ExternalReviewSessionService', () => {
       }
     }
     service.sessionsByQueueItemId.clear();
-    service.sessionsByTriggerMessageId.clear();
+    service.sessionsByReplyTargetMessageId.clear();
     jest.useRealTimers();
   });
 
@@ -185,5 +185,43 @@ describe('ExternalReviewSessionService', () => {
       reason: 'invalid_final_payload'
     }));
     expect(service.sessionsByQueueItemId.has('qi_5')).toBe(true);
+  });
+
+  test('accepts final reply to prompt chunk message after handshake', async () => {
+    service.startSession({
+      queueItemId: 'qi_6',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 10,
+      level: 'high',
+      triggerMessageId: 'trigger-6',
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    service.handleAgentReply({
+      id: 'msg-6a',
+      content: 'Kirim prompt lengkap',
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'trigger-6' }
+    });
+
+    service.registerReplyTargets('qi_6', [{ id: 'prompt-6-1' }, { id: 'prompt-6-2' }]);
+
+    const pending = service.awaitResult('qi_6');
+    const finalHandle = service.handleAgentReply({
+      id: 'msg-6b',
+      content: '{"summary":"done","comments":[]}',
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'prompt-6-2' }
+    });
+
+    await expect(pending).resolves.toEqual(expect.objectContaining({
+      reviewResult: { summary: 'done', comments: [] }
+    }));
+    expect(finalHandle).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: true
+    }));
   });
 });
