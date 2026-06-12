@@ -426,6 +426,101 @@ class MCPGitHubAdapter extends IGitHubService {
     return null;
   }
 
+  _normalizeArrayResponse(method, payload, expectedKeys = []) {
+    const normalized = this._extractArrayPayload(payload, expectedKeys);
+    if (normalized) {
+      return normalized;
+    }
+
+    let payloadPreview;
+    if (typeof payload === 'string') {
+      payloadPreview = payload.substring(0, 1000);
+    } else {
+      try {
+        payloadPreview = JSON.stringify(payload).substring(0, 1000);
+      } catch {
+        payloadPreview = String(payload);
+      }
+    }
+
+    this.logger.error(
+      `[MCPGitHubAdapter:${this.instanceKey}] ${method} returned non-array payload: ${payloadPreview}`
+    );
+
+    throw new MCPError(
+      `MCP ${method} response is not an array`,
+      this.serverName,
+      method,
+      false,
+      { payloadPreview }
+    );
+  }
+
+  _extractArrayPayload(payload, expectedKeys = []) {
+    if (Array.isArray(payload)) {
+      return payload;
+    }
+
+    if (typeof payload === 'string') {
+      const parsed = this._tryParseJsonString(payload);
+      if (parsed !== null && parsed !== undefined) {
+        return this._extractArrayPayload(parsed, expectedKeys);
+      }
+      return null;
+    }
+
+    if (!payload || typeof payload !== 'object') {
+      return null;
+    }
+
+    const candidateKeys = [
+      ...expectedKeys,
+      'result',
+      'results',
+      'response',
+      'responses',
+      'data',
+      'items',
+      'content',
+      'output'
+    ];
+
+    for (const key of candidateKeys) {
+      if (!(key in payload)) {
+        continue;
+      }
+
+      const extracted = this._extractArrayPayload(payload[key], expectedKeys);
+      if (extracted) {
+        return extracted;
+      }
+    }
+
+    return null;
+  }
+
+  _tryParseJsonString(value) {
+    const trimmed = typeof value === 'string' ? value.trim() : value;
+    if (!trimmed) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      const extracted = this._extractJSON(trimmed);
+      if (!extracted) {
+        return null;
+      }
+
+      try {
+        return JSON.parse(extracted);
+      } catch {
+        return null;
+      }
+    }
+  }
+
   /**
    * Write comments to temporary file and return the command substitution string
    * @param {Array<Object>} comments - Array of comment objects
@@ -450,13 +545,14 @@ class MCPGitHubAdapter extends IGitHubService {
   async getOpenPRs(repo) {
     this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Fetching open PRs`);
 
-    const rawPRs = await this._callMCP('list_pull_requests', {
+    const payload = await this._callMCP('list_pull_requests', {
       owner: this.owner,
       repo: repo,
       state: 'open',
       per_page: 100,
       page: 1
     });
+    const rawPRs = this._normalizeArrayResponse('list_pull_requests', payload, ['pull_requests']);
 
     this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Found ${rawPRs.length} open PRs`);
 
@@ -487,11 +583,12 @@ class MCPGitHubAdapter extends IGitHubService {
 
     let rawFiles;
     try {
-      rawFiles = await this._callMCP('get_pull_request_files', {
+      const payload = await this._callMCP('get_pull_request_files', {
         owner: this.owner,
         repo: repo,
         pull_number: prNumber
       });
+      rawFiles = this._normalizeArrayResponse('get_pull_request_files', payload, ['files']);
     } catch (error) {
       if (this._isNullUrlValidationError(error)) {
         this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] PR #${prNumber} contains files with null URLs`);
@@ -582,11 +679,12 @@ class MCPGitHubAdapter extends IGitHubService {
     let positionMaps = new Map();
     try {
       this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Fetching PR files with patches for position calculation`);
-      const rawFiles = await this._callMCP('get_pull_request_files', {
+      const payload = await this._callMCP('get_pull_request_files', {
         owner: this.owner,
         repo: repo,
         pull_number: pr.number
       });
+      const rawFiles = this._normalizeArrayResponse('get_pull_request_files', payload, ['files']);
 
       // Build position maps for each file
       for (const file of rawFiles || []) {
@@ -772,11 +870,12 @@ class MCPGitHubAdapter extends IGitHubService {
     this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Fetching reviews for PR #${prNumber}`);
 
     try {
-      const rawReviews = await this._callMCP('get_pull_request_reviews', {
+      const payload = await this._callMCP('get_pull_request_reviews', {
         owner: this.owner,
         repo: repo,
         pull_number: prNumber
       });
+      const rawReviews = this._normalizeArrayResponse('get_pull_request_reviews', payload, ['reviews']);
 
       this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Found ${rawReviews.length} reviews for PR #${prNumber}`);
 
@@ -809,11 +908,12 @@ class MCPGitHubAdapter extends IGitHubService {
     this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Fetching comments for PR #${prNumber}`);
 
     try {
-      const rawComments = await this._callMCP('get_pull_request_comments', {
+      const payload = await this._callMCP('get_pull_request_comments', {
         owner: this.owner,
         repo: repo,
         pull_number: prNumber
       });
+      const rawComments = this._normalizeArrayResponse('get_pull_request_comments', payload, ['comments']);
 
       this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Found ${rawComments.length} comments for PR #${prNumber}`);
 
@@ -847,12 +947,13 @@ class MCPGitHubAdapter extends IGitHubService {
     this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Fetching commits for PR #${prNumber}`);
 
     try {
-      const rawCommits = await this._callMCP('list_commits', {
+      const payload = await this._callMCP('list_commits', {
         owner: this.owner,
         repo: repo,
         sha: `refs/pull/${prNumber}/head`,
         per_page: limit
       });
+      const rawCommits = this._normalizeArrayResponse('list_commits', payload, ['commits']);
 
       const commits = (rawCommits || [])
         .slice(0, limit)

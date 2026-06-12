@@ -208,6 +208,74 @@ describe('MCPGitHubAdapter', () => {
       expect(mockRetryHelper.retryIf).toHaveBeenCalled();
     });
 
+    test('should accept object-wrapped pull request arrays', async () => {
+      const wrappedPRs = {
+        result: {
+          pull_requests: [
+            {
+              id: 123456,
+              number: 456,
+              title: 'Wrapped PR',
+              state: 'open',
+              user: { login: 'testuser' },
+              base: { ref: 'main' },
+              head: { ref: 'feature', sha: 'abc123' },
+              html_url: 'https://github.com/testorg/test-repo/pull/456',
+              created_at: '2024-01-01T00:00:00Z',
+              body: 'Wrapped body'
+            }
+          ]
+        }
+      };
+
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') onCloseCallback = cb;
+      });
+
+      const promise = adapter.getOpenPRs('test-repo');
+
+      setTimeout(() => {
+        onDataCallback(JSON.stringify(wrappedPRs));
+        onCloseCallback(0);
+      }, 10);
+
+      const result = await promise;
+      expect(result).toHaveLength(1);
+      expect(result[0].title).toBe('Wrapped PR');
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('Found 1 open PRs')
+      );
+    });
+
+    test('should throw MCPError when pull request payload is not an array shape', async () => {
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') onCloseCallback = cb;
+      });
+
+      const promise = adapter.getOpenPRs('test-repo');
+
+      setTimeout(() => {
+        onDataCallback(JSON.stringify({ status: 'ok', count: 0 }));
+        onCloseCallback(0);
+      }, 10);
+
+      await expect(promise).rejects.toThrow('MCP list_pull_requests response is not an array');
+    });
+
     test('should throw MCPError on spawn failure', (done) => {
       let onErrorCallback;
 
