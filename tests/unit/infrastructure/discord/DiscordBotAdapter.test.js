@@ -256,9 +256,9 @@ describe('DiscordBotAdapter', () => {
     expect(adapter._getRepoIndices('acme', 'api')).toEqual({ instanceIdx: 0, repoIdx: 0 });
   });
 
-  test('forwards messageCreate events to external review session service and corrects invalid JSON replies', async () => {
+  test('forwards messageCreate events to external review session service and corrects invalid final payload replies', async () => {
     const externalReviewSessionService = {
-      handleAgentReply: jest.fn().mockReturnValue({ matched: true, accepted: false, reason: 'invalid_json' })
+      handleAgentReply: jest.fn().mockReturnValue({ matched: true, accepted: false, reason: 'invalid_final_payload' })
     };
     const adapter = new DiscordBotAdapter('token', {
       config,
@@ -282,5 +282,28 @@ describe('DiscordBotAdapter', () => {
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({
       content: expect.stringContaining('valid JSON only')
     }));
+  });
+
+  test('does not interrupt handshake chatter from external review bot', async () => {
+    const externalReviewSessionService = {
+      handleAgentReply: jest.fn().mockReturnValue({ matched: true, accepted: false, reason: 'handshake_received' })
+    };
+    const adapter = new DiscordBotAdapter('token', {
+      config,
+      externalReviewSessionService,
+      logger: { info: jest.fn(), error: jest.fn(), warn: jest.fn() }
+    });
+    const reply = jest.fn().mockResolvedValue({ id: 'reply-2' });
+
+    await adapter.client.handlers.messageCreate({
+      id: 'm-2',
+      content: 'Kirim prompt review lengkap via reply ke pesan ini.',
+      author: { id: '123', bot: true },
+      reference: { messageId: 'trigger-1' },
+      reply
+    });
+
+    expect(externalReviewSessionService.handleAgentReply).toHaveBeenCalled();
+    expect(reply).not.toHaveBeenCalled();
   });
 });

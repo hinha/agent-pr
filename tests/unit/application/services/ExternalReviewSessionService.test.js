@@ -33,6 +33,7 @@ describe('ExternalReviewSessionService', () => {
     });
 
     const pending = service.awaitResult('qi_1');
+    const promptRequest = service.awaitPromptRequest('qi_1');
     const handle = service.handleAgentReply({
       id: 'msg-1',
       content: '{"summary":"done","comments":[]}',
@@ -43,10 +44,11 @@ describe('ExternalReviewSessionService', () => {
     await expect(pending).resolves.toEqual(expect.objectContaining({
       reviewResult: { summary: 'done', comments: [] }
     }));
+    await expect(promptRequest).resolves.toBeNull();
     expect(handle).toEqual(expect.objectContaining({ matched: true, accepted: true }));
   });
 
-  test('keeps waiting after invalid JSON reply', async () => {
+  test('captures handshake reply and keeps waiting for final review', async () => {
     service.startSession({
       queueItemId: 'qi_2',
       instanceKey: 'github/acme',
@@ -58,19 +60,49 @@ describe('ExternalReviewSessionService', () => {
       timeoutMs: 1000
     });
 
+    const promptRequest = service.awaitPromptRequest('qi_2');
     const handle = service.handleAgentReply({
       id: 'msg-2',
-      content: 'not json',
+      content: 'Kirim prompt review lengkap via reply ke pesan ini.',
       author: { id: 'bot-1', bot: true },
       reference: { messageId: 'trigger-2' }
     });
 
+    await expect(promptRequest).resolves.toEqual(expect.objectContaining({ id: 'msg-2' }));
     expect(handle).toEqual(expect.objectContaining({
       matched: true,
       accepted: false,
-      reason: 'invalid_json'
+      reason: 'handshake_received'
     }));
     expect(service.sessionsByQueueItemId.has('qi_2')).toBe(true);
+  });
+
+  test('treats awaiting_review_prompt status JSON as handshake, not final result', async () => {
+    service.startSession({
+      queueItemId: 'qi_2b',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 10,
+      level: 'high',
+      triggerMessageId: 'trigger-2b',
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    const promptRequest = service.awaitPromptRequest('qi_2b');
+    const handle = service.handleAgentReply({
+      id: 'msg-2b',
+      content: '{"status":"awaiting_review_prompt","message":"Send complete review prompt"}',
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'trigger-2b' }
+    });
+
+    await expect(promptRequest).resolves.toEqual(expect.objectContaining({ id: 'msg-2b' }));
+    expect(handle).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: false,
+      reason: 'prompt_request'
+    }));
   });
 
   test('rejects on timeout', async () => {
@@ -119,5 +151,39 @@ describe('ExternalReviewSessionService', () => {
     });
 
     expect(duplicate.accepted).toBe(false);
+  });
+
+  test('does not accept non-final JSON after handshake', async () => {
+    service.startSession({
+      queueItemId: 'qi_5',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 10,
+      level: 'high',
+      triggerMessageId: 'trigger-5',
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    service.handleAgentReply({
+      id: 'msg-5a',
+      content: 'Send prompt',
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'trigger-5' }
+    });
+
+    const nonFinal = service.handleAgentReply({
+      id: 'msg-5b',
+      content: '{"status":"working"}',
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'trigger-5' }
+    });
+
+    expect(nonFinal).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: false,
+      reason: 'invalid_final_payload'
+    }));
+    expect(service.sessionsByQueueItemId.has('qi_5')).toBe(true);
   });
 });

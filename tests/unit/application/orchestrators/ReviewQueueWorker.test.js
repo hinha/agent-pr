@@ -94,6 +94,7 @@ describe('ReviewQueueWorker', () => {
     };
     mockExternalReviewSessionService = {
       startSession: jest.fn(),
+      awaitPromptRequest: jest.fn(),
       awaitResult: jest.fn()
     };
 
@@ -873,6 +874,7 @@ describe('ReviewQueueWorker', () => {
           ]
         }
       });
+      mockExternalReviewSessionService.awaitPromptRequest.mockResolvedValue({ id: 'hermes-handshake-1' });
       mockReviewPRUseCase.submitExternalResult.mockResolvedValue({
         success: true,
         review: { html_url: 'https://review' },
@@ -887,7 +889,7 @@ describe('ReviewQueueWorker', () => {
         content: '<@123>\nHANDOFF TRIGGER'
       }));
       expect(mockDiscordAdapter.sendReplyChunks).toHaveBeenCalledWith(
-        { id: 'discord-trigger-1' },
+        { id: 'hermes-handshake-1' },
         'HANDOFF DETAIL',
         { prefix: 'Prompt review' }
       );
@@ -896,6 +898,7 @@ describe('ReviewQueueWorker', () => {
         triggerMessageId: 'discord-trigger-1',
         trustedBotUserId: '123456789012345678'
       }));
+      expect(mockExternalReviewSessionService.awaitPromptRequest).toHaveBeenCalledWith('qi_test_handoff');
       expect(mockReviewPRUseCase.submitExternalResult).toHaveBeenCalledWith(
         expect.objectContaining({ owner: 'test' }),
         expect.objectContaining({ name: 'repo' }),

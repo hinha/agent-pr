@@ -347,12 +347,6 @@ class ReviewQueueWorker {
       content: handoffPrompt.triggerContent
     });
 
-    await this.discordAdapter.sendReplyChunks(
-      trigger.message,
-      handoffPrompt.detailContent,
-      { prefix: 'Prompt review' }
-    );
-
     this.externalReviewSessionService.startSession({
       queueItemId: item.id,
       instanceKey: item.instanceKey,
@@ -363,6 +357,15 @@ class ReviewQueueWorker {
       trustedBotUserId: instance.mentionBotUserId,
       timeoutMs: (instance.agent?.reviewTimeoutSeconds || 600) * 1000
     });
+
+    const promptRequestMessage = await this.externalReviewSessionService.awaitPromptRequest(item.id);
+    if (promptRequestMessage) {
+      await this.discordAdapter.sendReplyChunks(
+        promptRequestMessage,
+        handoffPrompt.detailContent,
+        { prefix: 'Prompt review' }
+      );
+    }
 
     const externalResult = await this.externalReviewSessionService.awaitResult(item.id);
 

@@ -207,7 +207,7 @@ class DiscordBotAdapter extends EventEmitter {
       }
 
       const result = this.externalReviewSessionService.handleAgentReply(message);
-      if (result.reason === 'invalid_json') {
+      if (result.reason === 'invalid_final_payload') {
         try {
           await this.sendReply(
             message,

@@ -19,8 +19,13 @@ class ExternalReviewSessionService {
       session.resolve = resolve;
       session.reject = reject;
     });
+    const promptRequestPromise = new Promise((resolve) => {
+      session.resolvePromptRequest = resolve;
+    });
 
     session.promise = promise;
+    session.promptRequestPromise = promptRequestPromise;
+    session.promptRequestMessage = null;
     session.timer = setTimeout(() => {
       this.failSession(session.queueItemId, new Error('Timed out waiting for external review reply'));
     }, Math.max(timeoutMs, 1));
@@ -41,6 +46,14 @@ class ExternalReviewSessionService {
       return Promise.reject(new Error(`External review session not found: ${queueItemId}`));
     }
     return session.promise;
+  }
+
+  awaitPromptRequest(queueItemId) {
+    const session = this.sessionsByQueueItemId.get(queueItemId);
+    if (!session) {
+      return Promise.reject(new Error(`External review session not found: ${queueItemId}`));
+    }
+    return session.promptRequestPromise;
   }
 
   handleAgentReply(message) {
@@ -67,27 +80,41 @@ class ExternalReviewSessionService {
     }
 
     const content = String(message.content || '').trim();
-    let parsed;
-    try {
-      parsed = JSON.parse(content);
-    } catch (_error) {
-      return { matched: true, accepted: false, reason: 'invalid_json', session };
+    const parsed = this._tryParseJson(content);
+
+    if (this._isFinalReviewPayload(parsed)) {
+      session.status = 'completed';
+      this._resolvePromptRequest(session, null);
+      this._clearSession(session.queueItemId);
+      session.resolve({
+        session: this._publicSession(session),
+        reviewResult: parsed,
+        rawContent: content,
+        messageId: message.id
+      });
+
+      this.logger.info(
+        `[ExternalReviewSessionService] Accepted external review reply for ${session.instanceKey}/${session.repoName} PR #${session.prNumber}`
+      );
+
+      return { matched: true, accepted: true, session: this._publicSession(session), reviewResult: parsed };
     }
 
-    session.status = 'completed';
-    this._clearSession(session.queueItemId);
-    session.resolve({
-      session: this._publicSession(session),
-      reviewResult: parsed,
-      rawContent: content,
-      messageId: message.id
-    });
+    if (!session.promptRequestMessage) {
+      this._resolvePromptRequest(session, message);
+      return {
+        matched: true,
+        accepted: false,
+        reason: this._isPromptRequestPayload(parsed) ? 'prompt_request' : 'handshake_received',
+        session: this._publicSession(session)
+      };
+    }
 
-    this.logger.info(
-      `[ExternalReviewSessionService] Accepted external review reply for ${session.instanceKey}/${session.repoName} PR #${session.prNumber}`
-    );
+    if (content.startsWith('{') || content.startsWith('[')) {
+      return { matched: true, accepted: false, reason: 'invalid_final_payload', session: this._publicSession(session) };
+    }
 
-    return { matched: true, accepted: true, session: this._publicSession(session), reviewResult: parsed };
+    return { matched: true, accepted: false, reason: 'non_final_reply', session: this._publicSession(session) };
   }
 
   failSession(queueItemId, error) {
@@ -97,6 +124,7 @@ class ExternalReviewSessionService {
     }
 
     session.status = 'failed';
+    this._resolvePromptRequest(session, null);
     this._clearSession(queueItemId);
     session.reject(error);
 
@@ -127,6 +155,41 @@ class ExternalReviewSessionService {
 
     this.sessionsByQueueItemId.delete(queueItemId);
     this.sessionsByTriggerMessageId.delete(String(session.triggerMessageId));
+  }
+
+  _resolvePromptRequest(session, message) {
+    if (session.promptRequestMessage !== null) {
+      return;
+    }
+
+    session.promptRequestMessage = message;
+    if (session.resolvePromptRequest) {
+      session.resolvePromptRequest(message);
+      session.resolvePromptRequest = null;
+    }
+  }
+
+  _tryParseJson(content) {
+    try {
+      return JSON.parse(content);
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  _isPromptRequestPayload(parsed) {
+    return parsed &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      String(parsed.status || '').trim() === 'awaiting_review_prompt';
+  }
+
+  _isFinalReviewPayload(parsed) {
+    return parsed &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      typeof parsed.summary === 'string' &&
+      Array.isArray(parsed.comments);
   }
 
   _publicSession(session) {
