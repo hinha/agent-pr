@@ -291,7 +291,7 @@ sequenceDiagram
     CB-->>U: Review submitted notification
 ```
 
-When Discord uses `app.discord.review_mode: mention_hermes`, the flow is different: the action builds the review prompt and posts it to Discord prefixed with `app.discord.mention_bot_name`, instead of calling the internal adapter above.
+When Discord uses `app.discord.review_mode: mention_hermes`, the flow is different: the action builds the review prompt and posts it to Discord prefixed with `{instance}.mention_bot_name`, instead of calling the internal adapter above.
 
 ### PR State Machine
 

@@ -59,9 +59,6 @@ app:
     enabled: false
     bot_token: "<YOUR_DISCORD_BOT_TOKEN>"
     guild_id: "<YOUR_DISCORD_GUILD_ID>"
-    # Recommended value is the literal Discord mention token for Hermes, e.g. "<@123456789012345678>".
-    # A plain value like "Hermes" is sent as @Hermes but may not trigger a real Discord mention.
-    mention_bot_name: "<@HERMES_BOT_USER_ID>"
     # Keep "internal_queue" to use the internal OpenClaw agent selected by app.provider_agent.
     review_mode: internal_queue
 
@@ -79,6 +76,8 @@ log:
 github/your-org-or-user:
   # MCP server alias used by the configured MCP client
   mcp_name: your-mcp-name
+  # Mention target for Discord handoff in this instance.
+  mention_bot_name: "<@HERMES_BOT_USER_ID>"
 
   # Maximum age of PRs to process (in hours)
   max_age_hours: 48
@@ -123,6 +122,7 @@ github/your-org-or-user:
 # Optional: Additional GitHub instances can be added by duplicating the block below and updating the instance name and configuration
 github/another-org-or-user:
   mcp_name: your-other-mcp-name
+  mention_bot_name: "<@HERMES_BOT_USER_ID>"
   max_age_hours: 48
   skip_cache_duration_hours: 3
   agent:

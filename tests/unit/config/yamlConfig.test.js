@@ -40,6 +40,7 @@ log:
   level: info
 github/acme:
   mcp_name: github-work
+  mention_bot_name: "<@123456789012345678>"
   agent:
     review: reviewer
     summary: summarizer
@@ -69,6 +70,7 @@ github/acme:
       expect(config.app.discord.enabled).toBe(false);
       expect(config.app.mcpClient).toBe('mcporter');
       expect(config.app.mcpOutputFlag).toBe('--output json');
+      expect(config.instances['github/acme'].mentionBotName).toBe('<@123456789012345678>');
     });
 
     test('loads custom MCP transport settings when provided', () => {
@@ -76,6 +78,9 @@ github/acme:
       fs.writeFileSync(path.join(dir, 'config.yml'), `
 app:
   provider_agent: hermes
+  discord:
+    enabled: false
+    mention_bot_name: "<@legacy>"
   mcp_client: "openclaw mcp"
   mcp_output_flag: ""
   check_interval_minutes: 7
@@ -83,8 +88,6 @@ app:
   telegram:
     bot_token: "token"
     chat_id: "123"
-  discord:
-    enabled: false
   flagsmith:
     enabled: false
 log:
@@ -109,6 +112,7 @@ github/acme:
       expect(config.app.providerAgent).toBe('hermes');
       expect(config.app.mcpClient).toBe('openclaw mcp');
       expect(config.app.mcpOutputFlag).toBe('');
+      expect(config.instances['github/acme'].mentionBotName).toBe('<@legacy>');
     });
 
     test('throws when Telegram and Discord are both disabled', () => {

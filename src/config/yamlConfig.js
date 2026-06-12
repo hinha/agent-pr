@@ -101,7 +101,6 @@ function buildInternalConfig(config) {
         enabled: discordEnabled,
         botToken: config.app.discord?.bot_token || process.env.DISCORD_BOT_TOKEN || null,
         guildId: config.app.discord?.guild_id || null,
-        mentionBotName: config.app.discord?.mention_bot_name || '@Hermes',
         reviewMode: config.app.discord?.review_mode || 'mention_hermes'
       },
       flagsmith: {
@@ -162,6 +161,7 @@ function buildInstances(config) {
         key: key,
         owner: owner,
         mcpName: config[key].mcp_name,
+        mentionBotName: config[key].mention_bot_name || config.app.discord?.mention_bot_name || '@Hermes',
         maxAgeMs: maxAgeHours * 60 * 60 * 1000,
         skipDurationMs: skipCacheHours * 60 * 60 * 1000,
         queue: {

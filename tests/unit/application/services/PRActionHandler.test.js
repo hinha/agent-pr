@@ -77,7 +77,6 @@ describe('PRActionHandler', () => {
       app: {
         discord: {
           enabled: true,
-          mentionBotName: '<@123456789012345678>',
           reviewMode: 'mention_hermes'
         }
       },
@@ -90,6 +89,7 @@ describe('PRActionHandler', () => {
           key: 'github/acme',
           owner: 'acme',
           mcpName: 'github-work',
+          mentionBotName: '<@123456789012345678>',
           repos: {
             api: { name: 'api', thread_id: 10, discordChannelId: 'channel-1' }
           }
@@ -181,6 +181,24 @@ describe('PRActionHandler', () => {
       level: 'high',
       previousComments: expect.any(Array),
       lastCommits: expect.any(Array)
+    }));
+  });
+
+  test('review level falls back to global mention bot name for legacy config', async () => {
+    delete handler.config.instances['github/acme'].mentionBotName;
+    handler.config.app.discord.mentionBotName = '<@999999999999999999>';
+
+    await handler.handleDiscordInteraction(interactionFor({
+      action: 'review_level',
+      instanceIdx: 0,
+      repoIdx: 0,
+      prId: 123,
+      level: 'high'
+    }), responder);
+
+    expect(discordAdapter.sendHermesMention).toHaveBeenCalledWith(expect.objectContaining({
+      mentionBotName: '<@999999999999999999>',
+      content: '<@999999999999999999>\nRENDERED PROMPT'
     }));
   });
 

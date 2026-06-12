@@ -58,33 +58,33 @@ class PRActionHandler {
 
   async _dispatchDiscordAction(callback, responder, instance, repo, pr) {
     switch (callback.action) {
-      case 'review_now':
-        return this._handleDiscordReviewNow(responder, instance, repo, pr);
-      case 'review_level':
-        return this._handleDiscordReviewLevel(responder, instance, repo, pr, callback.level);
-      case 'review_level_outdated':
-        return this._handleDiscordReviewLevel(responder, instance, repo, pr, callback.level, callback.reviewId);
-      case 're_review':
-        return this._handleDiscordReReview(responder, instance, repo, pr, callback.reviewId);
-      case 'approve':
-        return this._handleDiscordApprove(responder, instance, repo, pr);
-      case 'approve_outdated':
-        return this._handleDiscordApprove(responder, instance, repo, pr, callback.reviewId);
-      case 'reject':
-        return this._handleDiscordReject(responder, instance, repo, pr);
-      case 'close':
-        return this._handleDiscordClose(responder, instance, repo, pr);
-      case 'silent':
-        return this._handleDiscordSilent(responder, instance, repo, pr);
-      case 'silent_dur':
-        return this._handleDiscordSilentDuration(responder, instance, repo, pr, callback.hours);
-      case 'dismiss_outdated':
-        return this._handleDiscordDismissOutdated(responder, instance, repo, pr, callback.reviewId);
-      case 'review_cancel':
-        await responder.update({ content: 'Review cancelled.', embeds: [], components: [] });
-        return { success: true, action: 'cancelled' };
-      default:
-        throw new Error(`Unknown Discord action: ${callback.action}`);
+    case 'review_now':
+      return this._handleDiscordReviewNow(responder, instance, repo, pr);
+    case 'review_level':
+      return this._handleDiscordReviewLevel(responder, instance, repo, pr, callback.level);
+    case 'review_level_outdated':
+      return this._handleDiscordReviewLevel(responder, instance, repo, pr, callback.level, callback.reviewId);
+    case 're_review':
+      return this._handleDiscordReReview(responder, instance, repo, pr, callback.reviewId);
+    case 'approve':
+      return this._handleDiscordApprove(responder, instance, repo, pr);
+    case 'approve_outdated':
+      return this._handleDiscordApprove(responder, instance, repo, pr, callback.reviewId);
+    case 'reject':
+      return this._handleDiscordReject(responder, instance, repo, pr);
+    case 'close':
+      return this._handleDiscordClose(responder, instance, repo, pr);
+    case 'silent':
+      return this._handleDiscordSilent(responder, instance, repo, pr);
+    case 'silent_dur':
+      return this._handleDiscordSilentDuration(responder, instance, repo, pr, callback.hours);
+    case 'dismiss_outdated':
+      return this._handleDiscordDismissOutdated(responder, instance, repo, pr, callback.reviewId);
+    case 'review_cancel':
+      await responder.update({ content: 'Review cancelled.', embeds: [], components: [] });
+      return { success: true, action: 'cancelled' };
+    default:
+      throw new Error(`Unknown Discord action: ${callback.action}`);
     }
   }
 
@@ -147,7 +147,8 @@ class PRActionHandler {
       previousComments,
       lastCommits
     });
-    const mentionBotName = this.config.app?.discord?.mentionBotName || this.config.app?.discord?.mention_bot_name || '@Hermes';
+    const mentionBotName = instance.mentionBotName || instance.mention_bot_name ||
+      this.config.app?.discord?.mentionBotName || this.config.app?.discord?.mention_bot_name || '@Hermes';
 
     await this.discordAdapter.sendHermesMention({
       instance,
