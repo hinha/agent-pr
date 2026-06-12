@@ -90,13 +90,15 @@ describe('DiscordBotAdapter', () => {
     trigger.message.reply = reply;
 
     const result = await adapter.sendReplyChunks(trigger.message, 'a'.repeat(8000), {
-      prefix: 'Prompt review',
-      chunkSize: 3500
+      prefix: 'Prompt review'
     });
 
     expect(trigger.message).toBeDefined();
-    expect(reply).toHaveBeenCalledTimes(3);
-    expect(result).toHaveLength(3);
+    expect(reply).toHaveBeenCalledTimes(5);
+    for (const call of reply.mock.calls) {
+      expect(call[0].content.length).toBeLessThanOrEqual(2000);
+    }
+    expect(result).toHaveLength(5);
   });
 
   test('requests message intents for handoff reply flow', () => {

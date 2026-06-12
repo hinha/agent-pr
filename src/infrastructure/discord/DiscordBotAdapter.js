@@ -120,7 +120,9 @@ class DiscordBotAdapter extends EventEmitter {
 
   async sendReplyChunks(targetMessage, content, options = {}) {
     const prefix = options.prefix || 'Prompt review';
-    const chunkSize = options.chunkSize || 3600;
+    const maxContentLength = options.maxContentLength || 2000;
+    const headerTemplateLength = `${prefix} (${999}/${999}):\n`.length;
+    const chunkSize = options.chunkSize || Math.max(200, maxContentLength - headerTemplateLength);
     const chunks = this._chunkContent(content, chunkSize);
     const sent = [];
 
