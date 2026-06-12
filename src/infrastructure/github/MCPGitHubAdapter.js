@@ -53,13 +53,7 @@ class MCPGitHubAdapter extends IGitHubService {
         return this._callMCPViaHermes(method, args, timeoutMs);
       }
       return this._callMCPViaOpenClaw(method, args, timeoutMs);
-    }, (err) => {
-      // Don't retry non-retryable errors like "Unknown tool"
-      if (err.message && err.message.includes('Unknown tool')) {
-        return false;
-      }
-      return true;
-    }, {
+    }, (err) => this._shouldRetryMcpError(err), {
       retries: 3,
       minTimeout: 2000,
       factor: 2,
@@ -239,6 +233,8 @@ class MCPGitHubAdapter extends IGitHubService {
       spawnArgs.push('--profile', this.hermesProfile);
     }
 
+    spawnArgs.push('-t', this._getHermesToolsetsArg());
+
     spawnArgs.push(
       '--yolo',
       '--ignore-rules',
@@ -256,6 +252,8 @@ class MCPGitHubAdapter extends IGitHubService {
       spawnArgs.push('--profile', this.hermesProfile);
     }
 
+    spawnArgs.push('-t', this._getHermesToolsetsArg());
+
     spawnArgs.push(
       'chat',
       '-q',
@@ -270,6 +268,26 @@ class MCPGitHubAdapter extends IGitHubService {
     );
 
     return spawnArgs;
+  }
+
+  _getHermesToolsetsArg() {
+    return `hermes-cli,mcp-${this.serverName}`;
+  }
+
+  _shouldRetryMcpError(err) {
+    if (!err || typeof err.message !== 'string') {
+      return true;
+    }
+
+    if (err.message.includes('Unknown tool')) {
+      return false;
+    }
+
+    if (this._isHermesToolUnavailableError(err)) {
+      return false;
+    }
+
+    return true;
   }
 
   _isReadOnlyMcpMethod(method) {
@@ -309,6 +327,17 @@ class MCPGitHubAdapter extends IGitHubService {
     }
 
     this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}] stderr: ${trimmed.substring(0, 500)}`);
+  }
+
+  _isHermesToolUnavailableError(error) {
+    const message = error?.message || '';
+    return (
+      message.includes('no direct MCP protocol client available in this session') ||
+      message.includes('not accessible as a callable tool') ||
+      message.includes('not available in the active tool registry') ||
+      message.includes('GitHub MCP tools are not exposed as callable functions in this Hermes session toolset') ||
+      message.includes('MCP servers are only available when loaded via the Hermes gateway')
+    );
   }
 
   _buildHermesMcpPrompt(method, args) {
@@ -889,7 +918,7 @@ class MCPGitHubAdapter extends IGitHubService {
         comments: r.comments || []
       }));
     } catch (err) {
-      if (err.message && err.message.includes('Unknown tool')) {
+      if (this._isHermesToolUnavailableError(err) || (err.message && err.message.includes('Unknown tool'))) {
         this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}] get_pull_request_reviews tool not available`);
       } else {
         this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Failed to fetch reviews for PR #${prNumber}: ${err.message}`);
@@ -927,7 +956,7 @@ class MCPGitHubAdapter extends IGitHubService {
         updated_at: c.updated_at
       }));
     } catch (err) {
-      if (err.message && err.message.includes('Unknown tool')) {
+      if (this._isHermesToolUnavailableError(err) || (err.message && err.message.includes('Unknown tool'))) {
         this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}] get_pull_request_comments tool not available`);
       } else {
         this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Failed to fetch comments for PR #${prNumber}: ${err.message}`);

@@ -343,6 +343,8 @@ describe('MCPGitHubAdapter', () => {
         expect.arrayContaining([
           '--profile',
           'anto',
+          '-t',
+          'hermes-cli,mcp-github-work',
           '--yolo',
           '--ignore-rules',
           '-z'
@@ -383,6 +385,8 @@ describe('MCPGitHubAdapter', () => {
         expect.arrayContaining([
           '--profile',
           'anto',
+          '-t',
+          'hermes-cli,mcp-github-work',
           '--yolo',
           '--ignore-rules',
           '-z'
@@ -397,6 +401,8 @@ describe('MCPGitHubAdapter', () => {
         expect.arrayContaining([
           '--profile',
           'anto',
+          '-t',
+          'hermes-cli,mcp-github-work',
           'chat',
           '-q',
           '-Q',
@@ -444,6 +450,44 @@ describe('MCPGitHubAdapter', () => {
       ).rejects.toThrow('MCP response parse failed: no valid JSON found');
 
       expect(spawnSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('should not retry Hermes MCP unavailable session errors', async () => {
+      const hermesAdapter = new MCPGitHubAdapter(
+        {
+          key: 'github/testorg',
+          owner: 'testorg',
+          mcpName: 'github',
+          providerAgent: 'hermes',
+          githubRuntime: 'hermes',
+          agent: {
+            hermesProfile: 'anto',
+            hermesMaxTurns: 90
+          }
+        },
+        mockLogger,
+        mockRetryHelper
+      );
+
+      const shouldRetry = mockRetryHelper.retryIf.mock.calls.length;
+      expect(shouldRetry).toBe(0);
+
+      jest.spyOn(hermesAdapter, '_callMCPViaHermes').mockRejectedValue(
+        new Error('MCP error: no direct MCP protocol client available in this session')
+      );
+
+      mockRetryHelper.retryIf.mockImplementation(async (fn, shouldRetryFn) => {
+        try {
+          await fn();
+        } catch (error) {
+          expect(shouldRetryFn(error)).toBe(false);
+          throw error;
+        }
+      });
+
+      await expect(
+        hermesAdapter.getPRReviews('test-repo', 123)
+      ).resolves.toEqual([]);
     });
   });
 

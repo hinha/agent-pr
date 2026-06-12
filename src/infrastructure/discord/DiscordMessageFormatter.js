@@ -21,8 +21,9 @@ class DiscordMessageFormatter {
         { name: 'Purpose', value: this._truncate(summary.purpose || 'No description provided', 1024) }
       );
 
-    if (pr.createdAt) {
-      embed.setTimestamp(new Date(pr.createdAt));
+    const timestamp = this._safeDate(pr.createdAt);
+    if (timestamp) {
+      embed.setTimestamp(timestamp);
     }
     if (pr.url) {
       embed.setURL(pr.url);
@@ -203,6 +204,15 @@ class DiscordMessageFormatter {
   _truncate(value, limit) {
     const text = String(value || '');
     return text.length > limit ? `${text.substring(0, limit - 3)}...` : text;
+  }
+
+  _safeDate(value) {
+    if (!value) {
+      return null;
+    }
+
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
   }
 }
 

@@ -35,6 +35,29 @@ describe('DiscordMessageFormatter', () => {
     expect(payload.components[0].components[1].data.url).toBe('https://github.com/acme/api/pull/7');
   });
 
+  test('skips invalid PR timestamp for Discord embed', () => {
+    const payload = formatter.buildPRNotification({
+      owner: 'acme',
+      repo: 'api',
+      pr: {
+        id: 123,
+        number: 7,
+        title: 'Add API',
+        url: 'https://github.com/acme/api/pull/7',
+        createdAt: 'not-a-date'
+      },
+      summary: {
+        riskLevel: 'HIGH',
+        impactArea: 'api',
+        purpose: 'Add API',
+        filesChanged: 2,
+        diffSize: 30
+      }
+    }, { instanceIdx: 0, repoIdx: 1 });
+
+    expect(payload.embeds[0].data.timestamp).toBeUndefined();
+  });
+
   test('builds outdated review components', () => {
     const payload = formatter.buildOutdatedReviewNotification({
       owner: 'acme',
