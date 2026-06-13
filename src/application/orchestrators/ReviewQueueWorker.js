@@ -322,7 +322,7 @@ class ReviewQueueWorker {
     }
 
     const freshPR = await this._resolveFreshPR(pr, repo, githubAdapter);
-    const { previousComments, lastCommits } = await this._loadPromptContext(githubAdapter, repo.name, freshPR.number);
+    const { previousComments, lastCommits, files } = await this._loadPromptContext(githubAdapter, repo.name, freshPR.number);
     const config = require('../../config/yamlConfig');
     const levelConfig = config.reviewLevels?.[item.level];
     const prompt = this.reviewPromptBuilder.build({
@@ -333,7 +333,8 @@ class ReviewQueueWorker {
       levelConfig,
       mcpName: instance.mcpName || 'github',
       previousComments,
-      lastCommits
+      lastCommits,
+      files
     });
     const handoffPrompt = this.reviewPromptBuilder.buildDiscordHandoff({
       mentionBotName: instance.mentionBotName,
@@ -435,12 +436,13 @@ class ReviewQueueWorker {
   }
 
   async _loadPromptContext(githubAdapter, repoName, prNumber) {
-    const [previousComments, lastCommits] = await Promise.all([
+    const [previousComments, lastCommits, prDetails] = await Promise.all([
       githubAdapter.getPRComments(repoName, prNumber).catch(() => []),
-      githubAdapter.getPRCommits(repoName, prNumber, 3).catch(() => [])
+      githubAdapter.getPRCommits(repoName, prNumber, 3).catch(() => []),
+      githubAdapter.getPRDetails(repoName, prNumber).catch(() => ({ files: [] }))
     ]);
 
-    return { previousComments, lastCommits };
+    return { previousComments, lastCommits, files: prDetails.files || [] };
   }
 
   /**

@@ -24,6 +24,14 @@ INSTRUKSI:
 
 {{LAST_COMMITS}}
 
+{{FILE_PATCHES}}
+
+PENTING - Panduan berdasarkan diff patch di atas:
+1. **Line numbers dalam komentar HANYA merujuk ke baris yang DITAMBAH/UBAH** (line dengan prefix + di diff)
+2. **JANGAN berikan komentar pada line yang dihapus (prefix -) atau konteks line**
+3. **Pastikan start_line dan end_line berada dalam range hunk yang ada + changes**
+4. **Jika tidak ada diff untuk sebuah file, JANGAN berikan komentar untuk file tersebut**
+
 OUTPUT FORMAT (JSON):
 {
   "summary": "Ringkasan review secara keseluruhan",

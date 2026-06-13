@@ -853,7 +853,8 @@ describe('ReviewQueueWorker', () => {
           headSha: 'abc123'
         }]),
         getPRComments: jest.fn().mockResolvedValue([]),
-        getPRCommits: jest.fn().mockResolvedValue([])
+        getPRCommits: jest.fn().mockResolvedValue([]),
+        getPRDetails: jest.fn().mockResolvedValue({ files: [] })
       };
 
       mockConfig.app.discord = { reviewMode: 'handoff_reply_submit' };
@@ -939,7 +940,8 @@ describe('ReviewQueueWorker', () => {
           headSha: 'abc123'
         }]),
         getPRComments: jest.fn().mockResolvedValue([]),
-        getPRCommits: jest.fn().mockResolvedValue([])
+        getPRCommits: jest.fn().mockResolvedValue([]),
+        getPRDetails: jest.fn().mockResolvedValue({ files: [] })
       };
 
       mockConfig.app.discord = { reviewMode: 'handoff_reply_submit' };
@@ -1032,7 +1034,8 @@ describe('ReviewQueueWorker', () => {
           headSha: 'abc123'
         }]),
         getPRComments: jest.fn().mockResolvedValue([]),
-        getPRCommits: jest.fn().mockResolvedValue([])
+        getPRCommits: jest.fn().mockResolvedValue([]),
+        getPRDetails: jest.fn().mockResolvedValue({ files: [] })
       };
       const item = {
         id: 'qi_repair_send_fail',
@@ -1086,7 +1089,8 @@ describe('ReviewQueueWorker', () => {
           headSha: 'abc123'
         }]),
         getPRComments: jest.fn().mockResolvedValue([]),
-        getPRCommits: jest.fn().mockResolvedValue([])
+        getPRCommits: jest.fn().mockResolvedValue([]),
+        getPRDetails: jest.fn().mockResolvedValue({ files: [] })
       };
       const dateSpy = jest.spyOn(Date, 'now')
         .mockReturnValueOnce(1000)

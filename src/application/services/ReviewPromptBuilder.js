@@ -20,6 +20,7 @@ class ReviewPromptBuilder {
    * @param {string} input.mcpName
    * @param {Array<Object>} [input.previousComments]
    * @param {Array<Object>} [input.lastCommits]
+   * @param {Array<Object>} [input.files]
    * @returns {string}
    */
   build(input) {
@@ -31,7 +32,8 @@ class ReviewPromptBuilder {
       levelConfig,
       mcpName = 'github',
       previousComments = [],
-      lastCommits = []
+      lastCommits = [],
+      files = []
     } = input;
 
     if (!levelConfig) {
@@ -53,7 +55,8 @@ class ReviewPromptBuilder {
       PR_URL: pr.url,
       MCP_NAME: mcpName,
       PREVIOUS_COMMENTS: this._buildPreviousCommentsBlock(previousComments, owner, repo),
-      LAST_COMMITS: this._buildLastCommitsBlock(lastCommits, mcpName, owner, repo)
+      LAST_COMMITS: this._buildLastCommitsBlock(lastCommits, mcpName, owner, repo),
+      FILE_PATCHES: this._buildFilePatchesBlock(files, owner, repo)
     });
   }
 
@@ -131,6 +134,34 @@ class ReviewPromptBuilder {
       'Gunakan informasi ini untuk memahami apa yang sudah diperbaiki. Jika commit terakhir sudah memperbaiki issue yang sama dengan komentar sebelumnya, JANGAN ulangi komentar tersebut.\n' +
       `Gunakan MCP ${mcpName} untuk melihat detail diff commit jika perlu (tool get_commit dengan sha lengkap).\n` +
       formattedCommits
+    );
+  }
+
+  _buildFilePatchesBlock(files, owner, repo) {
+    if (!files || files.length === 0) {
+      return '(Tidak ada perubahan file)';
+    }
+
+    this.logger.info(`[ReviewPromptBuilder:${owner}/${repo}] Including ${files.length} file patches in prompt`);
+
+    const patches = files
+      .filter(f => f.patch && f.filename)
+      .map(f => {
+        // Limit patch size to avoid overwhelming the AI
+        const maxPatchSize = 2000;
+        let patch = f.patch;
+        if (patch.length > maxPatchSize) {
+          patch = patch.substring(0, maxPatchSize) + '\n... (truncated)';
+        }
+
+        return `File: ${f.filename}\n\`\`\`diff\n${patch}\n\`\`\``;
+      })
+      .join('\n\n');
+
+    return (
+      'FILE PATCHES (perubahan yang dilakukan):\n' +
+      'Gunakan diff patch ini untuk menentukan line number yang tepat. HANYA berikan komentar pada line yang ditandai dengan + (tambah) dalam patch.\n' +
+      patches
     );
   }
 

@@ -469,7 +469,8 @@ class MCPGitHubAdapter extends IGitHubService {
       const payload = await this._callMCP('get_pull_request_files', {
         owner: this.owner,
         repo: repo,
-        pull_number: prNumber
+        pull_number: prNumber,
+        media: 'diff'  // Request diff patches
       });
       rawFiles = this._normalizeArrayResponse('get_pull_request_files', payload, ['files']);
     } catch (error) {
@@ -916,7 +917,21 @@ class MCPGitHubAdapter extends IGitHubService {
       'swagger.json', 'swagger.yaml', 'swagger.yml',
       'openapi.json', 'openapi.yaml', 'openapi.yml'
     ];
-    return testPatterns.some(pattern => filename.includes(pattern));
+    const nonCodePatterns = [
+      '.gitignore', '.gitattributes', '.env.example',
+      'README', 'CHANGELOG', 'LICENSE', 'CONTRIBUTING',
+      'docker-compose.yml', 'Dockerfile', '.dockerignore',
+      'package.json', 'package-lock.json', 'yarn.lock', 'go.mod', 'go.sum',
+      'Makefile', 'CMakeLists.txt', '.gitmodules'
+    ];
+
+    if (testPatterns.some(pattern => filename.includes(pattern))) {
+      return true;
+    }
+
+    // For non-code files, check if they are the full filename or path
+    const basename = filename.split('/').pop();
+    return nonCodePatterns.some(pattern => basename === pattern || filename.endsWith(pattern));
   }
 
   /**
