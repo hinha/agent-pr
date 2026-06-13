@@ -353,6 +353,54 @@ describe('ReviewPRUseCase', () => {
         })
       );
     });
+
+    test('should reject malformed external review shape before github submission', async () => {
+      const result = await useCase.submitExternalResult(
+        instance,
+        repo,
+        pr,
+        'medium',
+        {
+          summary: 'Malformed',
+          comments: 'not-an-array'
+        },
+        mockGithubAdapter
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('field "comments" must be an array');
+      expect(mockGithubAdapter.createReviewWithComments).not.toHaveBeenCalled();
+    });
+
+    test('should reject non-object comments and non-string suggestedCode', async () => {
+      const result = await useCase.submitExternalResult(
+        instance,
+        repo,
+        pr,
+        'medium',
+        {
+          summary: 'Bad comments',
+          comments: [
+            null,
+            {
+              file: 'src/index.js',
+              start_line: 10,
+              end_line: 9,
+              severity: 'LOW',
+              message: 'Bad line range',
+              suggestedCode: 123
+            }
+          ]
+        },
+        mockGithubAdapter
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('comments[0] must be an object');
+      expect(result.error).toContain('comments[1].end_line must be an integer >= start_line');
+      expect(result.error).toContain('comments[1].suggestedCode must be a string when present');
+      expect(mockGithubAdapter.createReviewWithComments).not.toHaveBeenCalled();
+    });
   });
 
   describe('_determineNewState', () => {

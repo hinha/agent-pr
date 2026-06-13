@@ -104,6 +104,64 @@ describe('DiscordBotAdapter', () => {
     }));
   });
 
+  test('uses default attachment filename for Hermes prompt attachment', async () => {
+    const adapter = new DiscordBotAdapter('token', {
+      config,
+      logger: { info: jest.fn(), error: jest.fn() }
+    });
+
+    await adapter.sendHermesMention({
+      instance: { owner: 'acme' },
+      repo: { name: 'api' },
+      mentionBotName: '<@123456789012345678>',
+      content: '<@123456789012345678>\nPrompt tersedia di attachment.',
+      attachmentContent: 'FULL PROMPT'
+    });
+
+    const channel = await adapter.client.channels.fetch.mock.results[0].value;
+    expect(channel.send).toHaveBeenCalledWith(expect.objectContaining({
+      files: [
+        expect.objectContaining({
+          name: 'review-prompt.txt',
+          attachment: expect.any(Buffer)
+        })
+      ]
+    }));
+  });
+
+  test('sends reply through channel fallback when target has no reply helper', async () => {
+    const adapter = new DiscordBotAdapter('token', {
+      config,
+      logger: { info: jest.fn(), error: jest.fn() }
+    });
+    const channel = {
+      send: jest.fn().mockResolvedValue({ id: 'fallback-reply-1' })
+    };
+
+    const result = await adapter.sendReply(
+      { id: 'target-1', channel },
+      'repair request',
+      { allowedMentions: { parse: [] } }
+    );
+
+    expect(result).toEqual({ id: 'fallback-reply-1' });
+    expect(channel.send).toHaveBeenCalledWith({
+      content: 'repair request',
+      allowedMentions: { parse: [] },
+      reply: { messageReference: 'target-1' }
+    });
+  });
+
+  test('throws when reply target has no reply helper or sendable channel', async () => {
+    const adapter = new DiscordBotAdapter('token', {
+      config,
+      logger: { info: jest.fn(), error: jest.fn() }
+    });
+
+    await expect(adapter.sendReply({ id: 'target-2', channel: {} }, 'repair request'))
+      .rejects.toThrow('Discord reply target is not sendable');
+  });
+
   test('returns message object from sendHermesMention and can split long replies', async () => {
     const adapter = new DiscordBotAdapter('token', {
       config,

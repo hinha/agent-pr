@@ -124,6 +124,32 @@ describe('ExternalReviewSessionService', () => {
     expect(service.sessionsByQueueItemId.has('qi_2')).toBe(true);
   });
 
+  test('rejects lookups for unknown sessions and ignores duplicate reply targets', async () => {
+    expect(service.awaitResult('missing')).rejects.toThrow('External review session not found: missing');
+    expect(service.awaitPromptRequest('missing')).rejects.toThrow('External review session not found: missing');
+    expect(() => service.registerReplyTargets('missing', [])).toThrow('External review session not found: missing');
+
+    service.startSession({
+      queueItemId: 'qi_targets',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 10,
+      level: 'high',
+      triggerMessageId: 'trigger-targets',
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    const targets = service.registerReplyTargets('qi_targets', [
+      null,
+      {},
+      { id: 'trigger-targets' },
+      { id: 'prompt-target-1' }
+    ]);
+
+    expect(targets).toEqual(['trigger-targets', 'prompt-target-1']);
+  });
+
   test('ignores non-protocol JSON before prompt request', async () => {
     service.startSession({
       queueItemId: 'qi_2b',
@@ -148,6 +174,50 @@ describe('ExternalReviewSessionService', () => {
       accepted: false,
       reason: 'non_protocol_handshake'
     }));
+  });
+
+  test('filters unrelated replies before parsing content', () => {
+    service.startSession({
+      queueItemId: 'qi_filters',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 10,
+      level: 'high',
+      triggerMessageId: 'trigger-filters',
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    expect(service.handleAgentReply({
+      id: 'msg-unknown',
+      content: '{}',
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'missing-trigger' }
+    })).toEqual(expect.objectContaining({ matched: false, reason: 'unknown_trigger' }));
+
+    const session = service.sessionsByQueueItemId.get('qi_filters');
+    session.status = 'completed';
+    expect(service.handleAgentReply({
+      id: 'msg-completed',
+      content: '{}',
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'trigger-filters' }
+    })).toEqual(expect.objectContaining({ matched: true, reason: 'session_not_pending' }));
+
+    session.status = 'pending';
+    expect(service.handleAgentReply({
+      id: 'msg-user',
+      content: '{}',
+      author: { id: 'user-1', bot: false },
+      reference: { messageId: 'trigger-filters' }
+    })).toEqual(expect.objectContaining({ matched: true, reason: 'author_not_bot' }));
+
+    expect(service.handleAgentReply({
+      id: 'msg-untrusted',
+      content: '{}',
+      author: { id: 'bot-2', bot: true },
+      reference: { messageId: 'trigger-filters' }
+    })).toEqual(expect.objectContaining({ matched: true, reason: 'untrusted_bot' }));
   });
 
   test('accepts plain-text prompt request as fallback before prompt detail is sent', async () => {
@@ -609,6 +679,110 @@ describe('ExternalReviewSessionService', () => {
     expect(logger.error).toHaveBeenCalledWith(
       expect.stringContaining('Failed to parse external review JSON')
     );
+  });
+
+  test('keeps waiting when a continuation fragment still does not complete json', () => {
+    service.startSession({
+      queueItemId: 'qi_incomplete_tail',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 16,
+      level: 'high',
+      triggerMessageId: 'trigger-incomplete-tail',
+      channelId: 'channel-incomplete-tail',
+      promptDelivered: true,
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    service.handleAgentReply({
+      id: 'msg-incomplete-tail-a',
+      content: '{"summary":"done","comments":[{"file":"a.js","suggestedCode":"const x = ',
+      author: { id: 'bot-1', bot: true },
+      channelId: 'channel-incomplete-tail'
+    });
+
+    const secondPart = service.handleAgentReply({
+      id: 'msg-incomplete-tail-b',
+      content: 'still incomplete',
+      author: { id: 'bot-1', bot: true },
+      channelId: 'channel-incomplete-tail'
+    });
+
+    expect(secondPart).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: false,
+      reason: 'awaiting_final_fragment'
+    }));
+  });
+
+  test('logs unusable non-protocol replies after prompt delivery', () => {
+    service.startSession({
+      queueItemId: 'qi_unusable',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 17,
+      level: 'high',
+      triggerMessageId: 'trigger-unusable',
+      channelId: 'channel-unusable',
+      promptDelivered: true,
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    const handle = service.handleAgentReply({
+      id: 'msg-unusable-a',
+      content: 'Saya masih mengerjakan review.',
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'trigger-unusable' }
+    });
+
+    expect(handle).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: false,
+      reason: 'non_protocol_reply'
+    }));
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('Unusable external review reply')
+    );
+  });
+
+  test('rejects final_review envelope with invalid payload shape', () => {
+    service.startSession({
+      queueItemId: 'qi_invalid_payload',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 18,
+      level: 'high',
+      triggerMessageId: 'trigger-invalid-payload',
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    const handle = service.handleAgentReply({
+      id: 'msg-invalid-payload-a',
+      content: JSON.stringify({
+        protocol: DISCORD_HANDOFF_PROTOCOL,
+        session_id: 'qi_invalid_payload',
+        message_type: DiscordHandoffMessageType.FINAL_REVIEW,
+        payload: { summary: '', comments: 'bad' }
+      }),
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'trigger-invalid-payload' }
+    });
+
+    expect(handle).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: false,
+      reason: 'invalid_final_payload'
+    }));
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('Invalid final payload')
+    );
+  });
+
+  test('returns false when failing an unknown session', () => {
+    expect(service.failSession('missing', new Error('boom'))).toBe(false);
   });
 
   test('accepts raw final review JSON with chunk markers injected outside strings', async () => {
