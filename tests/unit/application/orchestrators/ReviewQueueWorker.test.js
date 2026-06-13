@@ -986,7 +986,7 @@ describe('ReviewQueueWorker', () => {
 
       expect(mockDiscordAdapter.sendReply).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'bot-final-1' }),
-        expect.stringContaining('Error validasi/normalisasi: External review result validation failed')
+        expect.stringContaining('Error: External review result validation failed')
       );
       expect(mockExternalReviewSessionService.startSession).toHaveBeenCalledTimes(2);
       expect(mockExternalReviewSessionService.startSession).toHaveBeenLastCalledWith(expect.objectContaining({

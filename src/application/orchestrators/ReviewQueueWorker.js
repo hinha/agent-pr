@@ -351,8 +351,12 @@ class ReviewQueueWorker {
     });
 
     let sessionTriggerMessage = trigger.message;
+    const totalTimeoutMs = (instance.agent?.reviewTimeoutSeconds || 600) * 1000;
+    const deadlineAt = Date.now() + totalTimeoutMs;
 
-    while (true) {
+    while (Date.now() < deadlineAt) {
+      const remainingTimeoutMs = Math.max(deadlineAt - Date.now(), 1);
+
       this.externalReviewSessionService.startSession({
         queueItemId: item.id,
         sessionId: item.id,
@@ -364,7 +368,7 @@ class ReviewQueueWorker {
         channelId: sessionTriggerMessage.channelId || sessionTriggerMessage.channel?.id || null,
         promptDelivered: true,
         trustedBotUserId: instance.mentionBotUserId,
-        timeoutMs: (instance.agent?.reviewTimeoutSeconds || 600) * 1000
+        timeoutMs: remainingTimeoutMs
       });
 
       const externalResult = await this.externalReviewSessionService.awaitResult(item.id);
@@ -381,36 +385,39 @@ class ReviewQueueWorker {
         return submitResult;
       }
 
-      if (!this._isRepairableExternalReviewError(submitResult?.error)) {
-        return submitResult;
-      }
-
       this.logger.error(
-        `[ReviewQueueWorker] External review validation failed for ${item.instanceKey}/${item.repoName} PR #${item.prNumber}: ${submitResult.error}`
+        `[ReviewQueueWorker] External review follow-up failed for ${item.instanceKey}/${item.repoName} PR #${item.prNumber}: ${submitResult?.error || 'unknown error'}`
       );
 
       const repairTargetMessage = externalResult.message || sessionTriggerMessage;
-      sessionTriggerMessage = await this.discordAdapter.sendReply(
-        repairTargetMessage,
-        this._buildExternalReviewRepairRequest(submitResult.error)
-      );
+      try {
+        sessionTriggerMessage = await this.discordAdapter.sendReply(
+          repairTargetMessage,
+          this._buildExternalReviewRepairRequest(submitResult.error)
+        );
+      } catch (repairError) {
+        this.logger.error(
+          `[ReviewQueueWorker] Failed to send repair request for ${item.instanceKey}/${item.repoName} PR #${item.prNumber}: ${repairError.message}`
+        );
+        return {
+          success: false,
+          error: `Failed to send repair request: ${repairError.message}`
+        };
+      }
     }
-  }
 
-  _isRepairableExternalReviewError(errorMessage) {
-    if (!errorMessage || typeof errorMessage !== 'string') {
-      return false;
-    }
-
-    return errorMessage.includes('External review result must be a JSON object') ||
-      errorMessage.includes('External review result validation failed');
+    return {
+      success: false,
+      error: 'Timed out waiting for corrected external review reply'
+    };
   }
 
   _buildExternalReviewRepairRequest(errorMessage) {
     return [
-      'JSON final belum bisa dipakai oleh bot_pr.',
-      `Error validasi/normalisasi: ${errorMessage}`,
-      'Kirim ulang HASIL FINAL sebagai reply ke pesan ini.',
+      'JSON final sudah diterima, tetapi step lanjutan di bot_pr gagal.',
+      `Error: ${errorMessage || 'unknown error'}`,
+      'Lakukan action yang diperlukan untuk memperbaiki kegagalan ini.',
+      'Setelah diperbaiki, kirim ulang HASIL FINAL sebagai reply ke pesan ini.',
       'Isi reply HARUS valid JSON saja dengan format dari prompt review.',
       'JANGAN submit review GitHub langsung.'
     ].join('\n');
