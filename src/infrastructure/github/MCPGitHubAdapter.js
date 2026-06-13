@@ -640,6 +640,20 @@ class MCPGitHubAdapter extends IGitHubService {
         this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Cannot request changes on own PR, falling back to COMMENT`);
         const fallbackArgs = { ...reviewArgs, event: 'COMMENT' };
         result = await this._callMCP('create_pull_request_review', fallbackArgs);
+      } else if (error.message && error.message.includes('Line could not be resolved') || error.message && error.message.includes('Path could not be resolved')) {
+        // GitHub rejected because line/path not in diff - move all comments to body and retry
+        this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Line/path validation failed, moving all comments to review body`);
+        const allComments = [...comments, ...skippedComments];
+        const fallbackSection = allComments.map(c => {
+          return `**\`${c.path}:${c.line}\`**\n\n${c.body}`;
+        }).join('\n\n---\n\n');
+
+        const fallbackArgs = {
+          ...reviewArgs,
+          body: `${reviewBody}\n\n---\n\n> **Note:** The following comments could not be placed as inline review (line/path not in diff):\n\n${fallbackSection}`,
+          comments: []
+        };
+        result = await this._callMCP('create_pull_request_review', fallbackArgs);
       } else {
         throw error;
       }
