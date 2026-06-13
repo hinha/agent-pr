@@ -42,11 +42,22 @@ OUTPUT FORMAT (JSON):
 Catatan:
 - Jika issue berada di baris terakhir perubahan hunk, boleh perluas `end_line` seperlunya agar konteks komentar tetap jelas.
 
-INFO PR Gunakan MCP {{MCP_NAME}}:
+INFO PR - Akses GitHub via MCP:
+- MCP Server Name: {{MCP_NAME}}
 - Repository: {{OWNER}}/{{REPO}}
 - Source branch: {{SOURCE_BRANCH}}
 - Target branch: {{TARGET_BRANCH}}
 - URL: {{PR_URL}}
+
+TOOL YANG TERSEEDIA (sesuai MCP server):
+- list_pull_requests - List open PRs
+- get_pull_request_files - Get changed files (dengan patch)
+- get_pull_request_reviews - Get existing reviews
+- create_pull_request_review - Submit review (JANGAN DIPANGGIL!)
+- update_pull_request - Close PR
+- get_pull_request - Get PR details
+
+PENTING: Anda TIDAK perlu memanggil MCP sendiri. Cukup analisis kode dari informasi yang diberikan dan kembalikan JSON review. Sistem akan handle submit review ke GitHub.
 
 Pastikan output hanya JSON yang valid, tanpa text tambahan.
 
