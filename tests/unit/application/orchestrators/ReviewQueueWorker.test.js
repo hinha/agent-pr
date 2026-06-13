@@ -81,7 +81,7 @@ describe('ReviewQueueWorker', () => {
       sendHermesMention: jest.fn().mockResolvedValue({
         success: true,
         id: 'discord-trigger-1',
-        message: { id: 'discord-trigger-1' }
+        message: { id: 'discord-trigger-1', channelId: 'channel-1' }
       }),
       sendReplyTextAttachment: jest.fn().mockResolvedValue({ id: 'prompt-attachment-1' })
     };
@@ -898,6 +898,7 @@ describe('ReviewQueueWorker', () => {
         queueItemId: 'qi_test_handoff',
         sessionId: 'qi_test_handoff',
         triggerMessageId: 'discord-trigger-1',
+        channelId: 'channel-1',
         trustedBotUserId: '123456789012345678'
       }));
       expect(mockReviewPRUseCase.submitExternalResult).toHaveBeenCalledWith(

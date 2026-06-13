@@ -18,7 +18,9 @@ class ExternalReviewSessionService {
       ...sessionInput,
       sessionId: sessionInput.sessionId || sessionInput.queueItemId,
       deadlineAt,
-      status: 'pending'
+      status: 'pending',
+      partialFinalContent: '',
+      partialFinalUpdatedAt: null
     };
 
     const promise = new Promise((resolve, reject) => {
@@ -89,13 +91,12 @@ class ExternalReviewSessionService {
 
   handleAgentReply(message) {
     const replyTargetMessageId = this._extractReplyTargetMessageId(message);
-    if (!replyTargetMessageId) {
-      return { matched: false, accepted: false, reason: 'not_a_reply' };
-    }
+    const session = replyTargetMessageId
+      ? this.sessionsByReplyTargetMessageId.get(String(replyTargetMessageId))
+      : this._findContinuationSession(message);
 
-    const session = this.sessionsByReplyTargetMessageId.get(String(replyTargetMessageId));
     if (!session) {
-      return { matched: false, accepted: false, reason: 'unknown_trigger' };
+      return { matched: false, accepted: false, reason: replyTargetMessageId ? 'unknown_trigger' : 'not_a_reply' };
     }
 
     if (session.status !== 'pending') {
@@ -112,11 +113,15 @@ class ExternalReviewSessionService {
 
     const content = String(message.content || '').trim();
     const parsed = this._parsePotentialJson(content);
-    const envelope = this._normalizeEnvelope(parsed, session);
+    const combinedParsed = session.partialFinalContent
+      ? this._parsePotentialJson(`${session.partialFinalContent}\n${content}`)
+      : null;
+    const effectiveParsed = combinedParsed || parsed;
+    const envelope = this._normalizeEnvelope(effectiveParsed, session);
 
     if (!envelope) {
       if (!session.promptRequestMessage) {
-        if (parsed === null && this._looksLikePromptRequestText(content)) {
+        if (effectiveParsed === null && this._looksLikePromptRequestText(content)) {
           this._resolvePromptRequest(session, message);
           return {
             matched: true,
@@ -129,9 +134,20 @@ class ExternalReviewSessionService {
         return { matched: true, accepted: false, reason: 'non_protocol_handshake', session: this._publicSession(session) };
       }
 
-      const rawFinalPayload = this._normalizeRawFinalReviewPayload(parsed);
+      const rawFinalPayload = this._normalizeRawFinalReviewPayload(effectiveParsed);
       if (rawFinalPayload) {
+        this._clearPartialFinalBuffer(session);
         return this._acceptFinalPayload(session, rawFinalPayload, content, message.id, 'raw_final_review_fallback');
+      }
+
+      if (this._looksLikeFinalReviewFragment(content)) {
+        this._appendPartialFinalContent(session, content);
+        return {
+          matched: true,
+          accepted: false,
+          reason: 'awaiting_final_fragment',
+          session: this._publicSession(session)
+        };
       }
 
       return { matched: true, accepted: false, reason: 'non_protocol_reply', session: this._publicSession(session) };
@@ -166,6 +182,7 @@ class ExternalReviewSessionService {
     const normalizedFinalPayload = this._normalizeFinalReviewPayload(envelope);
 
     if (normalizedFinalPayload) {
+      this._clearPartialFinalBuffer(session);
       return this._acceptFinalPayload(session, normalizedFinalPayload, content, message.id);
     }
 
@@ -218,6 +235,35 @@ class ExternalReviewSessionService {
     for (const messageId of session.replyTargetMessageIds || []) {
       this.sessionsByReplyTargetMessageId.delete(String(messageId));
     }
+  }
+
+  _findContinuationSession(message) {
+    const channelId = this._extractChannelId(message);
+    if (!channelId) {
+      return null;
+    }
+
+    for (const session of this.sessionsByQueueItemId.values()) {
+      if (session.status !== 'pending' || !session.partialFinalContent) {
+        continue;
+      }
+
+      if (String(session.trustedBotUserId) !== String(message?.author?.id)) {
+        continue;
+      }
+
+      if (String(session.channelId || '') !== String(channelId)) {
+        continue;
+      }
+
+      return session;
+    }
+
+    return null;
+  }
+
+  _extractChannelId(message) {
+    return message?.channelId || message?.channel?.id || null;
   }
 
   _resolvePromptRequest(session, message) {
@@ -321,6 +367,18 @@ class ExternalReviewSessionService {
     };
   }
 
+  _appendPartialFinalContent(session, content) {
+    session.partialFinalContent = session.partialFinalContent
+      ? `${session.partialFinalContent}\n${content}`
+      : String(content || '');
+    session.partialFinalUpdatedAt = Date.now();
+  }
+
+  _clearPartialFinalBuffer(session) {
+    session.partialFinalContent = '';
+    session.partialFinalUpdatedAt = null;
+  }
+
   _acceptFinalPayload(session, reviewResult, rawContent, messageId, reason = 'accepted') {
     session.status = 'completed';
     this._resolvePromptRequest(session, null);
@@ -360,6 +418,23 @@ class ExternalReviewSessionService {
       normalized.includes('wait');
 
     return mentionsPrompt && asksForPrompt;
+  }
+
+  _looksLikeFinalReviewFragment(content) {
+    if (!content) {
+      return false;
+    }
+
+    const normalized = String(content).trim();
+    if (!normalized) {
+      return false;
+    }
+
+    return normalized.startsWith('{') ||
+      normalized.includes('"summary"') ||
+      normalized.includes('"comments"') ||
+      normalized.includes(`"protocol":"${DISCORD_HANDOFF_PROTOCOL}"`) ||
+      normalized.includes('"message_type"');
   }
 
   _extractJson(text) {
@@ -431,6 +506,7 @@ class ExternalReviewSessionService {
       sessionId: session.sessionId,
       triggerMessageId: session.triggerMessageId,
       trustedBotUserId: session.trustedBotUserId,
+      channelId: session.channelId,
       deadlineAt: session.deadlineAt
     };
   }

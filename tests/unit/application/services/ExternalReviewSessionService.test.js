@@ -334,6 +334,7 @@ describe('ExternalReviewSessionService', () => {
       prNumber: 10,
       level: 'high',
       triggerMessageId: 'trigger-6b',
+      channelId: 'channel-6b',
       trustedBotUserId: 'bot-1',
       timeoutMs: 1000
     });
@@ -357,6 +358,7 @@ describe('ExternalReviewSessionService', () => {
       id: 'msg-6b-b',
       content: '{"summary":"done","comments":[]}',
       author: { id: 'bot-1', bot: true },
+      channelId: 'channel-6b',
       reference: { messageId: 'prompt-6b-1' }
     });
 
@@ -364,6 +366,69 @@ describe('ExternalReviewSessionService', () => {
       reviewResult: { summary: 'done', comments: [] }
     }));
     expect(finalHandle).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: true,
+      reason: 'raw_final_review_fallback'
+    }));
+  });
+
+  test('buffers fragmented final review JSON until the continuation arrives', async () => {
+    service.startSession({
+      queueItemId: 'qi_frag',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 11,
+      level: 'high',
+      triggerMessageId: 'trigger-frag',
+      channelId: 'channel-frag',
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    service.handleAgentReply({
+      id: 'msg-frag-a',
+      content: JSON.stringify({
+        protocol: DISCORD_HANDOFF_PROTOCOL,
+        session_id: 'qi_frag',
+        message_type: DiscordHandoffMessageType.PROMPT_REQUEST,
+        payload: { message: 'Send complete review prompt' }
+      }),
+      author: { id: 'bot-1', bot: true },
+      channelId: 'channel-frag',
+      reference: { messageId: 'trigger-frag' }
+    });
+
+    service.registerReplyTargets('qi_frag', [{ id: 'prompt-frag-1' }]);
+
+    const pending = service.awaitResult('qi_frag');
+    const firstPart = service.handleAgentReply({
+      id: 'msg-frag-b',
+      content: '{"summary":"done","comments":[{"file":"a.js"',
+      author: { id: 'bot-1', bot: true },
+      channelId: 'channel-frag',
+      reference: { messageId: 'prompt-frag-1' }
+    });
+
+    expect(firstPart).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: false,
+      reason: 'awaiting_final_fragment'
+    }));
+
+    const secondPart = service.handleAgentReply({
+      id: 'msg-frag-c',
+      content: ',"start_line":1,"severity":"LOW","message":"x"}]}',
+      author: { id: 'bot-1', bot: true },
+      channelId: 'channel-frag'
+    });
+
+    await expect(pending).resolves.toEqual(expect.objectContaining({
+      reviewResult: expect.objectContaining({
+        summary: 'done',
+        comments: expect.any(Array)
+      })
+    }));
+    expect(secondPart).toEqual(expect.objectContaining({
       matched: true,
       accepted: true,
       reason: 'raw_final_review_fallback'
