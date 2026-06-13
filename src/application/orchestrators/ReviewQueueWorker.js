@@ -362,15 +362,16 @@ class ReviewQueueWorker {
 
     const promptRequestMessage = await this.externalReviewSessionService.awaitPromptRequest(item.id);
     if (promptRequestMessage) {
-      const promptMessages = await this.discordAdapter.sendReplyChunks(
+      const promptMessage = await this.discordAdapter.sendReplyTextAttachment(
         promptRequestMessage,
         handoffPrompt.detailContent,
         {
-          prefix: 'Prompt review',
-          mentionBotName: instance.mentionBotName
+          mentionBotName: instance.mentionBotName,
+          fileName: `review-prompt-${item.id}.txt`,
+          intro: 'Prompt review lengkap ada di attachment `.txt` pada reply ini.'
         }
       );
-      this.externalReviewSessionService.registerReplyTargets(item.id, [promptRequestMessage, ...promptMessages]);
+      this.externalReviewSessionService.registerReplyTargets(item.id, [promptRequestMessage, promptMessage]);
     }
 
     const externalResult = await this.externalReviewSessionService.awaitResult(item.id);

@@ -140,6 +140,34 @@ class DiscordBotAdapter extends EventEmitter {
     return sent;
   }
 
+  async sendReplyTextAttachment(targetMessage, content, options = {}) {
+    const mentionBotName = options.mentionBotName || '';
+    const allowedMentions = mentionBotName ? this._buildAllowedMentions(mentionBotName) : undefined;
+    const fileName = options.fileName || 'review-prompt.txt';
+    const introLines = [];
+
+    if (mentionBotName) {
+      introLines.push(mentionBotName);
+    }
+    introLines.push(options.intro || `Prompt review lengkap ada di attachment \`${fileName}\`.`);
+    introLines.push('Baca attachment ini sebagai sumber prompt lengkap yang harus direview.');
+
+    const payload = {
+      files: [
+        {
+          attachment: Buffer.from(content, 'utf8'),
+          name: fileName
+        }
+      ]
+    };
+
+    if (allowedMentions) {
+      payload.allowedMentions = allowedMentions;
+    }
+
+    return this.sendReply(targetMessage, introLines.join('\n'), payload);
+  }
+
   async sendQueueCompletedNotification(data) {
     const instance = this.config.instances?.[data.instanceKey];
     if (!instance) {

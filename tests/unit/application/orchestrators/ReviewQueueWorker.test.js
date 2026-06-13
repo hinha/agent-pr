@@ -83,7 +83,7 @@ describe('ReviewQueueWorker', () => {
         id: 'discord-trigger-1',
         message: { id: 'discord-trigger-1' }
       }),
-      sendReplyChunks: jest.fn().mockResolvedValue([{ id: 'prompt-chunk-1' }, { id: 'prompt-chunk-2' }])
+      sendReplyTextAttachment: jest.fn().mockResolvedValue({ id: 'prompt-attachment-1' })
     };
     mockReviewPromptBuilder = {
       build: jest.fn().mockReturnValue('BASE PROMPT'),
@@ -893,12 +893,13 @@ describe('ReviewQueueWorker', () => {
         mentionBotName: '<@123456789012345678>',
         content: '<@123>\nHANDOFF TRIGGER'
       }));
-      expect(mockDiscordAdapter.sendReplyChunks).toHaveBeenCalledWith(
+      expect(mockDiscordAdapter.sendReplyTextAttachment).toHaveBeenCalledWith(
         { id: 'hermes-handshake-1' },
         'HANDOFF DETAIL',
         {
-          prefix: 'Prompt review',
-          mentionBotName: '<@123456789012345678>'
+          mentionBotName: '<@123456789012345678>',
+          fileName: 'review-prompt-qi_test_handoff.txt',
+          intro: 'Prompt review lengkap ada di attachment `.txt` pada reply ini.'
         }
       );
       expect(mockExternalReviewSessionService.startSession).toHaveBeenCalledWith(expect.objectContaining({
@@ -910,7 +911,7 @@ describe('ReviewQueueWorker', () => {
       expect(mockExternalReviewSessionService.awaitPromptRequest).toHaveBeenCalledWith('qi_test_handoff');
       expect(mockExternalReviewSessionService.registerReplyTargets).toHaveBeenCalledWith(
         'qi_test_handoff',
-        [{ id: 'hermes-handshake-1' }, { id: 'prompt-chunk-1' }, { id: 'prompt-chunk-2' }]
+        [{ id: 'hermes-handshake-1' }, { id: 'prompt-attachment-1' }]
       );
       expect(mockReviewPRUseCase.submitExternalResult).toHaveBeenCalledWith(
         expect.objectContaining({ owner: 'test' }),

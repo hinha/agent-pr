@@ -107,6 +107,44 @@ describe('DiscordBotAdapter', () => {
     expect(result).toHaveLength(5);
   });
 
+  test('can send full prompt as a text attachment reply', async () => {
+    const adapter = new DiscordBotAdapter('token', {
+      config,
+      logger: { info: jest.fn(), error: jest.fn() }
+    });
+
+    const trigger = await adapter.sendHermesMention({
+      instance: { owner: 'acme' },
+      repo: { name: 'api' },
+      mentionBotName: '<@123456789012345678>',
+      content: 'short trigger'
+    });
+
+    const reply = jest.fn().mockResolvedValue({ id: 'reply-attachment-1' });
+    trigger.message.reply = reply;
+
+    const result = await adapter.sendReplyTextAttachment(trigger.message, 'FULL PROMPT', {
+      mentionBotName: '<@123456789012345678>',
+      fileName: 'review-prompt-qi_1.txt',
+      intro: 'Prompt lengkap ada di attachment.'
+    });
+
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
+      content: '<@123456789012345678>\nPrompt lengkap ada di attachment.\nBaca attachment ini sebagai sumber prompt lengkap yang harus direview.',
+      allowedMentions: {
+        parse: [],
+        users: ['123456789012345678']
+      },
+      files: [
+        expect.objectContaining({
+          name: 'review-prompt-qi_1.txt',
+          attachment: expect.any(Buffer)
+        })
+      ]
+    }));
+    expect(result).toEqual({ id: 'reply-attachment-1' });
+  });
+
   test('requests message intents for handoff reply flow', () => {
     const adapter = new DiscordBotAdapter('token', {
       config,
