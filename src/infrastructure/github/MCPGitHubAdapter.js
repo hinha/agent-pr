@@ -557,36 +557,11 @@ class MCPGitHubAdapter extends IGitHubService {
     // Update reviewResult with valid comments for further processing
     reviewResult.comments = validComments;
 
-    // Fetch PR files to validate comment file paths
-    let changedFiles = new Set();
-    try {
-      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Fetching PR files for comment validation`);
-      const payload = await this._callMCP('get_pull_request_files', {
-        owner: this.owner,
-        repo: repo,
-        pull_number: pr.number
-      });
-      const rawFiles = this._normalizeArrayResponse('get_pull_request_files', payload, ['files']);
-      for (const file of rawFiles || []) {
-        if (file.filename) changedFiles.add(file.filename);
-      }
-      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Found ${changedFiles.size} changed file(s)`);
-    } catch (error) {
-      this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Failed to fetch PR files: ${error.message}`);
-    }
-
-    // Build comments with line+side
+    // Build comments with line+side — GitHub validates on their side
     const comments = [];
     const skippedComments = [];
 
     for (const c of reviewResult.comments) {
-      // Skip comments for files not in the PR
-      if (changedFiles.size > 0 && !changedFiles.has(c.file)) {
-        this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] File ${c.file} not in changed files, will append to review body`);
-        skippedComments.push(c);
-        continue;
-      }
-
       // Build comment body
       let commentBody = `[${c.severity}] ${c.message}`;
 
