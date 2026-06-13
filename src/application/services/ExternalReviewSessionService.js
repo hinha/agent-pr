@@ -18,7 +18,10 @@ class ExternalReviewSessionService {
       ...sessionInput,
       sessionId: sessionInput.sessionId || sessionInput.queueItemId,
       deadlineAt,
-      status: 'pending'
+      status: 'pending',
+      promptDelivered: Boolean(sessionInput.promptDelivered),
+      partialFinalContent: '',
+      partialFinalUpdatedAt: null
     };
 
     const promise = new Promise((resolve, reject) => {
@@ -89,13 +92,12 @@ class ExternalReviewSessionService {
 
   handleAgentReply(message) {
     const replyTargetMessageId = this._extractReplyTargetMessageId(message);
-    if (!replyTargetMessageId) {
-      return { matched: false, accepted: false, reason: 'not_a_reply' };
-    }
+    const session = replyTargetMessageId
+      ? this.sessionsByReplyTargetMessageId.get(String(replyTargetMessageId))
+      : this._findSessionByChannel(message);
 
-    const session = this.sessionsByReplyTargetMessageId.get(String(replyTargetMessageId));
     if (!session) {
-      return { matched: false, accepted: false, reason: 'unknown_trigger' };
+      return { matched: false, accepted: false, reason: replyTargetMessageId ? 'unknown_trigger' : 'not_a_reply' };
     }
 
     if (session.status !== 'pending') {
@@ -110,13 +112,28 @@ class ExternalReviewSessionService {
       return { matched: true, accepted: false, reason: 'untrusted_bot', session };
     }
 
+    session.lastMatchedMessage = message;
     const content = String(message.content || '').trim();
     const parsed = this._parsePotentialJson(content);
-    const envelope = this._normalizeEnvelope(parsed, session);
+    const combinedContent = session.partialFinalContent
+      ? this._combinePartialFinalContent(session.partialFinalContent, content)
+      : null;
+    const combinedParsed = combinedContent
+      ? this._parsePotentialJson(combinedContent)
+      : null;
+    const effectiveParsed = combinedParsed || parsed;
+    const envelope = this._normalizeEnvelope(effectiveParsed, session);
+    const looksLikeJsonLikeReply = this._looksLikeJsonLikeReply(content);
+
+    if (!effectiveParsed && looksLikeJsonLikeReply) {
+      this.logger.error(
+        `[ExternalReviewSessionService] Failed to parse external review JSON for ${session.instanceKey}/${session.repoName} PR #${session.prNumber}: ${content.slice(0, 500)}`
+      );
+    }
 
     if (!envelope) {
-      if (!session.promptRequestMessage) {
-        if (parsed === null && this._looksLikePromptRequestText(content)) {
+      if (!session.promptRequestMessage && !session.promptDelivered) {
+        if (effectiveParsed === null && this._looksLikePromptRequestText(content)) {
           this._resolvePromptRequest(session, message);
           return {
             matched: true,
@@ -128,6 +145,36 @@ class ExternalReviewSessionService {
 
         return { matched: true, accepted: false, reason: 'non_protocol_handshake', session: this._publicSession(session) };
       }
+
+      const rawFinalPayload = this._normalizeRawFinalReviewPayload(effectiveParsed);
+      if (rawFinalPayload) {
+        this._clearPartialFinalBuffer(session);
+        return this._acceptFinalPayload(session, rawFinalPayload, content, message.id, 'raw_final_review_fallback');
+      }
+
+      if (session.partialFinalContent && content) {
+        this._appendPartialFinalContent(session, content);
+        return {
+          matched: true,
+          accepted: false,
+          reason: 'awaiting_final_fragment',
+          session: this._publicSession(session)
+        };
+      }
+
+      if (this._looksLikeFinalReviewFragment(content)) {
+        this._appendPartialFinalContent(session, content);
+        return {
+          matched: true,
+          accepted: false,
+          reason: 'awaiting_final_fragment',
+          session: this._publicSession(session)
+        };
+      }
+
+      this.logger.error(
+        `[ExternalReviewSessionService] Unusable external review reply for ${session.instanceKey}/${session.repoName} PR #${session.prNumber}: reason=non_protocol_reply content=${content.slice(0, 500)}`
+      );
 
       return { matched: true, accepted: false, reason: 'non_protocol_reply', session: this._publicSession(session) };
     }
@@ -161,27 +208,13 @@ class ExternalReviewSessionService {
     const normalizedFinalPayload = this._normalizeFinalReviewPayload(envelope);
 
     if (normalizedFinalPayload) {
-      session.status = 'completed';
-      this._resolvePromptRequest(session, null);
-      this._clearSession(session.queueItemId);
-      session.resolve({
-        session: this._publicSession(session),
-        reviewResult: normalizedFinalPayload,
-        rawContent: content,
-        messageId: message.id
-      });
-
-      this.logger.info(
-        `[ExternalReviewSessionService] Accepted external review reply for ${session.instanceKey}/${session.repoName} PR #${session.prNumber}`
-      );
-
-      return {
-        matched: true,
-        accepted: true,
-        session: this._publicSession(session),
-        reviewResult: normalizedFinalPayload
-      };
+      this._clearPartialFinalBuffer(session);
+      return this._acceptFinalPayload(session, normalizedFinalPayload, content, message.id);
     }
+
+    this.logger.error(
+      `[ExternalReviewSessionService] Invalid final payload for ${session.instanceKey}/${session.repoName} PR #${session.prNumber}: ${content.slice(0, 500)}`
+    );
 
     return {
       matched: true,
@@ -234,6 +267,45 @@ class ExternalReviewSessionService {
     }
   }
 
+  _findSessionByChannel(message) {
+    const channelId = this._extractChannelId(message);
+    if (!channelId) {
+      return null;
+    }
+
+    const matches = [];
+    for (const session of this.sessionsByQueueItemId.values()) {
+      if (session.status !== 'pending') {
+        continue;
+      }
+
+      if (String(session.trustedBotUserId) !== String(message?.author?.id)) {
+        continue;
+      }
+
+      if (String(session.channelId || '') !== String(channelId)) {
+        continue;
+      }
+
+      matches.push(session);
+    }
+
+    if (matches.length !== 1) {
+      return null;
+    }
+
+    const [session] = matches;
+    if (!session.partialFinalContent && !this._looksLikeSessionMessage(message?.content)) {
+      return null;
+    }
+
+    return session;
+  }
+
+  _extractChannelId(message) {
+    return message?.channelId || message?.channel?.id || null;
+  }
+
   _resolvePromptRequest(session, message) {
     if (session.promptRequestMessage !== null) {
       return;
@@ -257,12 +329,15 @@ class ExternalReviewSessionService {
     const cleanContent = content
       .replace(/```json\s*/gi, '')
       .replace(/```\s*/g, '')
+      .replace(/\u201c|\u201d/g, '"')
       .trim();
+    const chunkMarkerStrippedContent = this._stripChunkMarkers(cleanContent);
+    const commentStrippedContent = this._stripJsonComments(chunkMarkerStrippedContent);
 
     try {
-      return JSON.parse(cleanContent);
+      return JSON.parse(commentStrippedContent);
     } catch (_error) {
-      const extractedJson = this._extractJson(cleanContent);
+      const extractedJson = this._extractJson(commentStrippedContent);
       if (!extractedJson) {
         return null;
       }
@@ -273,6 +348,98 @@ class ExternalReviewSessionService {
         return null;
       }
     }
+  }
+
+  _stripJsonComments(text) {
+    if (!text) {
+      return text;
+    }
+
+    let result = '';
+    let inString = false;
+    let escapeNext = false;
+
+    for (let index = 0; index < text.length; index++) {
+      const char = text[index];
+      const nextChar = text[index + 1];
+
+      if (escapeNext) {
+        result += char;
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        result += char;
+        escapeNext = true;
+        continue;
+      }
+
+      if (char === '"') {
+        result += char;
+        inString = !inString;
+        continue;
+      }
+
+      if (!inString && char === '/' && nextChar === '/') {
+        while (index < text.length && text[index] !== '\n') {
+          index++;
+        }
+        if (index < text.length) {
+          result += '\n';
+        }
+        continue;
+      }
+
+      result += char;
+    }
+
+    return result;
+  }
+
+  _stripChunkMarkers(text) {
+    if (!text) {
+      return text;
+    }
+
+    let result = '';
+    let inString = false;
+    let escapeNext = false;
+
+    for (let index = 0; index < text.length; index++) {
+      const char = text[index];
+
+      if (escapeNext) {
+        result += char;
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        result += char;
+        escapeNext = true;
+        continue;
+      }
+
+      if (char === '"') {
+        result += char;
+        inString = !inString;
+        continue;
+      }
+
+      if (!inString && char === '(') {
+        const remainder = text.slice(index);
+        const match = remainder.match(/^\((\d+)\/(\d+)\)\s*/);
+        if (match) {
+          index += match[0].length - 1;
+          continue;
+        }
+      }
+
+      result += char;
+    }
+
+    return result;
   }
 
   _normalizeEnvelope(parsed, session) {
@@ -320,6 +487,69 @@ class ExternalReviewSessionService {
     };
   }
 
+  _normalizeRawFinalReviewPayload(parsed) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+
+    if (typeof parsed.summary !== 'string' || !Array.isArray(parsed.comments)) {
+      return null;
+    }
+
+    return {
+      summary: parsed.summary,
+      comments: parsed.comments
+    };
+  }
+
+  _appendPartialFinalContent(session, content) {
+    session.partialFinalContent = this._combinePartialFinalContent(
+      session.partialFinalContent,
+      content
+    );
+    session.partialFinalUpdatedAt = Date.now();
+  }
+
+  _combinePartialFinalContent(existingContent, newContent) {
+    const normalizedExisting = String(existingContent || '');
+    const normalizedNew = String(newContent || '');
+    if (!normalizedExisting) {
+      return normalizedNew;
+    }
+
+    return `${normalizedExisting}${normalizedNew}`;
+  }
+
+  _clearPartialFinalBuffer(session) {
+    session.partialFinalContent = '';
+    session.partialFinalUpdatedAt = null;
+  }
+
+  _acceptFinalPayload(session, reviewResult, rawContent, messageId, reason = 'accepted') {
+    session.status = 'completed';
+    this._resolvePromptRequest(session, null);
+    this._clearSession(session.queueItemId);
+    session.resolve({
+      session: this._publicSession(session),
+      reviewResult,
+      rawContent,
+      messageId,
+      message: session.lastMatchedMessage || null
+    });
+
+    this.logger.info(
+      `[ExternalReviewSessionService] Accepted external review reply for ${session.instanceKey}/${session.repoName} PR #${session.prNumber}`
+    );
+
+    return {
+      matched: true,
+      accepted: true,
+      reason,
+      session: this._publicSession(session),
+      reviewResult
+    };
+  }
+
   _looksLikePromptRequestText(content) {
     if (!content) {
       return false;
@@ -335,6 +565,46 @@ class ExternalReviewSessionService {
       normalized.includes('wait');
 
     return mentionsPrompt && asksForPrompt;
+  }
+
+  _looksLikeFinalReviewFragment(content) {
+    if (!content) {
+      return false;
+    }
+
+    const normalized = String(content).trim();
+    if (!normalized) {
+      return false;
+    }
+
+    return normalized.startsWith('{') ||
+      normalized.includes('"summary"') ||
+      normalized.includes('"comments"') ||
+      normalized.includes(`"protocol":"${DISCORD_HANDOFF_PROTOCOL}"`) ||
+      normalized.includes('"message_type"');
+  }
+
+  _looksLikeSessionMessage(content) {
+    if (!content) {
+      return false;
+    }
+
+    return this._looksLikePromptRequestText(content) ||
+      this._looksLikeFinalReviewFragment(content);
+  }
+
+  _looksLikeJsonLikeReply(content) {
+    if (!content) {
+      return false;
+    }
+
+    const normalized = String(content).trim();
+    return normalized.startsWith('{') ||
+      normalized.startsWith('```json') ||
+      normalized.includes('"summary"') ||
+      normalized.includes('"comments"') ||
+      normalized.includes('"protocol"') ||
+      normalized.includes('"message_type"');
   }
 
   _extractJson(text) {
@@ -406,6 +676,7 @@ class ExternalReviewSessionService {
       sessionId: session.sessionId,
       triggerMessageId: session.triggerMessageId,
       trustedBotUserId: session.trustedBotUserId,
+      channelId: session.channelId,
       deadlineAt: session.deadlineAt
     };
   }

@@ -73,6 +73,95 @@ describe('DiscordBotAdapter', () => {
     }));
   });
 
+  test('can send Hermes trigger with text attachment', async () => {
+    const adapter = new DiscordBotAdapter('token', {
+      config,
+      logger: { info: jest.fn(), error: jest.fn() }
+    });
+
+    await adapter.sendHermesMention({
+      instance: { owner: 'acme' },
+      repo: { name: 'api' },
+      mentionBotName: '<@123456789012345678>',
+      content: '<@123456789012345678>\nPrompt tersedia di attachment.',
+      attachmentContent: 'FULL PROMPT',
+      attachmentFileName: 'review-prompt-qi_1.txt'
+    });
+
+    const channel = await adapter.client.channels.fetch.mock.results[0].value;
+    expect(channel.send).toHaveBeenCalledWith(expect.objectContaining({
+      content: '<@123456789012345678>\nPrompt tersedia di attachment.',
+      allowedMentions: {
+        parse: [],
+        users: ['123456789012345678']
+      },
+      files: [
+        expect.objectContaining({
+          name: 'review-prompt-qi_1.txt',
+          attachment: expect.any(Buffer)
+        })
+      ]
+    }));
+  });
+
+  test('uses default attachment filename for Hermes prompt attachment', async () => {
+    const adapter = new DiscordBotAdapter('token', {
+      config,
+      logger: { info: jest.fn(), error: jest.fn() }
+    });
+
+    await adapter.sendHermesMention({
+      instance: { owner: 'acme' },
+      repo: { name: 'api' },
+      mentionBotName: '<@123456789012345678>',
+      content: '<@123456789012345678>\nPrompt tersedia di attachment.',
+      attachmentContent: 'FULL PROMPT'
+    });
+
+    const channel = await adapter.client.channels.fetch.mock.results[0].value;
+    expect(channel.send).toHaveBeenCalledWith(expect.objectContaining({
+      files: [
+        expect.objectContaining({
+          name: 'review-prompt.txt',
+          attachment: expect.any(Buffer)
+        })
+      ]
+    }));
+  });
+
+  test('sends reply through channel fallback when target has no reply helper', async () => {
+    const adapter = new DiscordBotAdapter('token', {
+      config,
+      logger: { info: jest.fn(), error: jest.fn() }
+    });
+    const channel = {
+      send: jest.fn().mockResolvedValue({ id: 'fallback-reply-1' })
+    };
+
+    const result = await adapter.sendReply(
+      { id: 'target-1', channel },
+      'repair request',
+      { allowedMentions: { parse: [] } }
+    );
+
+    expect(result).toEqual({ id: 'fallback-reply-1' });
+    expect(channel.send).toHaveBeenCalledWith({
+      content: 'repair request',
+      allowedMentions: { parse: [] },
+      reply: { messageReference: 'target-1' }
+    });
+  });
+
+  test('throws when reply target has no reply helper or sendable channel', async () => {
+    const adapter = new DiscordBotAdapter('token', {
+      config,
+      logger: { info: jest.fn(), error: jest.fn() }
+    });
+
+    await expect(adapter.sendReply({ id: 'target-2', channel: {} }, 'repair request'))
+      .rejects.toThrow('Discord reply target is not sendable');
+  });
+
   test('returns message object from sendHermesMention and can split long replies', async () => {
     const adapter = new DiscordBotAdapter('token', {
       config,
@@ -90,15 +179,54 @@ describe('DiscordBotAdapter', () => {
     trigger.message.reply = reply;
 
     const result = await adapter.sendReplyChunks(trigger.message, 'a'.repeat(8000), {
-      prefix: 'Prompt review'
+      prefix: 'Prompt review',
+      mentionBotName: '<@123456789012345678>'
     });
 
     expect(trigger.message).toBeDefined();
     expect(reply).toHaveBeenCalledTimes(5);
     for (const call of reply.mock.calls) {
       expect(call[0].content.length).toBeLessThanOrEqual(2000);
+      expect(call[0].content.startsWith('<@123456789012345678>\nPrompt review (')).toBe(true);
+      expect(call[0].allowedMentions).toEqual({
+        parse: [],
+        users: ['123456789012345678']
+      });
     }
     expect(result).toHaveLength(5);
+  });
+
+  test('can send full prompt as a text attachment reply', async () => {
+    const adapter = new DiscordBotAdapter('token', {
+      config,
+      logger: { info: jest.fn(), error: jest.fn() }
+    });
+
+    const trigger = await adapter.sendHermesMention({
+      instance: { owner: 'acme' },
+      repo: { name: 'api' },
+      mentionBotName: '<@123456789012345678>',
+      content: 'short trigger'
+    });
+
+    const reply = jest.fn().mockResolvedValue({ id: 'reply-attachment-1' });
+    trigger.message.reply = reply;
+
+    const result = await adapter.sendReplyTextAttachment(trigger.message, 'FULL PROMPT', {
+      fileName: 'review-prompt-qi_1.txt',
+      intro: 'Prompt lengkap ada di attachment.'
+    });
+
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
+      content: 'Prompt lengkap ada di attachment.\nBaca attachment ini sebagai sumber prompt lengkap yang harus direview.',
+      files: [
+        expect.objectContaining({
+          name: 'review-prompt-qi_1.txt',
+          attachment: expect.any(Buffer)
+        })
+      ]
+    }));
+    expect(result).toEqual({ id: 'reply-attachment-1' });
   });
 
   test('requests message intents for handoff reply flow', () => {
@@ -239,19 +367,28 @@ describe('DiscordBotAdapter', () => {
     })).rejects.toThrow('Discord target is not sendable');
   });
 
-  test('wires client event handlers for ready, interaction, and error', async () => {
+  test('wires client event handlers for ready, interaction, messageUpdate, and error', async () => {
     const logger = { info: jest.fn(), error: jest.fn() };
-    const adapter = new DiscordBotAdapter('token', { config, logger });
+    const externalReviewSessionService = { handleAgentReply: jest.fn() };
+    const adapter = new DiscordBotAdapter('token', { config, logger, externalReviewSessionService });
     const interactionListener = jest.fn();
+    const messageListener = jest.fn();
     adapter.on('interaction', interactionListener);
+    adapter.on('message', messageListener);
 
     adapter.client.handlers.ready();
     adapter.client.handlers.interactionCreate({ isButton: () => false });
     adapter.client.handlers.interactionCreate({ isButton: () => true, customId: 'x' });
+    await adapter.client.handlers.messageUpdate(
+      { id: 'm-old', content: 'old' },
+      { id: 'm-new', content: '{"summary":"done","comments":[]}', author: { id: '123', bot: true } }
+    );
     adapter.client.handlers.error(new Error('client-fail'));
 
     expect(logger.info).toHaveBeenCalledWith('[DiscordBotAdapter] Logged in as agent-pr-test#0001');
     expect(interactionListener).toHaveBeenCalledWith(expect.objectContaining({ customId: 'x' }));
+    expect(messageListener).toHaveBeenCalledWith(expect.objectContaining({ id: 'm-new' }));
+    expect(externalReviewSessionService.handleAgentReply).toHaveBeenCalledWith(expect.objectContaining({ id: 'm-new' }));
     expect(logger.error).toHaveBeenCalledWith('[DiscordBotAdapter] Client error: client-fail');
     expect(adapter._getRepoIndices('acme', 'api')).toEqual({ instanceIdx: 0, repoIdx: 0 });
   });

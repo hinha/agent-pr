@@ -269,14 +269,74 @@ class ReviewPRUseCase {
       throw new Error('External review result must be a JSON object');
     }
 
+    const validationErrors = [];
+    if (typeof externalReviewResult.summary !== 'string' || !externalReviewResult.summary.trim()) {
+      validationErrors.push('field "summary" must be a non-empty string');
+    }
+    if (!Array.isArray(externalReviewResult.comments)) {
+      validationErrors.push('field "comments" must be an array');
+    }
+
+    if (Array.isArray(externalReviewResult.comments)) {
+      externalReviewResult.comments.forEach((comment, index) => {
+        if (!comment || typeof comment !== 'object' || Array.isArray(comment)) {
+          validationErrors.push(`comments[${index}] must be an object`);
+          return;
+        }
+
+        const file = comment.file || comment.path || comment.filename;
+        const line = comment.line || comment.start_line || comment.startLine;
+        const endLine = comment.end_line || comment.endLine;
+        const severity = String(comment.severity || '').trim().toUpperCase();
+
+        if (!file || typeof file !== 'string') {
+          validationErrors.push(`comments[${index}].file must be a non-empty string`);
+        }
+
+        if (!Number.isInteger(line) || line <= 0) {
+          validationErrors.push(`comments[${index}].start_line must be a positive integer`);
+        }
+
+        if (endLine !== undefined && endLine !== null && (!Number.isInteger(endLine) || endLine < line)) {
+          validationErrors.push(`comments[${index}].end_line must be an integer >= start_line`);
+        }
+
+        if (!['LOW', 'MEDIUM', 'HIGH'].includes(severity)) {
+          validationErrors.push(`comments[${index}].severity must be one of LOW, MEDIUM, HIGH`);
+        }
+
+        if (!comment.message || typeof comment.message !== 'string' || !comment.message.trim()) {
+          validationErrors.push(`comments[${index}].message must be a non-empty string`);
+        }
+
+        if (comment.suggestedCode !== undefined &&
+          comment.suggestedCode !== null &&
+          typeof comment.suggestedCode !== 'string' &&
+          typeof comment.suggested_code !== 'string') {
+          validationErrors.push(`comments[${index}].suggestedCode must be a string when present`);
+        }
+      });
+    }
+
+    if (validationErrors.length > 0) {
+      throw new Error(`External review result validation failed: ${validationErrors.join('; ')}`);
+    }
+
     const comments = Array.isArray(externalReviewResult.comments)
-      ? externalReviewResult.comments.map(comment => ({
-        file: comment.file || comment.path || comment.filename,
-        line: comment.line || comment.start_line || comment.startLine,
-        severity: comment.severity,
-        message: comment.message,
-        suggestedCode: comment.suggestedCode || comment.suggested_code
-      }))
+      ? externalReviewResult.comments.map(comment => {
+        const file = comment.file || comment.path || comment.filename;
+        const line = comment.line || comment.start_line || comment.startLine;
+        const endLine = comment.end_line || comment.endLine;
+        return {
+          file,
+          line,
+          startLine: endLine && endLine !== line ? line : undefined,
+          endLine: endLine && endLine !== line ? endLine : undefined,
+          severity: comment.severity,
+          message: comment.message,
+          suggestedCode: comment.suggestedCode || comment.suggested_code
+        };
+      })
       : [];
 
     const requiresChanges = comments.some(comment => String(comment.severity || '').trim().toUpperCase() === 'HIGH');

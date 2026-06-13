@@ -322,7 +322,7 @@ class ReviewQueueWorker {
     }
 
     const freshPR = await this._resolveFreshPR(pr, repo, githubAdapter);
-    const { previousComments, lastCommits } = await this._loadPromptContext(githubAdapter, repo.name, freshPR.number);
+    const { previousComments, lastCommits, files } = await this._loadPromptContext(githubAdapter, repo.name, freshPR.number);
     const config = require('../../config/yamlConfig');
     const levelConfig = config.reviewLevels?.[item.level];
     const prompt = this.reviewPromptBuilder.build({
@@ -333,7 +333,8 @@ class ReviewQueueWorker {
       levelConfig,
       mcpName: instance.mcpName || 'github',
       previousComments,
-      lastCommits
+      lastCommits,
+      files
     });
     const handoffPrompt = this.reviewPromptBuilder.buildDiscordHandoff({
       mentionBotName: instance.mentionBotName,
@@ -345,41 +346,82 @@ class ReviewQueueWorker {
       instance,
       repo,
       mentionBotName: instance.mentionBotName,
-      content: handoffPrompt.triggerContent
+      content: handoffPrompt.triggerContent,
+      attachmentContent: handoffPrompt.detailContent,
+      attachmentFileName: `review-prompt-${item.id}.txt`
     });
 
-    this.externalReviewSessionService.startSession({
-      queueItemId: item.id,
-      sessionId: item.id,
-      instanceKey: item.instanceKey,
-      repoName: item.repoName,
-      prNumber: item.prNumber,
-      level: item.level,
-      triggerMessageId: trigger.id,
-      trustedBotUserId: instance.mentionBotUserId,
-      timeoutMs: (instance.agent?.reviewTimeoutSeconds || 600) * 1000
-    });
+    let sessionTriggerMessage = trigger.message;
+    const totalTimeoutMs = (instance.agent?.reviewTimeoutSeconds || 600) * 1000;
+    const deadlineAt = Date.now() + totalTimeoutMs;
 
-    const promptRequestMessage = await this.externalReviewSessionService.awaitPromptRequest(item.id);
-    if (promptRequestMessage) {
-      const promptMessages = await this.discordAdapter.sendReplyChunks(
-        promptRequestMessage,
-        handoffPrompt.detailContent,
-        { prefix: 'Prompt review' }
+    while (Date.now() < deadlineAt) {
+      const remainingTimeoutMs = Math.max(deadlineAt - Date.now(), 1);
+
+      this.externalReviewSessionService.startSession({
+        queueItemId: item.id,
+        sessionId: item.id,
+        instanceKey: item.instanceKey,
+        repoName: item.repoName,
+        prNumber: item.prNumber,
+        level: item.level,
+        triggerMessageId: sessionTriggerMessage.id,
+        channelId: sessionTriggerMessage.channelId || sessionTriggerMessage.channel?.id || null,
+        promptDelivered: true,
+        trustedBotUserId: instance.mentionBotUserId,
+        timeoutMs: remainingTimeoutMs
+      });
+
+      const externalResult = await this.externalReviewSessionService.awaitResult(item.id);
+      const submitResult = await this.reviewPRUseCase.submitExternalResult(
+        instance,
+        repo,
+        freshPR,
+        item.level,
+        externalResult.reviewResult,
+        githubAdapter
       );
-      this.externalReviewSessionService.registerReplyTargets(item.id, [promptRequestMessage, ...promptMessages]);
+
+      if (submitResult?.success) {
+        return submitResult;
+      }
+
+      this.logger.error(
+        `[ReviewQueueWorker] External review follow-up failed for ${item.instanceKey}/${item.repoName} PR #${item.prNumber}: ${submitResult?.error || 'unknown error'}`
+      );
+
+      const repairTargetMessage = externalResult.message || sessionTriggerMessage;
+      try {
+        sessionTriggerMessage = await this.discordAdapter.sendReply(
+          repairTargetMessage,
+          this._buildExternalReviewRepairRequest(submitResult.error)
+        );
+      } catch (repairError) {
+        this.logger.error(
+          `[ReviewQueueWorker] Failed to send repair request for ${item.instanceKey}/${item.repoName} PR #${item.prNumber}: ${repairError.message}`
+        );
+        return {
+          success: false,
+          error: `Failed to send repair request: ${repairError.message}`
+        };
+      }
     }
 
-    const externalResult = await this.externalReviewSessionService.awaitResult(item.id);
+    return {
+      success: false,
+      error: 'Timed out waiting for corrected external review reply'
+    };
+  }
 
-    return this.reviewPRUseCase.submitExternalResult(
-      instance,
-      repo,
-      freshPR,
-      item.level,
-      externalResult.reviewResult,
-      githubAdapter
-    );
+  _buildExternalReviewRepairRequest(errorMessage) {
+    return [
+      'JSON final sudah diterima, tetapi step lanjutan di bot_pr gagal.',
+      `Error: ${errorMessage || 'unknown error'}`,
+      'Lakukan action yang diperlukan untuk memperbaiki kegagalan ini.',
+      'Setelah diperbaiki, kirim ulang HASIL FINAL sebagai reply ke pesan ini.',
+      'Isi reply HARUS valid JSON saja dengan format dari prompt review.',
+      'JANGAN submit review GitHub langsung.'
+    ].join('\n');
   }
 
   async _resolveFreshPR(pr, repo, githubAdapter) {
@@ -394,12 +436,13 @@ class ReviewQueueWorker {
   }
 
   async _loadPromptContext(githubAdapter, repoName, prNumber) {
-    const [previousComments, lastCommits] = await Promise.all([
+    const [previousComments, lastCommits, prDetails] = await Promise.all([
       githubAdapter.getPRComments(repoName, prNumber).catch(() => []),
-      githubAdapter.getPRCommits(repoName, prNumber, 3).catch(() => [])
+      githubAdapter.getPRCommits(repoName, prNumber, 3).catch(() => []),
+      githubAdapter.getPRDetails(repoName, prNumber).catch(() => ({ files: [] }))
     ]);
 
-    return { previousComments, lastCommits };
+    return { previousComments, lastCommits, files: prDetails.files || [] };
   }
 
   /**

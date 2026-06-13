@@ -176,7 +176,8 @@ class HermesAgentAdapter extends IAgentService {
       levelConfig,
       mcpName: instance?.mcpName || 'github',
       previousComments,
-      lastCommits
+      lastCommits,
+      files
     });
   }
 

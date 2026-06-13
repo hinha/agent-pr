@@ -92,25 +92,38 @@ class DiscordBotAdapter extends EventEmitter {
     return { success: true, id: message.id };
   }
 
-  async sendHermesMention({ instance, repo, content, mentionBotName }) {
+  async sendHermesMention({ instance, repo, content, mentionBotName, attachmentContent, attachmentFileName }) {
     const allowedMentions = this._buildAllowedMentions(mentionBotName);
-    const message = await this._sendToRepo(instance.owner, repo.name, {
+    const payload = {
       content,
       allowedMentions
-    });
+    };
+
+    if (attachmentContent) {
+      payload.files = [
+        {
+          attachment: Buffer.from(attachmentContent, 'utf8'),
+          name: attachmentFileName || 'review-prompt.txt'
+        }
+      ];
+    }
+
+    const message = await this._sendToRepo(instance.owner, repo.name, payload);
 
     return { success: true, id: message.id, message };
   }
 
-  async sendReply(targetMessage, content) {
+  async sendReply(targetMessage, content, extraPayload = {}) {
+    const payload = { content, ...extraPayload };
+
     if (targetMessage && typeof targetMessage.reply === 'function') {
-      return targetMessage.reply({ content });
+      return targetMessage.reply(payload);
     }
 
     const channel = targetMessage?.channel;
     if (channel && typeof channel.send === 'function') {
       return channel.send({
-        content,
+        ...payload,
         reply: { messageReference: targetMessage.id }
       });
     }
@@ -121,17 +134,49 @@ class DiscordBotAdapter extends EventEmitter {
   async sendReplyChunks(targetMessage, content, options = {}) {
     const prefix = options.prefix || 'Prompt review';
     const maxContentLength = options.maxContentLength || 2000;
-    const headerTemplateLength = `${prefix} (${999}/${999}):\n`.length;
+    const mentionBotName = options.mentionBotName || '';
+    const mentionPrefix = mentionBotName ? `${mentionBotName}\n` : '';
+    const allowedMentions = mentionBotName ? this._buildAllowedMentions(mentionBotName) : undefined;
+    const headerTemplateLength = `${mentionPrefix}${prefix} (${999}/${999}):\n`.length;
     const chunkSize = options.chunkSize || Math.max(200, maxContentLength - headerTemplateLength);
     const chunks = this._chunkContent(content, chunkSize);
     const sent = [];
 
     for (let index = 0; index < chunks.length; index++) {
-      const header = `${prefix} (${index + 1}/${chunks.length}):\n`;
-      sent.push(await this.sendReply(targetMessage, `${header}${chunks[index]}`));
+      const header = `${mentionPrefix}${prefix} (${index + 1}/${chunks.length}):\n`;
+      const payload = allowedMentions ? { allowedMentions } : {};
+      sent.push(await this.sendReply(targetMessage, `${header}${chunks[index]}`, payload));
     }
 
     return sent;
+  }
+
+  async sendReplyTextAttachment(targetMessage, content, options = {}) {
+    const mentionBotName = options.mentionBotName || '';
+    const allowedMentions = mentionBotName ? this._buildAllowedMentions(mentionBotName) : undefined;
+    const fileName = options.fileName || 'review-prompt.txt';
+    const introLines = [];
+
+    if (mentionBotName) {
+      introLines.push(mentionBotName);
+    }
+    introLines.push(options.intro || `Prompt review lengkap ada di attachment \`${fileName}\`.`);
+    introLines.push('Baca attachment ini sebagai sumber prompt lengkap yang harus direview.');
+
+    const payload = {
+      files: [
+        {
+          attachment: Buffer.from(content, 'utf8'),
+          name: fileName
+        }
+      ]
+    };
+
+    if (allowedMentions) {
+      payload.allowedMentions = allowedMentions;
+    }
+
+    return this.sendReply(targetMessage, introLines.join('\n'), payload);
   }
 
   async sendQueueCompletedNotification(data) {
@@ -207,6 +252,16 @@ class DiscordBotAdapter extends EventEmitter {
       }
 
       this.externalReviewSessionService.handleAgentReply(message);
+    });
+
+    this.client.on('messageUpdate', async (_oldMessage, newMessage) => {
+      this.emit('message', newMessage);
+
+      if (!this.externalReviewSessionService) {
+        return;
+      }
+
+      this.externalReviewSessionService.handleAgentReply(newMessage);
     });
 
     this.client.on('error', (error) => {

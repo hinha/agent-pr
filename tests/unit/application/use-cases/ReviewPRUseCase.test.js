@@ -289,6 +289,8 @@ describe('ReviewPRUseCase', () => {
             expect.objectContaining({
               file: 'src/index.js',
               line: 10,
+              startLine: 10,
+              endLine: 12,
               severity: 'HIGH'
             })
           ]
@@ -315,6 +317,90 @@ describe('ReviewPRUseCase', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('External review result must be a JSON object');
+      expect(mockGithubAdapter.createReviewWithComments).not.toHaveBeenCalled();
+    });
+
+    test('should reject invalid external review comments with detailed validation error', async () => {
+      const result = await useCase.submitExternalResult(
+        instance,
+        repo,
+        pr,
+        'medium',
+        {
+          summary: '',
+          comments: [
+            {
+              file: '',
+              start_line: 'x',
+              end_line: 1,
+              severity: 'oops',
+              message: ''
+            }
+          ]
+        },
+        mockGithubAdapter
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('External review result validation failed');
+      expect(result.error).toContain('field "summary" must be a non-empty string');
+      expect(result.error).toContain('comments[0].severity must be one of LOW, MEDIUM, HIGH');
+      expect(mockGithubAdapter.createReviewWithComments).not.toHaveBeenCalled();
+      expect(mockEventBus.emitAsync).toHaveBeenCalledWith(
+        'error.occurred',
+        expect.objectContaining({
+          useCase: 'ReviewPRUseCase.submitExternalResult',
+          prNumber: 42,
+          error: expect.stringContaining('External review result validation failed')
+        })
+      );
+    });
+
+    test('should reject malformed external review shape before github submission', async () => {
+      const result = await useCase.submitExternalResult(
+        instance,
+        repo,
+        pr,
+        'medium',
+        {
+          summary: 'Malformed',
+          comments: 'not-an-array'
+        },
+        mockGithubAdapter
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('field "comments" must be an array');
+      expect(mockGithubAdapter.createReviewWithComments).not.toHaveBeenCalled();
+    });
+
+    test('should reject non-object comments and non-string suggestedCode', async () => {
+      const result = await useCase.submitExternalResult(
+        instance,
+        repo,
+        pr,
+        'medium',
+        {
+          summary: 'Bad comments',
+          comments: [
+            null,
+            {
+              file: 'src/index.js',
+              start_line: 10,
+              end_line: 9,
+              severity: 'LOW',
+              message: 'Bad line range',
+              suggestedCode: 123
+            }
+          ]
+        },
+        mockGithubAdapter
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('comments[0] must be an object');
+      expect(result.error).toContain('comments[1].end_line must be an integer >= start_line');
+      expect(result.error).toContain('comments[1].suggestedCode must be a string when present');
       expect(mockGithubAdapter.createReviewWithComments).not.toHaveBeenCalled();
     });
   });

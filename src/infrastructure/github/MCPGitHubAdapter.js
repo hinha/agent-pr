@@ -81,10 +81,7 @@ class MCPGitHubAdapter extends IGitHubService {
 
       return this._parseMCPJsonResponse(method, result.stdout, spawnArgs);
     }, (err) => {
-      if (err.message && err.message.includes('Unknown tool')) {
-        return false;
-      }
-      return true;
+      return !this._isNonRetryableError(err);
     }, {
       retries: 3,
       minTimeout: 2000,
@@ -175,6 +172,23 @@ class MCPGitHubAdapter extends IGitHubService {
       spawnProcess.on('close', onClose);
       spawnProcess.on('error', onError);
     });
+  }
+
+  /**
+   * Determine whether an error represents a permanent failure that must NOT
+   * be retried. Retrying these wastes time and produces noisy logs (e.g. a
+   * 422 "Can not request changes on your own pull request" is permanent).
+   * @param {Error} error - Error from an MCP call
+   * @returns {boolean} true if the error is non-retryable
+   * @private
+   */
+  _isNonRetryableError(error) {
+    const msg = (error && error.message) || '';
+    if (msg.includes('Unknown tool')) return true;
+    if (msg.includes('Can not request changes on your own pull request')) return true;
+    // 422 validation errors are permanent — retrying will never succeed
+    if (msg.includes('Validation Error') && msg.includes('422')) return true;
+    return false;
   }
 
   /**
@@ -455,7 +469,8 @@ class MCPGitHubAdapter extends IGitHubService {
       const payload = await this._callMCP('get_pull_request_files', {
         owner: this.owner,
         repo: repo,
-        pull_number: prNumber
+        pull_number: prNumber,
+        media: 'diff'  // Request diff patches
       });
       rawFiles = this._normalizeArrayResponse('get_pull_request_files', payload, ['files']);
     } catch (error) {
@@ -543,50 +558,11 @@ class MCPGitHubAdapter extends IGitHubService {
     // Update reviewResult with valid comments for further processing
     reviewResult.comments = validComments;
 
-    // Fetch PR files with patches to calculate positions
-    // GitHub API requires position for review comments in /reviews endpoint
-    let positionMaps = new Map();
-    try {
-      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Fetching PR files with patches for position calculation`);
-      const payload = await this._callMCP('get_pull_request_files', {
-        owner: this.owner,
-        repo: repo,
-        pull_number: pr.number
-      });
-      const rawFiles = this._normalizeArrayResponse('get_pull_request_files', payload, ['files']);
-
-      // Build position maps for each file
-      for (const file of rawFiles || []) {
-        if (file.filename && file.patch) {
-          const positionMap = this._buildPositionMap(file.patch);
-          positionMaps.set(file.filename, positionMap);
-          this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Built position map for ${file.filename} (${positionMap.size} lines)`);
-        }
-      }
-      this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Built position maps for ${positionMaps.size} file(s)`);
-    } catch (error) {
-      this.logger.error(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Failed to fetch PR files for position calculation: ${error.message}`);
-      this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Comments will be omitted without position mapping`);
-    }
-
-    // Build comments with positions
+    // Build comments with line+side — GitHub validates on their side
     const comments = [];
     const skippedComments = [];
 
     for (const c of reviewResult.comments) {
-      // Get position from the diff
-      // For /reviews endpoint, GitHub requires 'position' (not line+side)
-      const positionMap = positionMaps.get(c.file);
-      const position = positionMap ? positionMap.get(c.line) : null;
-
-      if (position === null || position === undefined) {
-        this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] No position found for ${c.file}:${c.line}, will append to review body`);
-        skippedComments.push(c);
-        continue;
-      }
-
-      this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Comment ${c.file}:${c.line} -> position: ${position}`);
-
       // Build comment body
       let commentBody = `[${c.severity}] ${c.message}`;
 
@@ -598,21 +574,30 @@ class MCPGitHubAdapter extends IGitHubService {
 
       const comment = {
         path: c.file,
-        position: position,
+        line: c.line,
+        side: 'RIGHT',
         body: commentBody
       };
+
+      // Multi-line comment support
+      if (c.startLine && c.endLine && c.startLine !== c.endLine) {
+        comment.start_line = c.startLine;
+        comment.start_side = 'RIGHT';
+        // comment.line already = c.endLine (end of range)
+      }
+
       comments.push(comment);
       this.logger.debug(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Added comment for ${c.file}:${c.line}`);
     }
 
     if (skippedComments.length > 0) {
-      this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] ${skippedComments.length} comment(s) could not be mapped to diff positions`);
+      this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] ${skippedComments.length} comment(s) skipped (file not in diff)`);
     }
 
     // Count comments and log summary
     this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] PR headSha: ${pr.headSha}, total comments to submit: ${comments.length}`);
     if (comments.length > 0) {
-      const commentSummary = comments.map(c => `${c.path}:${c.position}`).join(', ');
+      const commentSummary = comments.map(c => `${c.path}:${c.line}`).join(', ');
       this.logger.info(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Comments: ${commentSummary}`);
     }
 
@@ -655,6 +640,20 @@ class MCPGitHubAdapter extends IGitHubService {
       if (error.message && error.message.includes('Can not request changes on your own pull request')) {
         this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Cannot request changes on own PR, falling back to COMMENT`);
         const fallbackArgs = { ...reviewArgs, event: 'COMMENT' };
+        result = await this._callMCP('create_pull_request_review', fallbackArgs);
+      } else if (error.message && error.message.includes('Line could not be resolved') || error.message && error.message.includes('Path could not be resolved')) {
+        // GitHub rejected because line/path not in diff - move all comments to body and retry
+        this.logger.warn(`[MCPGitHubAdapter:${this.instanceKey}/${repo}] Line/path validation failed, moving all comments to review body`);
+        const allComments = [...comments, ...skippedComments];
+        const fallbackSection = allComments.map(c => {
+          return `**\`${c.path}:${c.line}\`**\n\n${c.body}`;
+        }).join('\n\n---\n\n');
+
+        const fallbackArgs = {
+          ...reviewArgs,
+          body: `${reviewBody}\n\n---\n\n> **Note:** The following comments could not be placed as inline review (line/path not in diff):\n\n${fallbackSection}`,
+          comments: []
+        };
         result = await this._callMCP('create_pull_request_review', fallbackArgs);
       } else {
         throw error;
@@ -918,55 +917,21 @@ class MCPGitHubAdapter extends IGitHubService {
       'swagger.json', 'swagger.yaml', 'swagger.yml',
       'openapi.json', 'openapi.yaml', 'openapi.yml'
     ];
-    return testPatterns.some(pattern => filename.includes(pattern));
-  }
+    const nonCodePatterns = [
+      '.gitignore', '.gitattributes', '.env.example',
+      'README', 'CHANGELOG', 'LICENSE', 'CONTRIBUTING',
+      'docker-compose.yml', 'Dockerfile', '.dockerignore',
+      'package.json', 'package-lock.json', 'yarn.lock', 'go.mod', 'go.sum',
+      'Makefile', 'CMakeLists.txt', '.gitmodules'
+    ];
 
-  /**
-   * Build position map for a file's diff
-   * @param {string} patch - Git diff patch
-   * @returns {Map<number, number>} Line to position mapping
-   * @private
-   */
-  _buildPositionMap(patch) {
-    const positionMap = new Map();
-
-    if (!patch) return positionMap;
-
-    const hunkRegex = /@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/g;
-    let match;
-    let currentPosition = 1;
-
-    while ((match = hunkRegex.exec(patch)) !== null) {
-      const _oldStart = parseInt(match[1], 10);
-      const newStart = parseInt(match[3], 10);
-      const _newCount = match[4] ? parseInt(match[4], 10) : 1;
-
-      const hunkEnd = match.index + match[0].length;
-      const nextHunkStart = patch.indexOf('@@', hunkEnd);
-
-      const hunkContent = nextHunkStart === -1
-        ? patch.substring(hunkEnd)
-        : patch.substring(hunkEnd, nextHunkStart);
-
-      const lines = hunkContent.split('\n').slice(1);
-      let currentLine = newStart;
-
-      for (const line of lines) {
-        if (line.startsWith('+') && !line.startsWith('++')) {
-          positionMap.set(currentLine, currentPosition);
-          currentLine++;
-          currentPosition++;
-        } else if (line.startsWith('-') && !line.startsWith('--')) {
-          currentPosition++;
-        } else if (line.startsWith(' ')) {
-          positionMap.set(currentLine, currentPosition);
-          currentLine++;
-          currentPosition++;
-        }
-      }
+    if (testPatterns.some(pattern => filename.includes(pattern))) {
+      return true;
     }
 
-    return positionMap;
+    // For non-code files, check if they are the full filename or path
+    const basename = filename.split('/').pop();
+    return nonCodePatterns.some(pattern => basename === pattern || filename.endsWith(pattern));
   }
 
   /**

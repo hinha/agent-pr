@@ -424,7 +424,7 @@ describe('MCPGitHubAdapter', () => {
       expect(spawn).not.toHaveBeenCalled();
     });
 
-    test('should fallback to COMMENT when REQUEST_CHANGES fails on own PR', (done) => {
+    test('should fallback to COMMENT when REQUEST_CHANGES fails on own PR without retrying', (done) => {
       const mockPR = {
         id: 'pr_1',
         number: 456,
@@ -443,7 +443,23 @@ describe('MCPGitHubAdapter', () => {
         ]
       };
 
-      let callCount = 0;
+      // Simulate the real retryIf: honor the shouldRetry predicate so
+      // non-retryable errors fail fast (this is what the fix relies on).
+      mockRetryHelper.retryIf = jest.fn(async (fn, shouldRetry, options = {}) => {
+        const maxRetries = options.retries || 0;
+        let attempt = 0;
+        while (true) { // eslint-disable-line no-constant-condition
+          try {
+            return await fn();
+          } catch (err) {
+            if (attempt >= maxRetries || (shouldRetry && !shouldRetry(err))) {
+              throw err;
+            }
+            attempt++;
+          }
+        }
+      });
+
       let onDataCallback;
       let onCloseCallback;
 
@@ -456,41 +472,49 @@ describe('MCPGitHubAdapter', () => {
       mockSpawnProcess.stderr.on.mockImplementation(() => {});
 
       mockSpawnProcess.on.mockImplementation((event, cb) => {
-        if (event === 'close') {
-          onCloseCallback = cb;
-          callCount++;
-          // First call fails with "own PR" error, second succeeds
-          if (callCount === 1) {
-            setTimeout(() => {
-              if (onDataCallback) {
-                onDataCallback(JSON.stringify({
-                  error: 'Can not request changes on your own pull request'
-                }));
-              }
-              if (onCloseCallback) {
-                onCloseCallback(0);
-              }
-            }, 10);
+        if (event !== 'close') return;
+        onCloseCallback = cb;
+
+        // Route the response based on what MCP call this spawn is for.
+        const latestArgs = spawn.mock.calls[spawn.mock.calls.length - 1][1];
+        const isGetFiles = latestArgs.some((a) => typeof a === 'string' && a.includes('get_pull_request_files'));
+        const isRequestChanges = latestArgs.some((a) => typeof a === 'string' && a.includes('REQUEST_CHANGES'));
+
+        setTimeout(() => {
+          if (isGetFiles) {
+            if (onDataCallback) onDataCallback(JSON.stringify({ files: [] }));
+          } else if (isRequestChanges) {
+            // Every REQUEST_CHANGES attempt must fail with the permanent 422
+            // error (so a retry loop would keep failing, proving the fix).
+            if (onDataCallback) {
+              onDataCallback(JSON.stringify({
+                error: 'Can not request changes on your own pull request'
+              }));
+            }
           } else {
-            setTimeout(() => {
-              if (onDataCallback) {
-                onDataCallback(JSON.stringify({ id: 'review_123' }));
-              }
-              if (onCloseCallback) {
-                onCloseCallback(0);
-              }
-            }, 10);
+            // COMMENT fallback succeeds
+            if (onDataCallback) onDataCallback(JSON.stringify({ id: 'review_123' }));
           }
-        }
+          if (onCloseCallback) onCloseCallback(0);
+        }, 10);
       });
 
-      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((_result) => {
-        expect(spawn).toHaveBeenCalled();
+      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
+        expect(result.id).toBe('review_123');
+        // REQUEST_CHANGES must be attempted exactly once (no retries) before
+        // the fallback to COMMENT fires.
+        const requestChangesCalls = spawn.mock.calls.filter(([, args]) =>
+          args.some((a) => typeof a === 'string' && a.includes('REQUEST_CHANGES'))
+        );
+        expect(requestChangesCalls).toHaveLength(1);
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('Cannot request changes on own PR')
+        );
         done();
-      });
+      }).catch(done);
     });
 
-    test('should append skipped comment with suggestedCode to review body when line not in diff', (done) => {
+    test('should create inline comments with line+side', (done) => {
       const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
 
       const mockReviewResult = {
@@ -506,13 +530,6 @@ describe('MCPGitHubAdapter', () => {
         ]
       };
 
-      // Patch only covers lines 1-5, line 183 is NOT in diff
-      const filesWithPatch = [{
-        filename: 'src/infrastructure/persistence/FileSystemStateRepository.js',
-        patch: '@@ -1,3 +1,5 @@\n line1\n+added\n line2\n line3\n'
-      }];
-
-      let callCount = 0;
       let onDataCallback;
       let onCloseCallback;
 
@@ -523,43 +540,26 @@ describe('MCPGitHubAdapter', () => {
       mockSpawnProcess.on.mockImplementation((event, cb) => {
         if (event === 'close') {
           onCloseCallback = cb;
-          callCount++;
           setTimeout(() => {
-            if (callCount === 1) {
-              onDataCallback(JSON.stringify(filesWithPatch));
-            } else {
-              onDataCallback(JSON.stringify({ id: 'review_body_fallback' }));
-            }
+            onDataCallback(JSON.stringify({ id: 'review_inline' }));
             onCloseCallback(0);
           }, 10);
         }
       });
 
       adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
-        expect(result.id).toBe('review_body_fallback');
+        expect(result.id).toBe('review_inline');
 
-        // Should warn about missing position
-        expect(mockLogger.warn).toHaveBeenCalledWith(
-          expect.stringContaining('No position found for src/infrastructure/persistence/FileSystemStateRepository.js:183')
-        );
-
-        // Should log that comment was appended to body
+        // Should log inline comment count
         expect(mockLogger.info).toHaveBeenCalledWith(
-          expect.stringContaining('0 inline comment(s) and 1 in body')
+          expect.stringContaining('1 inline comment(s)')
         );
-
-        // The second spawn call should contain the body with fallback
-        const lastSpawnArgs = spawn.mock.calls[1][1];
-        const bodyArg = lastSpawnArgs.find(arg => arg.startsWith('body='));
-        expect(bodyArg).toContain('could not be placed as inline review');
-        expect(bodyArg).toContain('clearProcessedPRs');
-        expect(bodyArg).toContain('async clearProcessedPRs');
 
         done();
       });
     });
 
-    test('should create inline comments for lines in diff and append others to body', (done) => {
+    test('should create multiple inline comments with correct event', (done) => {
       const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
 
       const mockReviewResult = {
@@ -581,19 +581,6 @@ describe('MCPGitHubAdapter', () => {
         ]
       };
 
-      // Two files: first has line 3 in diff, second does not
-      const filesWithPatch = [
-        {
-          filename: 'src/application/use-cases/ReviewPRUseCase.js',
-          patch: '@@ -1,3 +1,5 @@\n line1\n+added\n line2\n line3\n'
-        },
-        {
-          filename: 'src/infrastructure/persistence/FileSystemStateRepository.js',
-          patch: '@@ -1,3 +1,5 @@\n line1\n+added\n line2\n line3\n'
-        }
-      ];
-
-      let callCount = 0;
       let onDataCallback;
       let onCloseCallback;
 
@@ -604,13 +591,8 @@ describe('MCPGitHubAdapter', () => {
       mockSpawnProcess.on.mockImplementation((event, cb) => {
         if (event === 'close') {
           onCloseCallback = cb;
-          callCount++;
           setTimeout(() => {
-            if (callCount === 1) {
-              onDataCallback(JSON.stringify(filesWithPatch));
-            } else {
-              onDataCallback(JSON.stringify({ id: 'review_mixed' }));
-            }
+            onDataCallback(JSON.stringify({ id: 'review_mixed' }));
             onCloseCallback(0);
           }, 10);
         }
@@ -619,26 +601,21 @@ describe('MCPGitHubAdapter', () => {
       adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
         expect(result.id).toBe('review_mixed');
 
-        // 1 inline + 1 in body
+        // 2 inline comments
         expect(mockLogger.info).toHaveBeenCalledWith(
-          expect.stringContaining('1 inline comment(s) and 1 in body')
+          expect.stringContaining('2 inline comment(s)')
         );
 
         // HIGH severity should trigger REQUEST_CHANGES event
-        const lastSpawnArgs = spawn.mock.calls[1][1];
+        const lastSpawnArgs = spawn.mock.calls[0][1];
         const eventArg = lastSpawnArgs.find(arg => arg.startsWith('event='));
         expect(eventArg).toBe('event="REQUEST_CHANGES"');
-
-        // Body should contain fallback for the skipped MEDIUM comment
-        const bodyArg = lastSpawnArgs.find(arg => arg.startsWith('body='));
-        expect(bodyArg).toContain('Missing cleanup');
-        expect(bodyArg).toContain('async clear()');
 
         done();
       });
     });
 
-    test('should handle multiple skipped comments with suggestedCode in body', (done) => {
+    test('should handle multiple comments with suggestedCode', (done) => {
       const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
 
       const mockReviewResult = {
@@ -660,13 +637,6 @@ describe('MCPGitHubAdapter', () => {
         ]
       };
 
-      // Patch only covers lines 1-10
-      const filesWithPatch = [{
-        filename: 'src/utils/helper.js',
-        patch: '@@ -1,3 +1,5 @@\n ctx1\n+added\n ctx2\n ctx3\n'
-      }];
-
-      let callCount = 0;
       let onDataCallback;
       let onCloseCallback;
 
@@ -677,45 +647,30 @@ describe('MCPGitHubAdapter', () => {
       mockSpawnProcess.on.mockImplementation((event, cb) => {
         if (event === 'close') {
           onCloseCallback = cb;
-          callCount++;
           setTimeout(() => {
-            if (callCount === 1) {
-              onDataCallback(JSON.stringify(filesWithPatch));
-            } else {
-              onDataCallback(JSON.stringify({ id: 'review_multi_skip' }));
-            }
+            onDataCallback(JSON.stringify({ id: 'review_multi' }));
             onCloseCallback(0);
           }, 10);
         }
       });
 
       adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
-        expect(result.id).toBe('review_multi_skip');
+        expect(result.id).toBe('review_multi');
 
-        // Both comments skipped → 0 inline, 2 in body
+        // 2 inline comments
         expect(mockLogger.info).toHaveBeenCalledWith(
-          expect.stringContaining('0 inline comment(s) and 2 in body')
+          expect.stringContaining('2 inline comment(s)')
         );
-
-        const lastSpawnArgs = spawn.mock.calls[1][1];
-        const bodyArg = lastSpawnArgs.find(arg => arg.startsWith('body='));
-        // Both comments should be in body
-        expect(bodyArg).toContain('Missing error handling');
-        expect(bodyArg).toContain('Consider using const');
-        // Only first comment has suggestedCode
-        expect(bodyArg).toContain('try {');
-        // Separated by ---
-        expect(bodyArg).toContain('---');
 
         done();
       });
     });
 
-    test('should not append fallback section when all comments have positions', (done) => {
+    test('should not append fallback section when all comments are inline', (done) => {
       const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
 
       const mockReviewResult = {
-        summary: 'All lines in diff',
+        summary: 'All inline',
         comments: [
           {
             file: 'src/index.js',
@@ -727,13 +682,6 @@ describe('MCPGitHubAdapter', () => {
         ]
       };
 
-      // Line 2 IS in the diff
-      const filesWithPatch = [{
-        filename: 'src/index.js',
-        patch: '@@ -1,3 +1,5 @@\n ctx1\n+added\n ctx2\n ctx3\n'
-      }];
-
-      let callCount = 0;
       let onDataCallback;
       let onCloseCallback;
 
@@ -744,13 +692,8 @@ describe('MCPGitHubAdapter', () => {
       mockSpawnProcess.on.mockImplementation((event, cb) => {
         if (event === 'close') {
           onCloseCallback = cb;
-          callCount++;
           setTimeout(() => {
-            if (callCount === 1) {
-              onDataCallback(JSON.stringify(filesWithPatch));
-            } else {
-              onDataCallback(JSON.stringify({ id: 'review_all_inline' }));
-            }
+            onDataCallback(JSON.stringify({ id: 'review_all_inline' }));
             onCloseCallback(0);
           }, 10);
         }
@@ -759,19 +702,13 @@ describe('MCPGitHubAdapter', () => {
       adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
         expect(result.id).toBe('review_all_inline');
 
-        // 1 inline comment, 0 in body
+        // 1 inline comment, no skipped
         expect(mockLogger.info).toHaveBeenCalledWith(
           expect.stringContaining('1 inline comment(s)')
         );
 
-        // No "in body" suffix
-        const inlineLog = mockLogger.info.mock.calls.find(
-          call => call[0].includes('inline comment(s)')
-        );
-        expect(inlineLog[0]).not.toContain('and 0 in body');
-
         // Body should NOT contain fallback section
-        const lastSpawnArgs = spawn.mock.calls[1][1];
+        const lastSpawnArgs = spawn.mock.calls[0][1];
         const bodyArg = lastSpawnArgs.find(arg => arg.startsWith('body='));
         expect(bodyArg).not.toContain('could not be placed as inline review');
 
@@ -779,7 +716,10 @@ describe('MCPGitHubAdapter', () => {
       });
     });
 
-    test('should format suggestedCode with correct language in fallback body', (done) => {
+    test('should format suggestedCode with correct language in comment body', (done) => {
+      const fs = require('fs');
+      const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+
       const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
 
       const mockReviewResult = {
@@ -795,10 +735,6 @@ describe('MCPGitHubAdapter', () => {
         ]
       };
 
-      // No patch for this file → no position mapping
-      const filesWithPatch = [];
-
-      let callCount = 0;
       let onDataCallback;
       let onCloseCallback;
 
@@ -809,13 +745,8 @@ describe('MCPGitHubAdapter', () => {
       mockSpawnProcess.on.mockImplementation((event, cb) => {
         if (event === 'close') {
           onCloseCallback = cb;
-          callCount++;
           setTimeout(() => {
-            if (callCount === 1) {
-              onDataCallback(JSON.stringify(filesWithPatch));
-            } else {
-              onDataCallback(JSON.stringify({ id: 'review_python' }));
-            }
+            onDataCallback(JSON.stringify({ id: 'review_python' }));
             onCloseCallback(0);
           }, 10);
         }
@@ -824,11 +755,97 @@ describe('MCPGitHubAdapter', () => {
       adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
         expect(result.id).toBe('review_python');
 
-        const lastSpawnArgs = spawn.mock.calls[1][1];
-        const bodyArg = lastSpawnArgs.find(arg => arg.startsWith('body='));
-        expect(bodyArg).toContain('\\`\\`\\`python');
-        expect(bodyArg).toContain('result = [x for x in items if x > 0]');
+        // suggestedCode with python language should be in the comments temp file
+        const commentsCall = writeSpy.mock.calls.find(c => c[0].includes('/tmp/comments-'));
+        const parsedComments = JSON.parse(commentsCall[1]);
+        expect(parsedComments[0].body).toContain('```python');
+        expect(parsedComments[0].body).toContain('result = [x for x in items if x > 0]');
 
+        writeSpy.mockRestore();
+        done();
+      });
+    });
+
+    test('should include side: RIGHT on all inline comments', (done) => {
+      const fs = require('fs');
+      const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+
+      const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
+      const mockReviewResult = {
+        summary: 'Review with side check',
+        comments: [
+          { file: 'src/app.js', line: 10, severity: 'LOW', message: 'Nitpick' }
+        ]
+      };
+
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') {
+          onCloseCallback = cb;
+          setTimeout(() => {
+            onDataCallback(JSON.stringify({ id: 'review_side_test' }));
+            onCloseCallback(0);
+          }, 10);
+        }
+      });
+
+      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
+        expect(result.id).toBe('review_side_test');
+        const commentsCall = writeSpy.mock.calls.find(c => c[0].includes('/tmp/comments-'));
+        const parsedComments = JSON.parse(commentsCall[1]);
+        expect(parsedComments[0].side).toBe('RIGHT');
+        expect(parsedComments[0].line).toBe(10);
+        expect(parsedComments[0]).not.toHaveProperty('position');
+        writeSpy.mockRestore();
+        done();
+      });
+    });
+
+    test('should add start_line and start_side for multi-line comments', (done) => {
+      const fs = require('fs');
+      const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+
+      const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
+      const mockReviewResult = {
+        summary: 'Multi-line review',
+        comments: [
+          { file: 'src/app.js', line: 15, startLine: 10, endLine: 15, severity: 'MEDIUM', message: 'Refactor range' }
+        ]
+      };
+
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') {
+          onCloseCallback = cb;
+          setTimeout(() => {
+            onDataCallback(JSON.stringify({ id: 'review_multiline_test' }));
+            onCloseCallback(0);
+          }, 10);
+        }
+      });
+
+      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
+        expect(result.id).toBe('review_multiline_test');
+        // Comments are written to a temp file via fs.writeFileSync
+        const commentsCall = writeSpy.mock.calls.find(c => c[0].includes('/tmp/comments-'));
+        const parsedComments = JSON.parse(commentsCall[1]);
+        expect(parsedComments[0].side).toBe('RIGHT');
+        expect(parsedComments[0].line).toBe(15);
+        expect(parsedComments[0].start_line).toBe(10);
+        expect(parsedComments[0].start_side).toBe('RIGHT');
+        writeSpy.mockRestore();
         done();
       });
     });
@@ -1069,6 +1086,35 @@ describe('MCPGitHubAdapter', () => {
     });
   });
 
+  describe('_isNonRetryableError', () => {
+    test('should mark "Unknown tool" errors as non-retryable', () => {
+      const err = new Error('Unknown tool: foo.bar');
+      expect(adapter._isNonRetryableError(err)).toBe(true);
+    });
+
+    test('should mark "own PR" review errors as non-retryable', () => {
+      const err = new Error('MCP error: Can not request changes on your own pull request');
+      expect(adapter._isNonRetryableError(err)).toBe(true);
+    });
+
+    test('should mark 422 Validation Error as non-retryable', () => {
+      const err = new Error('Validation Error: HTTP 422 — field invalid');
+      expect(adapter._isNonRetryableError(err)).toBe(true);
+    });
+
+    test('should mark transient errors as retryable', () => {
+      expect(adapter._isNonRetryableError(new Error('MCP command timeout after 60000ms'))).toBe(false);
+      expect(adapter._isNonRetryableError(new Error('connect ECONNREFUSED 127.0.0.1:443'))).toBe(false);
+      expect(adapter._isNonRetryableError(new Error('MCP command failed with exit code 1'))).toBe(false);
+    });
+
+    test('should be defensive against errors without a message', () => {
+      expect(adapter._isNonRetryableError(null)).toBe(false);
+      expect(adapter._isNonRetryableError(undefined)).toBe(false);
+      expect(adapter._isNonRetryableError({})).toBe(false);
+    });
+  });
+
   describe('createReviewWithComments - explicit event from caller', () => {
     test('should use REQUEST_CHANGES from caller when no comments', (done) => {
       const mockPR = { id: 'pr_1', number: 456, headSha: 'abc123' };
@@ -1079,7 +1125,6 @@ describe('MCPGitHubAdapter', () => {
         event: 'request_changes'
       };
 
-      let callCount = 0;
       let onDataCallback;
       let onCloseCallback;
 
@@ -1090,13 +1135,8 @@ describe('MCPGitHubAdapter', () => {
       mockSpawnProcess.on.mockImplementation((event, cb) => {
         if (event === 'close') {
           onCloseCallback = cb;
-          callCount++;
           setTimeout(() => {
-            if (callCount === 1) {
-              onDataCallback(JSON.stringify([]));
-            } else {
-              onDataCallback(JSON.stringify({ id: 'review_reject' }));
-            }
+            onDataCallback(JSON.stringify({ id: 'review_reject' }));
             onCloseCallback(0);
           }, 10);
         }
@@ -1106,7 +1146,7 @@ describe('MCPGitHubAdapter', () => {
         expect(result.id).toBe('review_reject');
 
         // Event should be REQUEST_CHANGES from caller, not COMMENT from severity fallback
-        const lastSpawnArgs = spawn.mock.calls[1][1];
+        const lastSpawnArgs = spawn.mock.calls[0][1];
         const eventArg = lastSpawnArgs.find(arg => arg.startsWith('event='));
         expect(eventArg).toBe('event="REQUEST_CHANGES"');
 
@@ -1125,12 +1165,6 @@ describe('MCPGitHubAdapter', () => {
         event: 'INVALID_EVENT'
       };
 
-      const filesWithPatch = [{
-        filename: 'src/app.js',
-        patch: '@@ -1,3 +1,5 @@\n ctx1\n+added\n ctx2\n ctx3\n'
-      }];
-
-      let callCount = 0;
       let onDataCallback;
       let onCloseCallback;
 
@@ -1141,13 +1175,8 @@ describe('MCPGitHubAdapter', () => {
       mockSpawnProcess.on.mockImplementation((event, cb) => {
         if (event === 'close') {
           onCloseCallback = cb;
-          callCount++;
           setTimeout(() => {
-            if (callCount === 1) {
-              onDataCallback(JSON.stringify(filesWithPatch));
-            } else {
-              onDataCallback(JSON.stringify({ id: 'review_severity_fallback' }));
-            }
+            onDataCallback(JSON.stringify({ id: 'review_severity_fallback' }));
             onCloseCallback(0);
           }, 10);
         }
@@ -1157,7 +1186,7 @@ describe('MCPGitHubAdapter', () => {
         expect(result.id).toBe('review_severity_fallback');
 
         // Invalid event should fall back to severity-based (HIGH -> REQUEST_CHANGES)
-        const lastSpawnArgs = spawn.mock.calls[1][1];
+        const lastSpawnArgs = spawn.mock.calls[0][1];
         const eventArg = lastSpawnArgs.find(arg => arg.startsWith('event='));
         expect(eventArg).toBe('event="REQUEST_CHANGES"');
 

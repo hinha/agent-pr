@@ -81,9 +81,13 @@ describe('ReviewQueueWorker', () => {
       sendHermesMention: jest.fn().mockResolvedValue({
         success: true,
         id: 'discord-trigger-1',
-        message: { id: 'discord-trigger-1' }
+        message: { id: 'discord-trigger-1', channelId: 'channel-1' }
       }),
-      sendReplyChunks: jest.fn().mockResolvedValue([{ id: 'prompt-chunk-1' }, { id: 'prompt-chunk-2' }])
+      sendReply: jest.fn().mockResolvedValue({
+        id: 'repair-request-1',
+        channelId: 'channel-1'
+      }),
+      sendReplyTextAttachment: jest.fn().mockResolvedValue({ id: 'prompt-attachment-1' })
     };
     mockReviewPromptBuilder = {
       build: jest.fn().mockReturnValue('BASE PROMPT'),
@@ -849,7 +853,8 @@ describe('ReviewQueueWorker', () => {
           headSha: 'abc123'
         }]),
         getPRComments: jest.fn().mockResolvedValue([]),
-        getPRCommits: jest.fn().mockResolvedValue([])
+        getPRCommits: jest.fn().mockResolvedValue([]),
+        getPRDetails: jest.fn().mockResolvedValue({ files: [] })
       };
 
       mockConfig.app.discord = { reviewMode: 'handoff_reply_submit' };
@@ -875,7 +880,6 @@ describe('ReviewQueueWorker', () => {
           ]
         }
       });
-      mockExternalReviewSessionService.awaitPromptRequest.mockResolvedValue({ id: 'hermes-handshake-1' });
       mockReviewPRUseCase.submitExternalResult.mockResolvedValue({
         success: true,
         review: { html_url: 'https://review' },
@@ -891,24 +895,18 @@ describe('ReviewQueueWorker', () => {
       }));
       expect(mockDiscordAdapter.sendHermesMention).toHaveBeenCalledWith(expect.objectContaining({
         mentionBotName: '<@123456789012345678>',
-        content: '<@123>\nHANDOFF TRIGGER'
+        content: '<@123>\nHANDOFF TRIGGER',
+        attachmentContent: 'HANDOFF DETAIL',
+        attachmentFileName: 'review-prompt-qi_test_handoff.txt'
       }));
-      expect(mockDiscordAdapter.sendReplyChunks).toHaveBeenCalledWith(
-        { id: 'hermes-handshake-1' },
-        'HANDOFF DETAIL',
-        { prefix: 'Prompt review' }
-      );
       expect(mockExternalReviewSessionService.startSession).toHaveBeenCalledWith(expect.objectContaining({
         queueItemId: 'qi_test_handoff',
         sessionId: 'qi_test_handoff',
         triggerMessageId: 'discord-trigger-1',
+        channelId: 'channel-1',
+        promptDelivered: true,
         trustedBotUserId: '123456789012345678'
       }));
-      expect(mockExternalReviewSessionService.awaitPromptRequest).toHaveBeenCalledWith('qi_test_handoff');
-      expect(mockExternalReviewSessionService.registerReplyTargets).toHaveBeenCalledWith(
-        'qi_test_handoff',
-        [{ id: 'hermes-handshake-1' }, { id: 'prompt-chunk-1' }, { id: 'prompt-chunk-2' }]
-      );
       expect(mockReviewPRUseCase.submitExternalResult).toHaveBeenCalledWith(
         expect.objectContaining({ owner: 'test' }),
         expect.objectContaining({ name: 'repo' }),
@@ -917,6 +915,214 @@ describe('ReviewQueueWorker', () => {
         expect.any(Object),
         githubAdapter
       );
+    });
+
+    test('should request repaired JSON from external bot when validation fails', async () => {
+      const queue = new ReviewQueue('github/test', 2);
+      const item = new QueueItem({
+        id: 'qi_test_handoff_repair',
+        instanceKey: 'github/test',
+        repoName: 'repo',
+        prId: '123',
+        prNumber: 123,
+        prTitle: 'Test PR',
+        level: 'high'
+      });
+
+      const githubAdapter = {
+        getOpenPRs: jest.fn().mockResolvedValue([{
+          id: 123,
+          number: 123,
+          title: 'Test PR',
+          headBranch: 'feature',
+          baseBranch: 'main',
+          url: 'https://github.com/test/repo/pull/123',
+          headSha: 'abc123'
+        }]),
+        getPRComments: jest.fn().mockResolvedValue([]),
+        getPRCommits: jest.fn().mockResolvedValue([]),
+        getPRDetails: jest.fn().mockResolvedValue({ files: [] })
+      };
+
+      mockConfig.app.discord = { reviewMode: 'handoff_reply_submit' };
+      mockConfig.reviewLevels = {
+        high: { focusAreas: ['security'], maxCommentsPerFile: 10 }
+      };
+      mockConfig.instances['github/test'] = {
+        key: 'github/test',
+        owner: 'test',
+        mcpName: 'github-test',
+        mentionBotName: '<@123456789012345678>',
+        mentionBotUserId: '123456789012345678',
+        agent: { reviewTimeoutSeconds: 600 },
+        repos: { repo: { thread_id: 123 } }
+      };
+
+      worker.githubAdapterFactory.create.mockReturnValue(githubAdapter);
+      mockExternalReviewSessionService.awaitResult
+        .mockResolvedValueOnce({
+          reviewResult: { summary: '', comments: [{ severity: 'oops' }] },
+          message: { id: 'bot-final-1', channelId: 'channel-1' }
+        })
+        .mockResolvedValueOnce({
+          reviewResult: {
+            summary: 'Fixed',
+            comments: [
+              { file: 'src/app.js', start_line: 10, severity: 'HIGH', message: 'Bug' }
+            ]
+          },
+          message: { id: 'bot-final-2', channelId: 'channel-1' }
+        });
+      mockReviewPRUseCase.submitExternalResult
+        .mockResolvedValueOnce({
+          success: false,
+          error: 'External review result validation failed: field "summary" must be a non-empty string'
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          review: { html_url: 'https://review' },
+          reviewResult: { comments: [{ severity: 'HIGH' }] }
+        });
+
+      await worker._processItem(queue, item);
+
+      expect(mockDiscordAdapter.sendReply).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'bot-final-1' }),
+        expect.stringContaining('Error: External review result validation failed')
+      );
+      expect(mockExternalReviewSessionService.startSession).toHaveBeenCalledTimes(2);
+      expect(mockExternalReviewSessionService.startSession).toHaveBeenLastCalledWith(expect.objectContaining({
+        queueItemId: 'qi_test_handoff_repair',
+        triggerMessageId: 'repair-request-1'
+      }));
+      expect(mockReviewPRUseCase.submitExternalResult).toHaveBeenCalledTimes(2);
+    });
+
+    test('should fail external handoff when dependencies are unavailable', async () => {
+      const missingDependencyWorker = new ReviewQueueWorker(
+        mockRepository,
+        mockQueueUseCase,
+        mockReviewPRUseCase,
+        mockEventBus,
+        {
+          logger: console,
+          githubAdapterFactory: { create: jest.fn() },
+          discordAdapter: null,
+          reviewPromptBuilder: mockReviewPromptBuilder,
+          externalReviewSessionService: mockExternalReviewSessionService
+        }
+      );
+
+      await expect(missingDependencyWorker._processExternalHandoff(
+        { owner: 'test', agent: { reviewTimeoutSeconds: 600 } },
+        { name: 'repo' },
+        { number: 123 },
+        { id: 'qi_missing_deps', instanceKey: 'github/test', repoName: 'repo', prNumber: 123, level: 'high' },
+        { getOpenPRs: jest.fn() }
+      )).rejects.toThrow('External handoff dependencies are not available');
+    });
+
+    test('should return failure when repair request cannot be sent', async () => {
+      const githubAdapter = {
+        getOpenPRs: jest.fn().mockResolvedValue([{
+          id: 123,
+          number: 123,
+          title: 'Test PR',
+          headBranch: 'feature',
+          baseBranch: 'main',
+          url: 'https://github.com/test/repo/pull/123',
+          headSha: 'abc123'
+        }]),
+        getPRComments: jest.fn().mockResolvedValue([]),
+        getPRCommits: jest.fn().mockResolvedValue([]),
+        getPRDetails: jest.fn().mockResolvedValue({ files: [] })
+      };
+      const item = {
+        id: 'qi_repair_send_fail',
+        instanceKey: 'github/test',
+        repoName: 'repo',
+        prNumber: 123,
+        level: 'high'
+      };
+
+      mockConfig.reviewLevels = { high: { focusAreas: ['security'] } };
+      mockExternalReviewSessionService.awaitResult.mockResolvedValue({
+        reviewResult: { summary: 'bad', comments: [] },
+        message: { id: 'bot-final-1', channelId: 'channel-1' }
+      });
+      mockReviewPRUseCase.submitExternalResult.mockResolvedValue({
+        success: false,
+        error: 'validation failed'
+      });
+      mockDiscordAdapter.sendReply.mockRejectedValue(new Error('discord down'));
+
+      const result = await worker._processExternalHandoff(
+        {
+          key: 'github/test',
+          owner: 'test',
+          mcpName: 'github-test',
+          mentionBotName: '<@123456789012345678>',
+          mentionBotUserId: '123456789012345678',
+          agent: { reviewTimeoutSeconds: 600 }
+        },
+        { name: 'repo' },
+        { id: 123, number: 123 },
+        item,
+        githubAdapter
+      );
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Failed to send repair request: discord down'
+      });
+    });
+
+    test('should return timeout when external handoff deadline expires before waiting', async () => {
+      const githubAdapter = {
+        getOpenPRs: jest.fn().mockResolvedValue([{
+          id: 123,
+          number: 123,
+          title: 'Test PR',
+          headBranch: 'feature',
+          baseBranch: 'main',
+          url: 'https://github.com/test/repo/pull/123',
+          headSha: 'abc123'
+        }]),
+        getPRComments: jest.fn().mockResolvedValue([]),
+        getPRCommits: jest.fn().mockResolvedValue([]),
+        getPRDetails: jest.fn().mockResolvedValue({ files: [] })
+      };
+      const dateSpy = jest.spyOn(Date, 'now')
+        .mockReturnValueOnce(1000)
+        .mockReturnValueOnce(2000);
+
+      const result = await worker._processExternalHandoff(
+        {
+          key: 'github/test',
+          owner: 'test',
+          mcpName: 'github-test',
+          mentionBotName: '<@123456789012345678>',
+          mentionBotUserId: '123456789012345678',
+          agent: { reviewTimeoutSeconds: 0.001 }
+        },
+        { name: 'repo' },
+        { id: 123, number: 123 },
+        {
+          id: 'qi_timeout',
+          instanceKey: 'github/test',
+          repoName: 'repo',
+          prNumber: 123,
+          level: 'high'
+        },
+        githubAdapter
+      );
+
+      dateSpy.mockRestore();
+      expect(result).toEqual({
+        success: false,
+        error: 'Timed out waiting for corrected external review reply'
+      });
+      expect(mockExternalReviewSessionService.startSession).not.toHaveBeenCalled();
     });
 
     test('should handle failure in completeProcessing', async () => {
