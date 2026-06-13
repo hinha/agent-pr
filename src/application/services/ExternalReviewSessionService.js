@@ -302,7 +302,8 @@ class ExternalReviewSessionService {
       .replace(/```\s*/g, '')
       .replace(/\u201c|\u201d/g, '"')
       .trim();
-    const commentStrippedContent = this._stripJsonComments(cleanContent);
+    const chunkMarkerStrippedContent = this._stripChunkMarkers(cleanContent);
+    const commentStrippedContent = this._stripJsonComments(chunkMarkerStrippedContent);
 
     try {
       return JSON.parse(commentStrippedContent);
@@ -359,6 +360,51 @@ class ExternalReviewSessionService {
           result += '\n';
         }
         continue;
+      }
+
+      result += char;
+    }
+
+    return result;
+  }
+
+  _stripChunkMarkers(text) {
+    if (!text) {
+      return text;
+    }
+
+    let result = '';
+    let inString = false;
+    let escapeNext = false;
+
+    for (let index = 0; index < text.length; index++) {
+      const char = text[index];
+
+      if (escapeNext) {
+        result += char;
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        result += char;
+        escapeNext = true;
+        continue;
+      }
+
+      if (char === '"') {
+        result += char;
+        inString = !inString;
+        continue;
+      }
+
+      if (!inString && char === '(') {
+        const remainder = text.slice(index);
+        const match = remainder.match(/^\((\d+)\/(\d+)\)\s*/);
+        if (match) {
+          index += match[0].length - 1;
+          continue;
+        }
       }
 
       result += char;

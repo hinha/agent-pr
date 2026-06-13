@@ -514,6 +514,53 @@ describe('ExternalReviewSessionService', () => {
     }));
   });
 
+  test('accepts raw final review JSON with chunk markers injected outside strings', async () => {
+    service.startSession({
+      queueItemId: 'qi_chunk_marker_json',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 14,
+      level: 'high',
+      triggerMessageId: 'trigger-chunk-marker-json',
+      channelId: 'channel-chunk-marker-json',
+      promptDelivered: true,
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    const pending = service.awaitResult('qi_chunk_marker_json');
+    const finalHandle = service.handleAgentReply({
+      id: 'msg-chunk-marker-json-a',
+      content: `{
+  "summary": "Ringkasan review secara keseluruhan",
+  "comments": [
+    {
+      "file": "src/file.js",
+      "start_line": 42,
+      "end_line": 45,
+      "severity": "HIGH",
+      "message": "Penjelasan issue dan rekomendasi perbaikan", (1/3)
+"suggestedCode": "const corrected = 'contoh kode yang benar'; penjelasan tambahan sangat detail"
+    }
+  ]
+}`,
+      author: { id: 'bot-1', bot: true },
+      channelId: 'channel-chunk-marker-json'
+    });
+
+    await expect(pending).resolves.toEqual(expect.objectContaining({
+      reviewResult: expect.objectContaining({
+        summary: 'Ringkasan review secara keseluruhan',
+        comments: expect.any(Array)
+      })
+    }));
+    expect(finalHandle).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: true,
+      reason: 'raw_final_review_fallback'
+    }));
+  });
+
   test('does not treat final_status as review result', async () => {
     service.startSession({
       queueItemId: 'qi_7',
