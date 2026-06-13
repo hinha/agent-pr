@@ -31,13 +31,16 @@ OUTPUT FORMAT (JSON):
     {
       "file": "src/file.js",
       "start_line": 42,
-      "end_line": 45,  // tambahkan +10 line jika ada perubahan di baris terakhir
+      "end_line": 45,
       "severity": "HIGH",
       "message": "Penjelasan issue dan rekomendasi perbaikan",
       "suggestedCode": "const corrected = 'contoh kode yang benar'; penjelasan tambahan sangat detail"
     }
   ]
 }
+
+Catatan:
+- Jika issue berada di baris terakhir perubahan hunk, boleh perluas `end_line` seperlunya agar konteks komentar tetap jelas.
 
 INFO PR Gunakan MCP {{MCP_NAME}}:
 - Repository: {{OWNER}}/{{REPO}}

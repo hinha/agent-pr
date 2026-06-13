@@ -2,10 +2,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const ReviewPromptBuilder = require('../../../../src/application/services/ReviewPromptBuilder');
-const {
-  DISCORD_HANDOFF_PROTOCOL,
-  DiscordHandoffMessageType
-} = require('../../../../src/shared/discordHandoffProtocol');
 
 describe('ReviewPromptBuilder', () => {
   test('renders review prompt placeholders and context blocks', () => {
@@ -98,20 +94,19 @@ describe('ReviewPromptBuilder', () => {
     expect(builder._replaceAll('{{A}} {{B}}', { A: 'x', B: null })).toBe('x ');
   });
 
-  test('builds Discord handoff prompt with explicit protocol contract', () => {
+  test('builds Discord handoff prompt with review-json contract', () => {
     const builder = new ReviewPromptBuilder();
 
     const handoff = builder.buildDiscordHandoff({
       mentionBotName: '<@123>',
-      sessionId: 'qi_123',
       basePrompt: 'BASE PROMPT'
     });
 
     expect(handoff.triggerContent).toContain('attachment `.txt` pada pesan ini');
     expect(handoff.triggerContent).toContain('Baca attachment ini sebagai sumber prompt lengkap');
-    expect(handoff.detailContent).toContain(`"session_id":"qi_123"`);
-    expect(handoff.detailContent).toContain(`"message_type":"${DiscordHandoffMessageType.PROMPT_REQUEST}"`);
-    expect(handoff.detailContent).toContain(`"message_type":"${DiscordHandoffMessageType.FINAL_REVIEW}"`);
+    expect(handoff.triggerContent).toContain('reply ke pesan ini');
+    expect(handoff.triggerContent).toContain('valid JSON saja');
+    expect(handoff.triggerContent).not.toContain('agent-pr-handoff/v1');
     expect(handoff.detailContent).toContain('BASE PROMPT');
   });
 });

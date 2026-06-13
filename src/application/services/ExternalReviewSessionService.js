@@ -300,12 +300,14 @@ class ExternalReviewSessionService {
     const cleanContent = content
       .replace(/```json\s*/gi, '')
       .replace(/```\s*/g, '')
+      .replace(/\u201c|\u201d/g, '"')
       .trim();
+    const commentStrippedContent = this._stripJsonComments(cleanContent);
 
     try {
-      return JSON.parse(cleanContent);
+      return JSON.parse(commentStrippedContent);
     } catch (_error) {
-      const extractedJson = this._extractJson(cleanContent);
+      const extractedJson = this._extractJson(commentStrippedContent);
       if (!extractedJson) {
         return null;
       }
@@ -316,6 +318,53 @@ class ExternalReviewSessionService {
         return null;
       }
     }
+  }
+
+  _stripJsonComments(text) {
+    if (!text) {
+      return text;
+    }
+
+    let result = '';
+    let inString = false;
+    let escapeNext = false;
+
+    for (let index = 0; index < text.length; index++) {
+      const char = text[index];
+      const nextChar = text[index + 1];
+
+      if (escapeNext) {
+        result += char;
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        result += char;
+        escapeNext = true;
+        continue;
+      }
+
+      if (char === '"') {
+        result += char;
+        inString = !inString;
+        continue;
+      }
+
+      if (!inString && char === '/' && nextChar === '/') {
+        while (index < text.length && text[index] !== '\n') {
+          index++;
+        }
+        if (index < text.length) {
+          result += '\n';
+        }
+        continue;
+      }
+
+      result += char;
+    }
+
+    return result;
   }
 
   _normalizeEnvelope(parsed, session) {

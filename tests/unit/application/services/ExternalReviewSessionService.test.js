@@ -467,6 +467,53 @@ describe('ExternalReviewSessionService', () => {
     }));
   });
 
+  test('accepts raw final review JSON with inline comment copied from prompt example', async () => {
+    service.startSession({
+      queueItemId: 'qi_comment_json',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 13,
+      level: 'high',
+      triggerMessageId: 'trigger-comment-json',
+      channelId: 'channel-comment-json',
+      promptDelivered: true,
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    const pending = service.awaitResult('qi_comment_json');
+    const finalHandle = service.handleAgentReply({
+      id: 'msg-comment-json-a',
+      content: `{
+  "summary": "Ringkasan review secara keseluruhan",
+  "comments": [
+    {
+      "file": "src/file.js",
+      "start_line": 42,
+      "end_line": 45,  // tambahkan +10 line jika ada perubahan di baris terakhir
+      "severity": "HIGH",
+      "message": "Penjelasan issue dan rekomendasi perbaikan",
+      "suggestedCode": "const corrected = 'contoh kode yang benar'; penjelasan tambahan sangat detail"
+    }
+  ]
+}`,
+      author: { id: 'bot-1', bot: true },
+      channelId: 'channel-comment-json'
+    });
+
+    await expect(pending).resolves.toEqual(expect.objectContaining({
+      reviewResult: expect.objectContaining({
+        summary: 'Ringkasan review secara keseluruhan',
+        comments: expect.any(Array)
+      })
+    }));
+    expect(finalHandle).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: true,
+      reason: 'raw_final_review_fallback'
+    }));
+  });
+
   test('does not treat final_status as review result', async () => {
     service.startSession({
       queueItemId: 'qi_7',

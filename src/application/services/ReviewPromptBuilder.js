@@ -1,9 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const {
-  DISCORD_HANDOFF_PROTOCOL,
-  DiscordHandoffMessageType
-} = require('../../shared/discordHandoffProtocol');
 
 /**
  * Renders prompts/review.txt for both CLI agents and Discord Hermes handoff.
@@ -62,27 +58,18 @@ class ReviewPromptBuilder {
   }
 
   buildDiscordHandoff(input) {
-    const { mentionBotName, basePrompt, sessionId } = input;
-
-    const protocolInstructions = [
-      'PROTOKOL HANDOFF WAJIB:',
-      `- Semua pesan mesin HARUS JSON envelope dengan "protocol": "${DISCORD_HANDOFF_PROTOCOL}"`,
-      `- Semua pesan mesin HARUS membawa "session_id": "${sessionId}"`,
-      '- Gunakan "message_type" untuk membedakan prompt_request, progress, final_review, final_status, atau error',
-      `- Untuk meminta prompt lengkap, reply ke trigger dengan JSON: {"protocol":"${DISCORD_HANDOFF_PROTOCOL}","session_id":"${sessionId}","message_type":"${DiscordHandoffMessageType.PROMPT_REQUEST}","payload":{"message":"Send complete review prompt"}}`,
-      `- HASIL FINAL WAJIB reply JSON envelope dengan "message_type":"${DiscordHandoffMessageType.FINAL_REVIEW}"`,
-      `- Bentuk hasil final: {"protocol":"${DISCORD_HANDOFF_PROTOCOL}","session_id":"${sessionId}","message_type":"${DiscordHandoffMessageType.FINAL_REVIEW}","payload":{"summary":"...","comments":[...]}}`,
-      '- JANGAN submit review GitHub langsung. Bot ini yang akan submit.',
-      '- Chat bebas tetap boleh, tetapi bot ini hanya memproses envelope JSON dengan protocol dan session_id yang cocok.'
-    ].join('\n');
+    const { mentionBotName, basePrompt } = input;
 
     return {
       triggerContent: [
         `${mentionBotName}`,
         'Prompt review lengkap ada di attachment `.txt` pada pesan ini.',
-        'Baca attachment ini sebagai sumber prompt lengkap yang harus direview.'
+        'Baca attachment ini sebagai sumber prompt lengkap yang harus direview.',
+        'Anda boleh mengirim progress atau diskusi biasa selama review berjalan.',
+        'HASIL FINAL WAJIB berupa reply ke pesan ini dan isi reply tersebut HARUS valid JSON saja.',
+        'JANGAN submit review GitHub langsung. Bot ini yang akan submit hasil final ke GitHub.'
       ].join('\n'),
-      detailContent: `${protocolInstructions}\n\n${basePrompt}`
+      detailContent: basePrompt
     };
   }
 
@@ -90,10 +77,10 @@ class ReviewPromptBuilder {
     const possiblePaths = this.templatePath
       ? [this.templatePath]
       : [
-          path.join(process.cwd(), 'src/prompts/review.txt'),
-          path.join(process.cwd(), 'prompts/review.txt'),
-          path.join(__dirname, '../../../prompts/review.txt')
-        ];
+        path.join(process.cwd(), 'src/prompts/review.txt'),
+        path.join(process.cwd(), 'prompts/review.txt'),
+        path.join(__dirname, '../../../prompts/review.txt')
+      ];
 
     for (const tryPath of possiblePaths) {
       try {
