@@ -120,6 +120,13 @@ class ExternalReviewSessionService {
       : null;
     const effectiveParsed = combinedParsed || parsed;
     const envelope = this._normalizeEnvelope(effectiveParsed, session);
+    const looksLikeJsonLikeReply = this._looksLikeJsonLikeReply(content);
+
+    if (!effectiveParsed && looksLikeJsonLikeReply) {
+      this.logger.error(
+        `[ExternalReviewSessionService] Failed to parse external review JSON for ${session.instanceKey}/${session.repoName} PR #${session.prNumber}: ${content.slice(0, 500)}`
+      );
+    }
 
     if (!envelope) {
       if (!session.promptRequestMessage && !session.promptDelivered) {
@@ -151,6 +158,10 @@ class ExternalReviewSessionService {
           session: this._publicSession(session)
         };
       }
+
+      this.logger.error(
+        `[ExternalReviewSessionService] Unusable external review reply for ${session.instanceKey}/${session.repoName} PR #${session.prNumber}: reason=non_protocol_reply content=${content.slice(0, 500)}`
+      );
 
       return { matched: true, accepted: false, reason: 'non_protocol_reply', session: this._publicSession(session) };
     }
@@ -187,6 +198,10 @@ class ExternalReviewSessionService {
       this._clearPartialFinalBuffer(session);
       return this._acceptFinalPayload(session, normalizedFinalPayload, content, message.id);
     }
+
+    this.logger.error(
+      `[ExternalReviewSessionService] Invalid final payload for ${session.instanceKey}/${session.repoName} PR #${session.prNumber}: ${content.slice(0, 500)}`
+    );
 
     return {
       matched: true,
@@ -552,6 +567,20 @@ class ExternalReviewSessionService {
 
     return this._looksLikePromptRequestText(content) ||
       this._looksLikeFinalReviewFragment(content);
+  }
+
+  _looksLikeJsonLikeReply(content) {
+    if (!content) {
+      return false;
+    }
+
+    const normalized = String(content).trim();
+    return normalized.startsWith('{') ||
+      normalized.startsWith('```json') ||
+      normalized.includes('"summary"') ||
+      normalized.includes('"comments"') ||
+      normalized.includes('"protocol"') ||
+      normalized.includes('"message_type"');
   }
 
   _extractJson(text) {

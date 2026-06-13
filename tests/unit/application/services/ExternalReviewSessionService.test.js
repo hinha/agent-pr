@@ -6,10 +6,12 @@ const {
 
 describe('ExternalReviewSessionService', () => {
   let service;
+  let logger;
 
   beforeEach(() => {
+    logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
     service = new ExternalReviewSessionService({
-      logger: { info: jest.fn(), warn: jest.fn() }
+      logger
     });
   });
 
@@ -512,6 +514,36 @@ describe('ExternalReviewSessionService', () => {
       accepted: true,
       reason: 'raw_final_review_fallback'
     }));
+  });
+
+  test('logs error when bot sends json-like content that cannot be parsed', () => {
+    service.startSession({
+      queueItemId: 'qi_bad_json',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 15,
+      level: 'high',
+      triggerMessageId: 'trigger-bad-json',
+      channelId: 'channel-bad-json',
+      promptDelivered: true,
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    const handle = service.handleAgentReply({
+      id: 'msg-bad-json-a',
+      content: '{"summary":"broken","comments":[}',
+      author: { id: 'bot-1', bot: true },
+      channelId: 'channel-bad-json'
+    });
+
+    expect(handle).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: false
+    }));
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to parse external review JSON')
+    );
   });
 
   test('accepts raw final review JSON with chunk markers injected outside strings', async () => {
