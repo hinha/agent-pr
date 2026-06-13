@@ -129,6 +129,11 @@ class ExternalReviewSessionService {
         return { matched: true, accepted: false, reason: 'non_protocol_handshake', session: this._publicSession(session) };
       }
 
+      const rawFinalPayload = this._normalizeRawFinalReviewPayload(parsed);
+      if (rawFinalPayload) {
+        return this._acceptFinalPayload(session, rawFinalPayload, content, message.id, 'raw_final_review_fallback');
+      }
+
       return { matched: true, accepted: false, reason: 'non_protocol_reply', session: this._publicSession(session) };
     }
 
@@ -161,26 +166,7 @@ class ExternalReviewSessionService {
     const normalizedFinalPayload = this._normalizeFinalReviewPayload(envelope);
 
     if (normalizedFinalPayload) {
-      session.status = 'completed';
-      this._resolvePromptRequest(session, null);
-      this._clearSession(session.queueItemId);
-      session.resolve({
-        session: this._publicSession(session),
-        reviewResult: normalizedFinalPayload,
-        rawContent: content,
-        messageId: message.id
-      });
-
-      this.logger.info(
-        `[ExternalReviewSessionService] Accepted external review reply for ${session.instanceKey}/${session.repoName} PR #${session.prNumber}`
-      );
-
-      return {
-        matched: true,
-        accepted: true,
-        session: this._publicSession(session),
-        reviewResult: normalizedFinalPayload
-      };
+      return this._acceptFinalPayload(session, normalizedFinalPayload, content, message.id);
     }
 
     return {
@@ -317,6 +303,45 @@ class ExternalReviewSessionService {
     return {
       summary: envelope.payload.summary,
       comments: envelope.payload.comments
+    };
+  }
+
+  _normalizeRawFinalReviewPayload(parsed) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+
+    if (typeof parsed.summary !== 'string' || !Array.isArray(parsed.comments)) {
+      return null;
+    }
+
+    return {
+      summary: parsed.summary,
+      comments: parsed.comments
+    };
+  }
+
+  _acceptFinalPayload(session, reviewResult, rawContent, messageId, reason = 'accepted') {
+    session.status = 'completed';
+    this._resolvePromptRequest(session, null);
+    this._clearSession(session.queueItemId);
+    session.resolve({
+      session: this._publicSession(session),
+      reviewResult,
+      rawContent,
+      messageId
+    });
+
+    this.logger.info(
+      `[ExternalReviewSessionService] Accepted external review reply for ${session.instanceKey}/${session.repoName} PR #${session.prNumber}`
+    );
+
+    return {
+      matched: true,
+      accepted: true,
+      reason,
+      session: this._publicSession(session),
+      reviewResult
     };
   }
 

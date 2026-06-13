@@ -345,7 +345,9 @@ class ReviewQueueWorker {
       instance,
       repo,
       mentionBotName: instance.mentionBotName,
-      content: handoffPrompt.triggerContent
+      content: handoffPrompt.triggerContent,
+      attachmentContent: handoffPrompt.detailContent,
+      attachmentFileName: `review-prompt-${item.id}.txt`
     });
 
     this.externalReviewSessionService.startSession({
@@ -359,20 +361,6 @@ class ReviewQueueWorker {
       trustedBotUserId: instance.mentionBotUserId,
       timeoutMs: (instance.agent?.reviewTimeoutSeconds || 600) * 1000
     });
-
-    const promptRequestMessage = await this.externalReviewSessionService.awaitPromptRequest(item.id);
-    if (promptRequestMessage) {
-      const promptMessage = await this.discordAdapter.sendReplyTextAttachment(
-        promptRequestMessage,
-        handoffPrompt.detailContent,
-        {
-          mentionBotName: instance.mentionBotName,
-          fileName: `review-prompt-${item.id}.txt`,
-          intro: 'Prompt review lengkap ada di attachment `.txt` pada reply ini.'
-        }
-      );
-      this.externalReviewSessionService.registerReplyTargets(item.id, [promptRequestMessage, promptMessage]);
-    }
 
     const externalResult = await this.externalReviewSessionService.awaitResult(item.id);
 

@@ -326,6 +326,50 @@ describe('ExternalReviewSessionService', () => {
     }));
   });
 
+  test('accepts raw final review JSON as fallback after prompt has been delivered', async () => {
+    service.startSession({
+      queueItemId: 'qi_6b',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 10,
+      level: 'high',
+      triggerMessageId: 'trigger-6b',
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    service.handleAgentReply({
+      id: 'msg-6b-a',
+      content: JSON.stringify({
+        protocol: DISCORD_HANDOFF_PROTOCOL,
+        session_id: 'qi_6b',
+        message_type: DiscordHandoffMessageType.PROMPT_REQUEST,
+        payload: { message: 'Send complete review prompt' }
+      }),
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'trigger-6b' }
+    });
+
+    service.registerReplyTargets('qi_6b', [{ id: 'prompt-6b-1' }]);
+
+    const pending = service.awaitResult('qi_6b');
+    const finalHandle = service.handleAgentReply({
+      id: 'msg-6b-b',
+      content: '{"summary":"done","comments":[]}',
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'prompt-6b-1' }
+    });
+
+    await expect(pending).resolves.toEqual(expect.objectContaining({
+      reviewResult: { summary: 'done', comments: [] }
+    }));
+    expect(finalHandle).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: true,
+      reason: 'raw_final_review_fallback'
+    }));
+  });
+
   test('does not treat final_status as review result', async () => {
     service.startSession({
       queueItemId: 'qi_7',

@@ -73,6 +73,37 @@ describe('DiscordBotAdapter', () => {
     }));
   });
 
+  test('can send Hermes trigger with text attachment', async () => {
+    const adapter = new DiscordBotAdapter('token', {
+      config,
+      logger: { info: jest.fn(), error: jest.fn() }
+    });
+
+    await adapter.sendHermesMention({
+      instance: { owner: 'acme' },
+      repo: { name: 'api' },
+      mentionBotName: '<@123456789012345678>',
+      content: '<@123456789012345678>\nPrompt tersedia di attachment.',
+      attachmentContent: 'FULL PROMPT',
+      attachmentFileName: 'review-prompt-qi_1.txt'
+    });
+
+    const channel = await adapter.client.channels.fetch.mock.results[0].value;
+    expect(channel.send).toHaveBeenCalledWith(expect.objectContaining({
+      content: '<@123456789012345678>\nPrompt tersedia di attachment.',
+      allowedMentions: {
+        parse: [],
+        users: ['123456789012345678']
+      },
+      files: [
+        expect.objectContaining({
+          name: 'review-prompt-qi_1.txt',
+          attachment: expect.any(Buffer)
+        })
+      ]
+    }));
+  });
+
   test('returns message object from sendHermesMention and can split long replies', async () => {
     const adapter = new DiscordBotAdapter('token', {
       config,
@@ -124,17 +155,12 @@ describe('DiscordBotAdapter', () => {
     trigger.message.reply = reply;
 
     const result = await adapter.sendReplyTextAttachment(trigger.message, 'FULL PROMPT', {
-      mentionBotName: '<@123456789012345678>',
       fileName: 'review-prompt-qi_1.txt',
       intro: 'Prompt lengkap ada di attachment.'
     });
 
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: '<@123456789012345678>\nPrompt lengkap ada di attachment.\nBaca attachment ini sebagai sumber prompt lengkap yang harus direview.',
-      allowedMentions: {
-        parse: [],
-        users: ['123456789012345678']
-      },
+      content: 'Prompt lengkap ada di attachment.\nBaca attachment ini sebagai sumber prompt lengkap yang harus direview.',
       files: [
         expect.objectContaining({
           name: 'review-prompt-qi_1.txt',

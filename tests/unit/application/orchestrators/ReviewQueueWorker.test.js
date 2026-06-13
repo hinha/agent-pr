@@ -875,7 +875,6 @@ describe('ReviewQueueWorker', () => {
           ]
         }
       });
-      mockExternalReviewSessionService.awaitPromptRequest.mockResolvedValue({ id: 'hermes-handshake-1' });
       mockReviewPRUseCase.submitExternalResult.mockResolvedValue({
         success: true,
         review: { html_url: 'https://review' },
@@ -891,28 +890,16 @@ describe('ReviewQueueWorker', () => {
       }));
       expect(mockDiscordAdapter.sendHermesMention).toHaveBeenCalledWith(expect.objectContaining({
         mentionBotName: '<@123456789012345678>',
-        content: '<@123>\nHANDOFF TRIGGER'
+        content: '<@123>\nHANDOFF TRIGGER',
+        attachmentContent: 'HANDOFF DETAIL',
+        attachmentFileName: 'review-prompt-qi_test_handoff.txt'
       }));
-      expect(mockDiscordAdapter.sendReplyTextAttachment).toHaveBeenCalledWith(
-        { id: 'hermes-handshake-1' },
-        'HANDOFF DETAIL',
-        {
-          mentionBotName: '<@123456789012345678>',
-          fileName: 'review-prompt-qi_test_handoff.txt',
-          intro: 'Prompt review lengkap ada di attachment `.txt` pada reply ini.'
-        }
-      );
       expect(mockExternalReviewSessionService.startSession).toHaveBeenCalledWith(expect.objectContaining({
         queueItemId: 'qi_test_handoff',
         sessionId: 'qi_test_handoff',
         triggerMessageId: 'discord-trigger-1',
         trustedBotUserId: '123456789012345678'
       }));
-      expect(mockExternalReviewSessionService.awaitPromptRequest).toHaveBeenCalledWith('qi_test_handoff');
-      expect(mockExternalReviewSessionService.registerReplyTargets).toHaveBeenCalledWith(
-        'qi_test_handoff',
-        [{ id: 'hermes-handshake-1' }, { id: 'prompt-attachment-1' }]
-      );
       expect(mockReviewPRUseCase.submitExternalResult).toHaveBeenCalledWith(
         expect.objectContaining({ owner: 'test' }),
         expect.objectContaining({ name: 'repo' }),

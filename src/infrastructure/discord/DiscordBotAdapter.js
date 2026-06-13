@@ -92,12 +92,23 @@ class DiscordBotAdapter extends EventEmitter {
     return { success: true, id: message.id };
   }
 
-  async sendHermesMention({ instance, repo, content, mentionBotName }) {
+  async sendHermesMention({ instance, repo, content, mentionBotName, attachmentContent, attachmentFileName }) {
     const allowedMentions = this._buildAllowedMentions(mentionBotName);
-    const message = await this._sendToRepo(instance.owner, repo.name, {
+    const payload = {
       content,
       allowedMentions
-    });
+    };
+
+    if (attachmentContent) {
+      payload.files = [
+        {
+          attachment: Buffer.from(attachmentContent, 'utf8'),
+          name: attachmentFileName || 'review-prompt.txt'
+        }
+      ];
+    }
+
+    const message = await this._sendToRepo(instance.owner, repo.name, payload);
 
     return { success: true, id: message.id, message };
   }
