@@ -9,16 +9,18 @@ Review pull request #{{PR_NUMBER}} dengan level **{{LEVEL}}**.
 
 INSTRUKSI:
 1. Analisis kode PR dengan fokus pada: {{FOCUS_AREAS}}
-2. Bandingkan dengan branch target dan branch saat ini untuk memahami perubahan yang dilakukan
-3. Berikan comment review spesifik per file dan baris jika ada issue
-4. Berikan severity level untuk setiap comment: LOW, MEDIUM, atau HIGH
-5. Maximum {{MAX_COMMENTS}} comments per file
-6. Pastikan review relevan dengan perubahan yang dilakukan, hindari komentar umum yang tidak spesifik
-7. Berikan ringkasan review secara keseluruhan di bagian akhir
-8. Pastikan sudah diberi komentar jika ditemukan issue, jangan hanya memberikan ringkasan tanpa komentar spesifik
-9. **HINDARI memberikan komentar pada file test/unit test** - skip file dengan prefix `_test`, suffix `_test.go`, `_test.js`, `*_test.go`, atau folder `e2e_test/`. Fokus review hanya pada main code
-10. **Setiap komentar harus disertai suggested code fix** - berikan contoh kode yang benar untuk membantu developer memperbaiki issue
-11. **Gunakan mcp context7 untuk best practice library** - jika menemukan penggunaan library/framework (Golang, Express, React, Prisma, MongoDB, dll), gunakan MCP Context7 untuk memeriksa best practice dan pola yang direkomendasikan dari dokumentasi resmi library tersebut
+2. **WAJIB berikan komentar** untuk setiap issue yang ditemukan (HIGH, MEDIUM, LOW)
+3. Bandingkan dengan branch target dan branch saat ini untuk memahami perubahan yang dilakukan
+4. Berikan comment review spesifik per file dan baris untuk issue yang ditemukan
+5. Berikan severity level untuk setiap comment: LOW, MEDIUM, atau HIGH
+6. Maximum {{MAX_COMMENTS}} comments per file
+7. Pastikan review relevan dengan perubahan yang dilakukan, hindari komentar umum yang tidak spesifik
+8. Berikan ringkasan review secara keseluruhan di bagian akhir
+9. **JANGAN hanya memberikan ringkasan tanpa komentar** - ini WAJIB: jika ada perubahan kode, harus ada review comment (minimal LOW untuk improvements)
+10. **HINDARI memberikan komentar pada file test/unit test** - skip file dengan prefix `_test`, suffix `_test.go`, `_test.js`, `*_test.go`, atau folder `e2e_test/`. Fokus review hanya pada main code
+11. **Setiap komentar harus disertai suggested code fix** - berikan contoh kode yang benar untuk membantu developer memperbaiki issue
+12. **Gunakan mcp context7 untuk best practice library** - jika menemukan penggunaan library/framework (Golang, Express, React, Prisma, MongoDB, dll), gunakan MCP Context7 untuk memeriksa best practice dan pola yang direkomendasikan dari dokumentasi resmi library tersebut
+13. **Cari issue dengan teliti** - tidak hanya bug tapi juga: code smells, best practices violations, potential bugs, security issues, performance problems, error handling, logging, validation, edge cases
 
 {{PREVIOUS_COMMENTS}}
 
@@ -65,7 +67,11 @@ TOOL YANG TERSEEDIA (sesuai MCP server):
 - update_pull_request - Close PR
 - get_pull_request - Get PR details
 
-PENTING: Anda TIDAK perlu memanggil MCP sendiri. Cukup analisis kode dari informasi yang diberikan dan kembalikan JSON review. Sistem akan handle submit review ke GitHub.
+PENTING: GUNAKAN MCP GITHUB TOOLS untuk review yang lebih akurat:
+1. **WAJIB**: Jika patch terpotong (ada "(truncated)") atau kurang jelas, panggil `get_pull_request_files` untuk dapatkan patch lengkap
+2. **WAJIB**: Untuk file yang perlu analisis mendalam, gunakan `get_pull_request` untuk melihat konteks PR lebih lengkap
+3. **Boleh**: Panggil MCP tools untuk mendapatkan informasi tambahan yang diperlukan
+4. **JANGAN**: Panggil `create_pull_request_review` - sistem yang akan submit
 
 Pastikan output hanya JSON yang valid, tanpa text tambahan.
 
@@ -79,3 +85,9 @@ PENTING: Output HARUS KONSISTEN valid JSON saja, tanpa text tambahan:
   - Jika ada comment dengan severity HIGH → sistem akan submit sebagai REQUEST_CHANGES
   - Jika tidak ada HIGH → sistem akan submit sebagai COMMENT
 - Pastikan JSON valid dan bisa di-parse tanpa error
+
+**PENTING - JANGAN RETURN COMMENTS KOSONG**:
+- Jika ada file changes dalam patch, WAJIB ada minimal 1 comment (LOW/MEDIUM/HIGH)
+- Jika tidak menemukan issue HIGH/MEDIUM, berikan minimal LOW untuk improvements
+- Comment kosong atau hanya summary tanpa comments dianggap review gagal
+- Examples yang boleh diberikan LOW comments: code style improvements, better naming, error handling suggestions, validation improvements, logging suggestions

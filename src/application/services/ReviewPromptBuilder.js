@@ -148,10 +148,10 @@ class ReviewPromptBuilder {
       .filter(f => f.patch && f.filename)
       .map(f => {
         // Limit patch size to avoid overwhelming the AI
-        const maxPatchSize = 2000;
+        const maxPatchSize = 10000;
         let patch = f.patch;
         if (patch.length > maxPatchSize) {
-          patch = patch.substring(0, maxPatchSize) + '\n... (truncated)';
+          patch = patch.substring(0, maxPatchSize) + '\n... (truncated - AI MUST call get_pull_request_files MCP tool to get full patch)';
         }
 
         return `File: ${f.filename}\n\`\`\`diff\n${patch}\n\`\`\``;
