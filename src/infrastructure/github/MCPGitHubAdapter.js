@@ -81,10 +81,7 @@ class MCPGitHubAdapter extends IGitHubService {
 
       return this._parseMCPJsonResponse(method, result.stdout, spawnArgs);
     }, (err) => {
-      if (err.message && err.message.includes('Unknown tool')) {
-        return false;
-      }
-      return true;
+      return !this._isNonRetryableError(err);
     }, {
       retries: 3,
       minTimeout: 2000,
@@ -175,6 +172,23 @@ class MCPGitHubAdapter extends IGitHubService {
       spawnProcess.on('close', onClose);
       spawnProcess.on('error', onError);
     });
+  }
+
+  /**
+   * Determine whether an error represents a permanent failure that must NOT
+   * be retried. Retrying these wastes time and produces noisy logs (e.g. a
+   * 422 "Can not request changes on your own pull request" is permanent).
+   * @param {Error} error - Error from an MCP call
+   * @returns {boolean} true if the error is non-retryable
+   * @private
+   */
+  _isNonRetryableError(error) {
+    const msg = (error && error.message) || '';
+    if (msg.includes('Unknown tool')) return true;
+    if (msg.includes('Can not request changes on your own pull request')) return true;
+    // 422 validation errors are permanent — retrying will never succeed
+    if (msg.includes('Validation Error') && msg.includes('422')) return true;
+    return false;
   }
 
   /**

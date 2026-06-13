@@ -424,7 +424,7 @@ describe('MCPGitHubAdapter', () => {
       expect(spawn).not.toHaveBeenCalled();
     });
 
-    test('should fallback to COMMENT when REQUEST_CHANGES fails on own PR', (done) => {
+    test('should fallback to COMMENT when REQUEST_CHANGES fails on own PR without retrying', (done) => {
       const mockPR = {
         id: 'pr_1',
         number: 456,
@@ -443,7 +443,23 @@ describe('MCPGitHubAdapter', () => {
         ]
       };
 
-      let callCount = 0;
+      // Simulate the real retryIf: honor the shouldRetry predicate so
+      // non-retryable errors fail fast (this is what the fix relies on).
+      mockRetryHelper.retryIf = jest.fn(async (fn, shouldRetry, options = {}) => {
+        const maxRetries = options.retries || 0;
+        let attempt = 0;
+        while (true) { // eslint-disable-line no-constant-condition
+          try {
+            return await fn();
+          } catch (err) {
+            if (attempt >= maxRetries || (shouldRetry && !shouldRetry(err))) {
+              throw err;
+            }
+            attempt++;
+          }
+        }
+      });
+
       let onDataCallback;
       let onCloseCallback;
 
@@ -456,38 +472,46 @@ describe('MCPGitHubAdapter', () => {
       mockSpawnProcess.stderr.on.mockImplementation(() => {});
 
       mockSpawnProcess.on.mockImplementation((event, cb) => {
-        if (event === 'close') {
-          onCloseCallback = cb;
-          callCount++;
-          // First call fails with "own PR" error, second succeeds
-          if (callCount === 1) {
-            setTimeout(() => {
-              if (onDataCallback) {
-                onDataCallback(JSON.stringify({
-                  error: 'Can not request changes on your own pull request'
-                }));
-              }
-              if (onCloseCallback) {
-                onCloseCallback(0);
-              }
-            }, 10);
+        if (event !== 'close') return;
+        onCloseCallback = cb;
+
+        // Route the response based on what MCP call this spawn is for.
+        const latestArgs = spawn.mock.calls[spawn.mock.calls.length - 1][1];
+        const isGetFiles = latestArgs.some((a) => typeof a === 'string' && a.includes('get_pull_request_files'));
+        const isRequestChanges = latestArgs.some((a) => typeof a === 'string' && a.includes('REQUEST_CHANGES'));
+
+        setTimeout(() => {
+          if (isGetFiles) {
+            if (onDataCallback) onDataCallback(JSON.stringify({ files: [] }));
+          } else if (isRequestChanges) {
+            // Every REQUEST_CHANGES attempt must fail with the permanent 422
+            // error (so a retry loop would keep failing, proving the fix).
+            if (onDataCallback) {
+              onDataCallback(JSON.stringify({
+                error: 'Can not request changes on your own pull request'
+              }));
+            }
           } else {
-            setTimeout(() => {
-              if (onDataCallback) {
-                onDataCallback(JSON.stringify({ id: 'review_123' }));
-              }
-              if (onCloseCallback) {
-                onCloseCallback(0);
-              }
-            }, 10);
+            // COMMENT fallback succeeds
+            if (onDataCallback) onDataCallback(JSON.stringify({ id: 'review_123' }));
           }
-        }
+          if (onCloseCallback) onCloseCallback(0);
+        }, 10);
       });
 
-      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((_result) => {
-        expect(spawn).toHaveBeenCalled();
+      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
+        expect(result.id).toBe('review_123');
+        // REQUEST_CHANGES must be attempted exactly once (no retries) before
+        // the fallback to COMMENT fires.
+        const requestChangesCalls = spawn.mock.calls.filter(([, args]) =>
+          args.some((a) => typeof a === 'string' && a.includes('REQUEST_CHANGES'))
+        );
+        expect(requestChangesCalls).toHaveLength(1);
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('Cannot request changes on own PR')
+        );
         done();
-      });
+      }).catch(done);
     });
 
     test('should append skipped comment with suggestedCode to review body when line not in diff', (done) => {
@@ -1066,6 +1090,35 @@ describe('MCPGitHubAdapter', () => {
       expect(adapter._normalizeEvent('')).toBeNull();
       expect(adapter._normalizeEvent('INVALID')).toBeNull();
       expect(adapter._normalizeEvent(123)).toBeNull();
+    });
+  });
+
+  describe('_isNonRetryableError', () => {
+    test('should mark "Unknown tool" errors as non-retryable', () => {
+      const err = new Error('Unknown tool: foo.bar');
+      expect(adapter._isNonRetryableError(err)).toBe(true);
+    });
+
+    test('should mark "own PR" review errors as non-retryable', () => {
+      const err = new Error('MCP error: Can not request changes on your own pull request');
+      expect(adapter._isNonRetryableError(err)).toBe(true);
+    });
+
+    test('should mark 422 Validation Error as non-retryable', () => {
+      const err = new Error('Validation Error: HTTP 422 — field invalid');
+      expect(adapter._isNonRetryableError(err)).toBe(true);
+    });
+
+    test('should mark transient errors as retryable', () => {
+      expect(adapter._isNonRetryableError(new Error('MCP command timeout after 60000ms'))).toBe(false);
+      expect(adapter._isNonRetryableError(new Error('connect ECONNREFUSED 127.0.0.1:443'))).toBe(false);
+      expect(adapter._isNonRetryableError(new Error('MCP command failed with exit code 1'))).toBe(false);
+    });
+
+    test('should be defensive against errors without a message', () => {
+      expect(adapter._isNonRetryableError(null)).toBe(false);
+      expect(adapter._isNonRetryableError(undefined)).toBe(false);
+      expect(adapter._isNonRetryableError({})).toBe(false);
     });
   });
 
