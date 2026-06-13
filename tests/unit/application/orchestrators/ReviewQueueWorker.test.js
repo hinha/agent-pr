@@ -83,6 +83,10 @@ describe('ReviewQueueWorker', () => {
         id: 'discord-trigger-1',
         message: { id: 'discord-trigger-1', channelId: 'channel-1' }
       }),
+      sendReply: jest.fn().mockResolvedValue({
+        id: 'repair-request-1',
+        channelId: 'channel-1'
+      }),
       sendReplyTextAttachment: jest.fn().mockResolvedValue({ id: 'prompt-attachment-1' })
     };
     mockReviewPromptBuilder = {
@@ -910,6 +914,86 @@ describe('ReviewQueueWorker', () => {
         expect.any(Object),
         githubAdapter
       );
+    });
+
+    test('should request repaired JSON from external bot when validation fails', async () => {
+      const queue = new ReviewQueue('github/test', 2);
+      const item = new QueueItem({
+        id: 'qi_test_handoff_repair',
+        instanceKey: 'github/test',
+        repoName: 'repo',
+        prId: '123',
+        prNumber: 123,
+        prTitle: 'Test PR',
+        level: 'high'
+      });
+
+      const githubAdapter = {
+        getOpenPRs: jest.fn().mockResolvedValue([{
+          id: 123,
+          number: 123,
+          title: 'Test PR',
+          headBranch: 'feature',
+          baseBranch: 'main',
+          url: 'https://github.com/test/repo/pull/123',
+          headSha: 'abc123'
+        }]),
+        getPRComments: jest.fn().mockResolvedValue([]),
+        getPRCommits: jest.fn().mockResolvedValue([])
+      };
+
+      mockConfig.app.discord = { reviewMode: 'handoff_reply_submit' };
+      mockConfig.reviewLevels = {
+        high: { focusAreas: ['security'], maxCommentsPerFile: 10 }
+      };
+      mockConfig.instances['github/test'] = {
+        key: 'github/test',
+        owner: 'test',
+        mcpName: 'github-test',
+        mentionBotName: '<@123456789012345678>',
+        mentionBotUserId: '123456789012345678',
+        agent: { reviewTimeoutSeconds: 600 },
+        repos: { repo: { thread_id: 123 } }
+      };
+
+      worker.githubAdapterFactory.create.mockReturnValue(githubAdapter);
+      mockExternalReviewSessionService.awaitResult
+        .mockResolvedValueOnce({
+          reviewResult: { summary: '', comments: [{ severity: 'oops' }] },
+          message: { id: 'bot-final-1', channelId: 'channel-1' }
+        })
+        .mockResolvedValueOnce({
+          reviewResult: {
+            summary: 'Fixed',
+            comments: [
+              { file: 'src/app.js', start_line: 10, severity: 'HIGH', message: 'Bug' }
+            ]
+          },
+          message: { id: 'bot-final-2', channelId: 'channel-1' }
+        });
+      mockReviewPRUseCase.submitExternalResult
+        .mockResolvedValueOnce({
+          success: false,
+          error: 'External review result validation failed: field "summary" must be a non-empty string'
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          review: { html_url: 'https://review' },
+          reviewResult: { comments: [{ severity: 'HIGH' }] }
+        });
+
+      await worker._processItem(queue, item);
+
+      expect(mockDiscordAdapter.sendReply).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'bot-final-1' }),
+        expect.stringContaining('Error validasi/normalisasi: External review result validation failed')
+      );
+      expect(mockExternalReviewSessionService.startSession).toHaveBeenCalledTimes(2);
+      expect(mockExternalReviewSessionService.startSession).toHaveBeenLastCalledWith(expect.objectContaining({
+        queueItemId: 'qi_test_handoff_repair',
+        triggerMessageId: 'repair-request-1'
+      }));
+      expect(mockReviewPRUseCase.submitExternalResult).toHaveBeenCalledTimes(2);
     });
 
     test('should handle failure in completeProcessing', async () => {

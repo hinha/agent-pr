@@ -350,30 +350,70 @@ class ReviewQueueWorker {
       attachmentFileName: `review-prompt-${item.id}.txt`
     });
 
-    this.externalReviewSessionService.startSession({
-      queueItemId: item.id,
-      sessionId: item.id,
-      instanceKey: item.instanceKey,
-      repoName: item.repoName,
-      prNumber: item.prNumber,
-      level: item.level,
-      triggerMessageId: trigger.id,
-      channelId: trigger.message?.channelId || trigger.message?.channel?.id || null,
-      promptDelivered: true,
-      trustedBotUserId: instance.mentionBotUserId,
-      timeoutMs: (instance.agent?.reviewTimeoutSeconds || 600) * 1000
-    });
+    let sessionTriggerMessage = trigger.message;
 
-    const externalResult = await this.externalReviewSessionService.awaitResult(item.id);
+    while (true) {
+      this.externalReviewSessionService.startSession({
+        queueItemId: item.id,
+        sessionId: item.id,
+        instanceKey: item.instanceKey,
+        repoName: item.repoName,
+        prNumber: item.prNumber,
+        level: item.level,
+        triggerMessageId: sessionTriggerMessage.id,
+        channelId: sessionTriggerMessage.channelId || sessionTriggerMessage.channel?.id || null,
+        promptDelivered: true,
+        trustedBotUserId: instance.mentionBotUserId,
+        timeoutMs: (instance.agent?.reviewTimeoutSeconds || 600) * 1000
+      });
 
-    return this.reviewPRUseCase.submitExternalResult(
-      instance,
-      repo,
-      freshPR,
-      item.level,
-      externalResult.reviewResult,
-      githubAdapter
-    );
+      const externalResult = await this.externalReviewSessionService.awaitResult(item.id);
+      const submitResult = await this.reviewPRUseCase.submitExternalResult(
+        instance,
+        repo,
+        freshPR,
+        item.level,
+        externalResult.reviewResult,
+        githubAdapter
+      );
+
+      if (submitResult?.success) {
+        return submitResult;
+      }
+
+      if (!this._isRepairableExternalReviewError(submitResult?.error)) {
+        return submitResult;
+      }
+
+      this.logger.error(
+        `[ReviewQueueWorker] External review validation failed for ${item.instanceKey}/${item.repoName} PR #${item.prNumber}: ${submitResult.error}`
+      );
+
+      const repairTargetMessage = externalResult.message || sessionTriggerMessage;
+      sessionTriggerMessage = await this.discordAdapter.sendReply(
+        repairTargetMessage,
+        this._buildExternalReviewRepairRequest(submitResult.error)
+      );
+    }
+  }
+
+  _isRepairableExternalReviewError(errorMessage) {
+    if (!errorMessage || typeof errorMessage !== 'string') {
+      return false;
+    }
+
+    return errorMessage.includes('External review result must be a JSON object') ||
+      errorMessage.includes('External review result validation failed');
+  }
+
+  _buildExternalReviewRepairRequest(errorMessage) {
+    return [
+      'JSON final belum bisa dipakai oleh bot_pr.',
+      `Error validasi/normalisasi: ${errorMessage}`,
+      'Kirim ulang HASIL FINAL sebagai reply ke pesan ini.',
+      'Isi reply HARUS valid JSON saja dengan format dari prompt review.',
+      'JANGAN submit review GitHub langsung.'
+    ].join('\n');
   }
 
   async _resolveFreshPR(pr, repo, githubAdapter) {

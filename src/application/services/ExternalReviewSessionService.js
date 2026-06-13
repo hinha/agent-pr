@@ -112,6 +112,7 @@ class ExternalReviewSessionService {
       return { matched: true, accepted: false, reason: 'untrusted_bot', session };
     }
 
+    session.lastMatchedMessage = message;
     const content = String(message.content || '').trim();
     const parsed = this._parsePotentialJson(content);
     const combinedParsed = session.partialFinalContent
@@ -493,7 +494,8 @@ class ExternalReviewSessionService {
       session: this._publicSession(session),
       reviewResult,
       rawContent,
-      messageId
+      messageId,
+      message: session.lastMatchedMessage || null
     });
 
     this.logger.info(

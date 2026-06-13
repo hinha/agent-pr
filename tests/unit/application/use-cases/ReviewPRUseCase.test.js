@@ -317,6 +317,42 @@ describe('ReviewPRUseCase', () => {
       expect(result.error).toContain('External review result must be a JSON object');
       expect(mockGithubAdapter.createReviewWithComments).not.toHaveBeenCalled();
     });
+
+    test('should reject invalid external review comments with detailed validation error', async () => {
+      const result = await useCase.submitExternalResult(
+        instance,
+        repo,
+        pr,
+        'medium',
+        {
+          summary: '',
+          comments: [
+            {
+              file: '',
+              start_line: 'x',
+              end_line: 1,
+              severity: 'oops',
+              message: ''
+            }
+          ]
+        },
+        mockGithubAdapter
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('External review result validation failed');
+      expect(result.error).toContain('field "summary" must be a non-empty string');
+      expect(result.error).toContain('comments[0].severity must be one of LOW, MEDIUM, HIGH');
+      expect(mockGithubAdapter.createReviewWithComments).not.toHaveBeenCalled();
+      expect(mockEventBus.emitAsync).toHaveBeenCalledWith(
+        'error.occurred',
+        expect.objectContaining({
+          useCase: 'ReviewPRUseCase.submitExternalResult',
+          prNumber: 42,
+          error: expect.stringContaining('External review result validation failed')
+        })
+      );
+    });
   });
 
   describe('_determineNewState', () => {
