@@ -359,6 +359,7 @@ class ReviewQueueWorker {
       level: item.level,
       triggerMessageId: trigger.id,
       channelId: trigger.message?.channelId || trigger.message?.channel?.id || null,
+      promptDelivered: true,
       trustedBotUserId: instance.mentionBotUserId,
       timeoutMs: (instance.agent?.reviewTimeoutSeconds || 600) * 1000
     });

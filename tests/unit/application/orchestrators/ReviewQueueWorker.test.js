@@ -899,6 +899,7 @@ describe('ReviewQueueWorker', () => {
         sessionId: 'qi_test_handoff',
         triggerMessageId: 'discord-trigger-1',
         channelId: 'channel-1',
+        promptDelivered: true,
         trustedBotUserId: '123456789012345678'
       }));
       expect(mockReviewPRUseCase.submitExternalResult).toHaveBeenCalledWith(

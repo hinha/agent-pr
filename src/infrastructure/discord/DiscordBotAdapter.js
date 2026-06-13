@@ -254,6 +254,16 @@ class DiscordBotAdapter extends EventEmitter {
       this.externalReviewSessionService.handleAgentReply(message);
     });
 
+    this.client.on('messageUpdate', async (_oldMessage, newMessage) => {
+      this.emit('message', newMessage);
+
+      if (!this.externalReviewSessionService) {
+        return;
+      }
+
+      this.externalReviewSessionService.handleAgentReply(newMessage);
+    });
+
     this.client.on('error', (error) => {
       this.logger.error(`[DiscordBotAdapter] Client error: ${error.message}`);
     });

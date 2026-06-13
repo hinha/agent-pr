@@ -309,19 +309,28 @@ describe('DiscordBotAdapter', () => {
     })).rejects.toThrow('Discord target is not sendable');
   });
 
-  test('wires client event handlers for ready, interaction, and error', async () => {
+  test('wires client event handlers for ready, interaction, messageUpdate, and error', async () => {
     const logger = { info: jest.fn(), error: jest.fn() };
-    const adapter = new DiscordBotAdapter('token', { config, logger });
+    const externalReviewSessionService = { handleAgentReply: jest.fn() };
+    const adapter = new DiscordBotAdapter('token', { config, logger, externalReviewSessionService });
     const interactionListener = jest.fn();
+    const messageListener = jest.fn();
     adapter.on('interaction', interactionListener);
+    adapter.on('message', messageListener);
 
     adapter.client.handlers.ready();
     adapter.client.handlers.interactionCreate({ isButton: () => false });
     adapter.client.handlers.interactionCreate({ isButton: () => true, customId: 'x' });
+    await adapter.client.handlers.messageUpdate(
+      { id: 'm-old', content: 'old' },
+      { id: 'm-new', content: '{"summary":"done","comments":[]}', author: { id: '123', bot: true } }
+    );
     adapter.client.handlers.error(new Error('client-fail'));
 
     expect(logger.info).toHaveBeenCalledWith('[DiscordBotAdapter] Logged in as agent-pr-test#0001');
     expect(interactionListener).toHaveBeenCalledWith(expect.objectContaining({ customId: 'x' }));
+    expect(messageListener).toHaveBeenCalledWith(expect.objectContaining({ id: 'm-new' }));
+    expect(externalReviewSessionService.handleAgentReply).toHaveBeenCalledWith(expect.objectContaining({ id: 'm-new' }));
     expect(logger.error).toHaveBeenCalledWith('[DiscordBotAdapter] Client error: client-fail');
     expect(adapter._getRepoIndices('acme', 'api')).toEqual({ instanceIdx: 0, repoIdx: 0 });
   });

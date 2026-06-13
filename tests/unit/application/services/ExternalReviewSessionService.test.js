@@ -435,6 +435,38 @@ describe('ExternalReviewSessionService', () => {
     }));
   });
 
+  test('accepts standalone final review JSON in the same channel when exactly one session matches', async () => {
+    service.startSession({
+      queueItemId: 'qi_chan',
+      instanceKey: 'github/acme',
+      repoName: 'api',
+      prNumber: 12,
+      level: 'high',
+      triggerMessageId: 'trigger-chan',
+      channelId: 'channel-chan',
+      promptDelivered: true,
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    const pending = service.awaitResult('qi_chan');
+    const finalHandle = service.handleAgentReply({
+      id: 'msg-chan-a',
+      content: '{"summary":"done","comments":[]}',
+      author: { id: 'bot-1', bot: true },
+      channelId: 'channel-chan'
+    });
+
+    await expect(pending).resolves.toEqual(expect.objectContaining({
+      reviewResult: { summary: 'done', comments: [] }
+    }));
+    expect(finalHandle).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: true,
+      reason: 'raw_final_review_fallback'
+    }));
+  });
+
   test('does not treat final_status as review result', async () => {
     service.startSession({
       queueItemId: 'qi_7',

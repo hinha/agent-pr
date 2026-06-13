@@ -19,6 +19,7 @@ class ExternalReviewSessionService {
       sessionId: sessionInput.sessionId || sessionInput.queueItemId,
       deadlineAt,
       status: 'pending',
+      promptDelivered: Boolean(sessionInput.promptDelivered),
       partialFinalContent: '',
       partialFinalUpdatedAt: null
     };
@@ -93,7 +94,7 @@ class ExternalReviewSessionService {
     const replyTargetMessageId = this._extractReplyTargetMessageId(message);
     const session = replyTargetMessageId
       ? this.sessionsByReplyTargetMessageId.get(String(replyTargetMessageId))
-      : this._findContinuationSession(message);
+      : this._findSessionByChannel(message);
 
     if (!session) {
       return { matched: false, accepted: false, reason: replyTargetMessageId ? 'unknown_trigger' : 'not_a_reply' };
@@ -120,7 +121,7 @@ class ExternalReviewSessionService {
     const envelope = this._normalizeEnvelope(effectiveParsed, session);
 
     if (!envelope) {
-      if (!session.promptRequestMessage) {
+      if (!session.promptRequestMessage && !session.promptDelivered) {
         if (effectiveParsed === null && this._looksLikePromptRequestText(content)) {
           this._resolvePromptRequest(session, message);
           return {
@@ -237,14 +238,15 @@ class ExternalReviewSessionService {
     }
   }
 
-  _findContinuationSession(message) {
+  _findSessionByChannel(message) {
     const channelId = this._extractChannelId(message);
     if (!channelId) {
       return null;
     }
 
+    const matches = [];
     for (const session of this.sessionsByQueueItemId.values()) {
-      if (session.status !== 'pending' || !session.partialFinalContent) {
+      if (session.status !== 'pending') {
         continue;
       }
 
@@ -256,10 +258,19 @@ class ExternalReviewSessionService {
         continue;
       }
 
-      return session;
+      matches.push(session);
     }
 
-    return null;
+    if (matches.length !== 1) {
+      return null;
+    }
+
+    const [session] = matches;
+    if (!session.partialFinalContent && !this._looksLikeSessionMessage(message?.content)) {
+      return null;
+    }
+
+    return session;
   }
 
   _extractChannelId(message) {
@@ -435,6 +446,15 @@ class ExternalReviewSessionService {
       normalized.includes('"comments"') ||
       normalized.includes(`"protocol":"${DISCORD_HANDOFF_PROTOCOL}"`) ||
       normalized.includes('"message_type"');
+  }
+
+  _looksLikeSessionMessage(content) {
+    if (!content) {
+      return false;
+    }
+
+    return this._looksLikePromptRequestText(content) ||
+      this._looksLikeFinalReviewFragment(content);
   }
 
   _extractJson(text) {
