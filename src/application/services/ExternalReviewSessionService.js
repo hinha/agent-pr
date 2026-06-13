@@ -115,8 +115,11 @@ class ExternalReviewSessionService {
     session.lastMatchedMessage = message;
     const content = String(message.content || '').trim();
     const parsed = this._parsePotentialJson(content);
-    const combinedParsed = session.partialFinalContent
-      ? this._parsePotentialJson(`${session.partialFinalContent}\n${content}`)
+    const combinedContent = session.partialFinalContent
+      ? this._combinePartialFinalContent(session.partialFinalContent, content)
+      : null;
+    const combinedParsed = combinedContent
+      ? this._parsePotentialJson(combinedContent)
       : null;
     const effectiveParsed = combinedParsed || parsed;
     const envelope = this._normalizeEnvelope(effectiveParsed, session);
@@ -147,6 +150,16 @@ class ExternalReviewSessionService {
       if (rawFinalPayload) {
         this._clearPartialFinalBuffer(session);
         return this._acceptFinalPayload(session, rawFinalPayload, content, message.id, 'raw_final_review_fallback');
+      }
+
+      if (session.partialFinalContent && content) {
+        this._appendPartialFinalContent(session, content);
+        return {
+          matched: true,
+          accepted: false,
+          reason: 'awaiting_final_fragment',
+          session: this._publicSession(session)
+        };
       }
 
       if (this._looksLikeFinalReviewFragment(content)) {
@@ -490,10 +503,21 @@ class ExternalReviewSessionService {
   }
 
   _appendPartialFinalContent(session, content) {
-    session.partialFinalContent = session.partialFinalContent
-      ? `${session.partialFinalContent}\n${content}`
-      : String(content || '');
+    session.partialFinalContent = this._combinePartialFinalContent(
+      session.partialFinalContent,
+      content
+    );
     session.partialFinalUpdatedAt = Date.now();
+  }
+
+  _combinePartialFinalContent(existingContent, newContent) {
+    const normalizedExisting = String(existingContent || '');
+    const normalizedNew = String(newContent || '');
+    if (!normalizedExisting) {
+      return normalizedNew;
+    }
+
+    return `${normalizedExisting}${normalizedNew}`;
   }
 
   _clearPartialFinalBuffer(session) {

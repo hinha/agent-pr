@@ -437,6 +437,71 @@ describe('ExternalReviewSessionService', () => {
     }));
   });
 
+  test('keeps buffering continuation fragments that do not look like json starts', async () => {
+    service.startSession({
+      queueItemId: 'qi_frag_tail',
+      instanceKey: 'github/hinha',
+      repoName: 'agent-pr',
+      prNumber: 18,
+      level: 'high',
+      triggerMessageId: 'trigger-frag-tail',
+      channelId: 'channel-frag-tail',
+      promptDelivered: true,
+      trustedBotUserId: 'bot-1',
+      timeoutMs: 1000
+    });
+
+    const pending = service.awaitResult('qi_frag_tail');
+    const firstPart = service.handleAgentReply({
+      id: 'msg-frag-tail-a',
+      content: `{
+  "summary": "done",
+  "comments": [
+    {
+      "file": "src/application/services/ExternalReviewSessionService.js",
+      "start_line": 18,
+      "end_line": 25,
+      "severity": "LOW",
+      "message": "fragmented",
+      "suggestedCode": "const normalized = content.includes(`,
+      author: { id: 'bot-1', bot: true },
+      channelId: 'channel-frag-tail'
+    });
+
+    expect(firstPart).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: false,
+      reason: 'awaiting_final_fragment'
+    }));
+
+    const secondPart = service.handleAgentReply({
+      id: 'msg-frag-tail-b',
+      content: `hasProtocol) && normalized.includes('{');"
+    }
+  ]
+}`,
+      author: { id: 'bot-1', bot: true },
+      channelId: 'channel-frag-tail'
+    });
+
+    await expect(pending).resolves.toEqual(expect.objectContaining({
+      reviewResult: expect.objectContaining({
+        summary: 'done',
+        comments: expect.arrayContaining([
+          expect.objectContaining({
+            file: 'src/application/services/ExternalReviewSessionService.js',
+            suggestedCode: expect.stringContaining('hasProtocol')
+          })
+        ])
+      })
+    }));
+    expect(secondPart).toEqual(expect.objectContaining({
+      matched: true,
+      accepted: true,
+      reason: 'raw_final_review_fallback'
+    }));
+  });
+
   test('accepts standalone final review JSON in the same channel when exactly one session matches', async () => {
     service.startSession({
       queueItemId: 'qi_chan',
