@@ -514,7 +514,7 @@ describe('MCPGitHubAdapter', () => {
       }).catch(done);
     });
 
-    test('should append skipped comment with suggestedCode to review body when line not in diff', (done) => {
+    test('should append skipped comment to review body when file not in changed files', (done) => {
       const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
 
       const mockReviewResult = {
@@ -530,11 +530,8 @@ describe('MCPGitHubAdapter', () => {
         ]
       };
 
-      // Patch only covers lines 1-5, line 183 is NOT in diff
-      const filesWithPatch = [{
-        filename: 'src/infrastructure/persistence/FileSystemStateRepository.js',
-        patch: '@@ -1,3 +1,5 @@\n line1\n+added\n line2\n line3\n'
-      }];
+      // Changed files set does NOT include the comment's file
+      const changedFiles = [{ filename: 'other-file.js' }];
 
       let callCount = 0;
       let onDataCallback;
@@ -550,7 +547,7 @@ describe('MCPGitHubAdapter', () => {
           callCount++;
           setTimeout(() => {
             if (callCount === 1) {
-              onDataCallback(JSON.stringify(filesWithPatch));
+              onDataCallback(JSON.stringify(changedFiles));
             } else {
               onDataCallback(JSON.stringify({ id: 'review_body_fallback' }));
             }
@@ -562,9 +559,9 @@ describe('MCPGitHubAdapter', () => {
       adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
         expect(result.id).toBe('review_body_fallback');
 
-        // Should warn about missing position
+        // Should warn about file not in changed files
         expect(mockLogger.warn).toHaveBeenCalledWith(
-          expect.stringContaining('No position found for src/infrastructure/persistence/FileSystemStateRepository.js:183')
+          expect.stringContaining('File src/infrastructure/persistence/FileSystemStateRepository.js not in changed files')
         );
 
         // Should log that comment was appended to body
@@ -583,7 +580,7 @@ describe('MCPGitHubAdapter', () => {
       });
     });
 
-    test('should create inline comments for lines in diff and append others to body', (done) => {
+    test('should create inline comments for files in PR and append others to body', (done) => {
       const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
 
       const mockReviewResult = {
@@ -605,16 +602,9 @@ describe('MCPGitHubAdapter', () => {
         ]
       };
 
-      // Two files: first has line 3 in diff, second does not
-      const filesWithPatch = [
-        {
-          filename: 'src/application/use-cases/ReviewPRUseCase.js',
-          patch: '@@ -1,3 +1,5 @@\n line1\n+added\n line2\n line3\n'
-        },
-        {
-          filename: 'src/infrastructure/persistence/FileSystemStateRepository.js',
-          patch: '@@ -1,3 +1,5 @@\n line1\n+added\n line2\n line3\n'
-        }
+      // Only first file is in changed files; second file is NOT
+      const changedFiles = [
+        { filename: 'src/application/use-cases/ReviewPRUseCase.js' }
       ];
 
       let callCount = 0;
@@ -631,7 +621,7 @@ describe('MCPGitHubAdapter', () => {
           callCount++;
           setTimeout(() => {
             if (callCount === 1) {
-              onDataCallback(JSON.stringify(filesWithPatch));
+              onDataCallback(JSON.stringify(changedFiles));
             } else {
               onDataCallback(JSON.stringify({ id: 'review_mixed' }));
             }
@@ -684,11 +674,8 @@ describe('MCPGitHubAdapter', () => {
         ]
       };
 
-      // Patch only covers lines 1-10
-      const filesWithPatch = [{
-        filename: 'src/utils/helper.js',
-        patch: '@@ -1,3 +1,5 @@\n ctx1\n+added\n ctx2\n ctx3\n'
-      }];
+      // Changed files set does NOT include src/utils/helper.js
+      const changedFiles = [{ filename: 'src/other.js' }];
 
       let callCount = 0;
       let onDataCallback;
@@ -704,7 +691,7 @@ describe('MCPGitHubAdapter', () => {
           callCount++;
           setTimeout(() => {
             if (callCount === 1) {
-              onDataCallback(JSON.stringify(filesWithPatch));
+              onDataCallback(JSON.stringify(changedFiles));
             } else {
               onDataCallback(JSON.stringify({ id: 'review_multi_skip' }));
             }
@@ -735,7 +722,7 @@ describe('MCPGitHubAdapter', () => {
       });
     });
 
-    test('should not append fallback section when all comments have positions', (done) => {
+    test('should not append fallback section when all comment files are in PR', (done) => {
       const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
 
       const mockReviewResult = {
@@ -751,11 +738,8 @@ describe('MCPGitHubAdapter', () => {
         ]
       };
 
-      // Line 2 IS in the diff
-      const filesWithPatch = [{
-        filename: 'src/index.js',
-        patch: '@@ -1,3 +1,5 @@\n ctx1\n+added\n ctx2\n ctx3\n'
-      }];
+      // Comment's file IS in the changed files set
+      const changedFiles = [{ filename: 'src/index.js' }];
 
       let callCount = 0;
       let onDataCallback;
@@ -771,7 +755,7 @@ describe('MCPGitHubAdapter', () => {
           callCount++;
           setTimeout(() => {
             if (callCount === 1) {
-              onDataCallback(JSON.stringify(filesWithPatch));
+              onDataCallback(JSON.stringify(changedFiles));
             } else {
               onDataCallback(JSON.stringify({ id: 'review_all_inline' }));
             }
@@ -819,8 +803,8 @@ describe('MCPGitHubAdapter', () => {
         ]
       };
 
-      // No patch for this file → no position mapping
-      const filesWithPatch = [];
+      // Changed files set does NOT include the comment's file
+      const changedFiles = [{ filename: 'src/other.js' }];
 
       let callCount = 0;
       let onDataCallback;
@@ -836,7 +820,7 @@ describe('MCPGitHubAdapter', () => {
           callCount++;
           setTimeout(() => {
             if (callCount === 1) {
-              onDataCallback(JSON.stringify(filesWithPatch));
+              onDataCallback(JSON.stringify(changedFiles));
             } else {
               onDataCallback(JSON.stringify({ id: 'review_python' }));
             }
@@ -853,6 +837,105 @@ describe('MCPGitHubAdapter', () => {
         expect(bodyArg).toContain('\\`\\`\\`python');
         expect(bodyArg).toContain('result = [x for x in items if x > 0]');
 
+        done();
+      });
+    });
+
+    test('should include side: RIGHT on all inline comments', (done) => {
+      const fs = require('fs');
+      const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+
+      const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
+      const mockReviewResult = {
+        summary: 'Review with side check',
+        comments: [
+          { file: 'src/app.js', line: 10, severity: 'LOW', message: 'Nitpick' }
+        ]
+      };
+      const changedFiles = [{ filename: 'src/app.js' }];
+
+      let callCount = 0;
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') {
+          onCloseCallback = cb;
+          callCount++;
+          setTimeout(() => {
+            if (callCount === 1) {
+              onDataCallback(JSON.stringify(changedFiles));
+            } else {
+              onDataCallback(JSON.stringify({ id: 'review_side_test' }));
+            }
+            onCloseCallback(0);
+          }, 10);
+        }
+      });
+
+      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
+        expect(result.id).toBe('review_side_test');
+        // Comments are written to a temp file via fs.writeFileSync
+        const commentsCall = writeSpy.mock.calls.find(c => c[0].includes('/tmp/comments-'));
+        const parsedComments = JSON.parse(commentsCall[1]);
+        expect(parsedComments[0].side).toBe('RIGHT');
+        expect(parsedComments[0].line).toBe(10);
+        expect(parsedComments[0]).not.toHaveProperty('position');
+        writeSpy.mockRestore();
+        done();
+      });
+    });
+
+    test('should add start_line and start_side for multi-line comments', (done) => {
+      const fs = require('fs');
+      const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+
+      const mockPR = { id: 'pr_1', number: 9, headSha: 'abc123' };
+      const mockReviewResult = {
+        summary: 'Multi-line review',
+        comments: [
+          { file: 'src/app.js', line: 15, startLine: 10, endLine: 15, severity: 'MEDIUM', message: 'Refactor range' }
+        ]
+      };
+      const changedFiles = [{ filename: 'src/app.js' }];
+
+      let callCount = 0;
+      let onDataCallback;
+      let onCloseCallback;
+
+      mockSpawnProcess.stdout.on.mockImplementation((event, cb) => {
+        if (event === 'data') onDataCallback = cb;
+      });
+      mockSpawnProcess.stderr.on.mockImplementation(() => {});
+      mockSpawnProcess.on.mockImplementation((event, cb) => {
+        if (event === 'close') {
+          onCloseCallback = cb;
+          callCount++;
+          setTimeout(() => {
+            if (callCount === 1) {
+              onDataCallback(JSON.stringify(changedFiles));
+            } else {
+              onDataCallback(JSON.stringify({ id: 'review_multiline_test' }));
+            }
+            onCloseCallback(0);
+          }, 10);
+        }
+      });
+
+      adapter.createReviewWithComments('test-repo', mockPR, mockReviewResult).then((result) => {
+        expect(result.id).toBe('review_multiline_test');
+        // Comments are written to a temp file via fs.writeFileSync
+        const commentsCall = writeSpy.mock.calls.find(c => c[0].includes('/tmp/comments-'));
+        const parsedComments = JSON.parse(commentsCall[1]);
+        expect(parsedComments[0].side).toBe('RIGHT');
+        expect(parsedComments[0].line).toBe(15);
+        expect(parsedComments[0].start_line).toBe(10);
+        expect(parsedComments[0].start_side).toBe('RIGHT');
+        writeSpy.mockRestore();
         done();
       });
     });
@@ -1178,10 +1261,7 @@ describe('MCPGitHubAdapter', () => {
         event: 'INVALID_EVENT'
       };
 
-      const filesWithPatch = [{
-        filename: 'src/app.js',
-        patch: '@@ -1,3 +1,5 @@\n ctx1\n+added\n ctx2\n ctx3\n'
-      }];
+      const changedFiles = [{ filename: 'src/app.js' }];
 
       let callCount = 0;
       let onDataCallback;
@@ -1197,7 +1277,7 @@ describe('MCPGitHubAdapter', () => {
           callCount++;
           setTimeout(() => {
             if (callCount === 1) {
-              onDataCallback(JSON.stringify(filesWithPatch));
+              onDataCallback(JSON.stringify(changedFiles));
             } else {
               onDataCallback(JSON.stringify({ id: 'review_severity_fallback' }));
             }

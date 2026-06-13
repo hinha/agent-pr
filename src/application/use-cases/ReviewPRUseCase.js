@@ -323,13 +323,20 @@ class ReviewPRUseCase {
     }
 
     const comments = Array.isArray(externalReviewResult.comments)
-      ? externalReviewResult.comments.map(comment => ({
-        file: comment.file || comment.path || comment.filename,
-        line: comment.line || comment.start_line || comment.startLine,
-        severity: comment.severity,
-        message: comment.message,
-        suggestedCode: comment.suggestedCode || comment.suggested_code
-      }))
+      ? externalReviewResult.comments.map(comment => {
+        const file = comment.file || comment.path || comment.filename;
+        const line = comment.line || comment.start_line || comment.startLine;
+        const endLine = comment.end_line || comment.endLine;
+        return {
+          file,
+          line,
+          startLine: endLine && endLine !== line ? line : undefined,
+          endLine: endLine && endLine !== line ? endLine : undefined,
+          severity: comment.severity,
+          message: comment.message,
+          suggestedCode: comment.suggestedCode || comment.suggested_code
+        };
+      })
       : [];
 
     const requiresChanges = comments.some(comment => String(comment.severity || '').trim().toUpperCase() === 'HIGH');

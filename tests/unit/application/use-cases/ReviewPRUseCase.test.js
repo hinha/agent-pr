@@ -289,6 +289,8 @@ describe('ReviewPRUseCase', () => {
             expect.objectContaining({
               file: 'src/index.js',
               line: 10,
+              startLine: 10,
+              endLine: 12,
               severity: 'HIGH'
             })
           ]
